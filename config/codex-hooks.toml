@@ -1,0 +1,10 @@
+[hooks]
+# Packaged, local-only baseline. It proves the production composition can
+# enter the Codex Hook Host without granting any executable extension.
+enabled = true
+policy_revision = "builtin-empty-v1"
+upstream_revision = "0fe877b4dedc86a29c8bebb3edbd3efcc3580c7d"
+manifest_ref = "crp://local/hooks/manifests/builtin-empty-v1"
+manifest_revision = "builtin-empty-v1"
+local_hard_guard_revision = "local-hard-guard-default"
+handlers = []

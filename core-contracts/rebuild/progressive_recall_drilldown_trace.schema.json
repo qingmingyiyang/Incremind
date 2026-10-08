@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/progressive_recall_drilldown_trace.schema.json",
+  "title": "ProgressiveRecallDrilldownTrace",
+  "description": "不含正文、query、locator、路径或 URL 的 R2/R3 匿名下钻 trace。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "trace_version",
+    "trace_id",
+    "bundle_id",
+    "project_id",
+    "authority_fingerprint",
+    "query_fingerprint",
+    "intent",
+    "signals",
+    "stages",
+    "budget",
+    "drop_codes",
+    "error_codes",
+    "performance",
+    "safety"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "trace_version": {
+      "const": "progressive-recall-drilldown-trace-v1"
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^progressive-drilldown-[0-9a-f]{40}$"
+    },
+    "bundle_id": {
+      "type": "string",
+      "pattern": "^progressive-context-[0-9a-f]{40}$"
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "query_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "intent": {
+      "type": "string",
+      "minLength": 1
+    },
+    "signals": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "stage",
+          "attempted",
+          "item_count",
+          "char_count",
+          "reason_codes"
+        ],
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "r2_structured_content",
+              "r3_source_evidence"
+            ]
+          },
+          "attempted": {
+            "type": "boolean"
+          },
+          "item_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "char_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reason_codes": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "used_items",
+        "used_chars",
+        "remaining_items",
+        "remaining_chars"
+      ],
+      "properties": {
+        "used_items": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "used_chars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remaining_items": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remaining_chars": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "drop_codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "error_codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "r2_ms",
+        "r3_ms",
+        "total_ms"
+      ],
+      "properties": {
+        "r2_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "r3_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "total_ms": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "content_included",
+        "query_included",
+        "locator_included",
+        "path_included",
+        "read_only",
+        "production_prompt_changed"
+      ],
+      "properties": {
+        "content_included": {
+          "const": false
+        },
+        "query_included": {
+          "const": false
+        },
+        "locator_included": {
+          "const": false
+        },
+        "path_included": {
+          "const": false
+        },
+        "read_only": {
+          "const": true
+        },
+        "production_prompt_changed": {
+          "const": false
+        }
+      }
+    }
+  }
+}

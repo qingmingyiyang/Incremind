@@ -1,0 +1,442 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/memory_candidate.schema.json",
+  "title": "MemoryCandidate",
+  "description": "由模型结果、文档或处理任务提出的可审计记忆候选。候选不得自动污染长期记忆，必须经过显式审核或提升规则。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "project_id",
+    "target_layer",
+    "candidate_type",
+    "status",
+    "proposed_content",
+    "source_refs",
+    "provenance",
+    "review",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_layer": {
+      "type": "string",
+      "enum": ["atom", "scenario", "persona", "series_memory", "project_skill"]
+    },
+    "candidate_type": {
+      "type": "string",
+      "enum": ["answer_fact", "answer_decision", "answer_action", "answer_summary", "document_takeaway", "other"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending_review", "rejected", "promoted", "withdrawn"]
+    },
+    "proposed_content": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/sourceRef"
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_result_id",
+        "model_request_id",
+        "recall_result_id",
+        "document_id",
+        "document_revision",
+        "input_refs"
+      ],
+      "properties": {
+        "model_result_id": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "model_request_id": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "recall_result_id": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "document_id": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "document_revision": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "source_id": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "source_revision": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "source_content_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "source_content_read_id": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "media_processing_output_id": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "media_processing_job_id": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "input_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/inputRef"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "source_id": {
+                "type": "string"
+              }
+            },
+            "required": ["source_id"]
+          },
+          "then": {
+            "properties": {
+              "source_revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "source_content_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": ["source_revision", "source_content_sha256"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source_revision": {
+                "type": "integer"
+              }
+            },
+            "required": ["source_revision"]
+          },
+          "then": {
+            "properties": {
+              "source_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_content_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": ["source_id", "source_content_sha256"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source_content_sha256": {
+                "type": "string"
+              }
+            },
+            "required": ["source_content_sha256"]
+          },
+          "then": {
+            "properties": {
+              "source_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_revision": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": ["source_id", "source_revision"]
+          }
+        }
+      ]
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requires_user_confirmation",
+        "auto_promote_allowed",
+        "reason",
+        "reviewed_by",
+        "reviewed_at"
+      ],
+      "properties": {
+        "requires_user_confirmation": {
+          "type": "boolean"
+        },
+        "auto_promote_allowed": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewed_by": {
+          "type": ["string", "null"],
+          "enum": ["user", "system", null]
+        },
+        "reviewed_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation_id", "draft_id", "staging_authority"],
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "draft_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "staging_authority": {
+          "type": "string",
+          "const": "sqlite:structured-records-v1"
+        }
+      }
+    },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "method",
+        "preview_id",
+        "item_id",
+        "title",
+        "start_char",
+        "end_char",
+        "paragraph_ids",
+        "tags"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "method": {
+          "type": "string",
+          "const": "deterministic_local_v1"
+        },
+        "preview_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "item_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "start_char": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_char": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "paragraph_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^p[0-9]{3,}$"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "source_erasure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "state",
+        "action",
+        "operation_id",
+        "requested_candidate_revision",
+        "source_id",
+        "source_revision",
+        "source_content_sha256",
+        "reason_sha256",
+        "erased_at"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string",
+          "const": "content_erased"
+        },
+        "action": {
+          "type": "string",
+          "enum": ["reject", "withdraw"]
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requested_candidate_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_content_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "reason_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "erased_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["source_erasure"]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": ["rejected", "withdrawn"]
+          },
+          "proposed_content": {
+            "const": "[content erased]"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "locator"],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote": {
+          "type": "string"
+        }
+      }
+    },
+    "inputRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "object_id", "uri"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "recall_result",
+            "model_request",
+            "model_result",
+            "document",
+            "project_skill",
+            "series_memory",
+            "scenario",
+            "atom",
+            "source",
+            "source_content_read",
+            "media_processing_job",
+            "media_processing_output"
+          ]
+        },
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uri": {
+          "type": "string",
+          "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"
+        }
+      }
+    }
+  }
+}

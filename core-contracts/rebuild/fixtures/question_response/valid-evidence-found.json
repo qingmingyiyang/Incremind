@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0.0",
+  "status": "answered",
+  "answer": {"status": "evidence_found", "text": "项目应先完成可信任务闭环。"},
+  "evidence_items": [{"layer": "l3_project_skill", "object_id": "skill-default", "source_refs": [{"source_id": "source-default", "locator": "char:0-40"}], "snippet": "默认项目 Skill", "explanation": "项目级证据", "score": 0.9, "quality": "system_generated"}],
+  "source_links": [{"source_id": "source-default", "locator": "char:0-40", "ref": "crp://default/sources/source-default"}],
+  "error": null,
+  "privacy": {"mode": "provider_evidence_only", "source_path_exposed": false, "provider_call_performed": true}
+}

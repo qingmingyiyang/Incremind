@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/platform_recovery_action.schema.json",
+  "title": "Platform Recovery Action",
+  "description": "由 Product Health 平台降级状态生成的可展示、可追溯、不可自动执行的恢复动作记录。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "capability",
+    "severity",
+    "status",
+    "action_type",
+    "title",
+    "description",
+    "source",
+    "evidence",
+    "execution",
+    "user_decision",
+    "resolution",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "capability": {
+      "type": "string",
+      "enum": [
+        "app_data_dir",
+        "documents_dir",
+        "open_path",
+        "reveal_path",
+        "file_picker",
+        "shortcut",
+        "notification",
+        "credential_store",
+        "worker_lifecycle",
+        "system_info",
+        "update",
+        "backup_destination"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "warning",
+        "blocking"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "acknowledged",
+        "resolved",
+        "dismissed"
+      ]
+    },
+    "action_type": {
+      "type": "string",
+      "enum": [
+        "retry_capability_probe",
+        "request_permission",
+        "select_backup_destination",
+        "restart_local_worker",
+        "inspect_platform_logs",
+        "fix_platform_uri"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "health_status",
+        "health_ref"
+      ],
+      "properties": {
+        "health_status": {
+          "type": "string",
+          "const": "degraded"
+        },
+        "health_ref": {
+          "type": "string",
+          "pattern": "^crp://[a-z0-9][a-z0-9_-]*/product-health/.+"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "degraded_capabilities",
+        "missing_capabilities",
+        "os_path_leaks"
+      ],
+      "properties": {
+        "degraded_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "missing_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "os_path_leaks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "auto_execute",
+        "requires_user_confirmation",
+        "job_id"
+      ],
+      "properties": {
+        "auto_execute": {
+          "type": "boolean",
+          "const": false
+        },
+        "requires_user_confirmation": {
+          "type": "boolean"
+        },
+        "job_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "user_decision": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "decided_by",
+            "decided_at",
+            "note",
+            "execution_requested"
+          ],
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": [
+                "acknowledged",
+                "dismissed"
+              ]
+            },
+            "decided_by": {
+              "type": "string",
+              "minLength": 1
+            },
+            "decided_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "execution_requested": {
+              "type": "boolean",
+              "const": false
+            }
+          }
+        }
+      ]
+    },
+    "resolution": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "resolved_by",
+            "resolved_at",
+            "health_status",
+            "health_ref",
+            "recovered_capability",
+            "readiness_verified",
+            "remaining_degraded_capabilities",
+            "remaining_missing_capabilities",
+            "remaining_os_path_leaks"
+          ],
+          "properties": {
+            "resolved_by": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolved_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "health_status": {
+              "type": "string",
+              "const": "ready"
+            },
+            "health_ref": {
+              "type": "string",
+              "pattern": "^crp://[a-z0-9][a-z0-9_-]*/product-health/.+"
+            },
+            "recovered_capability": {
+              "type": "string",
+              "minLength": 1
+            },
+            "readiness_verified": {
+              "type": "boolean",
+              "const": true
+            },
+            "remaining_degraded_capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "remaining_missing_capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "remaining_os_path_leaks": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

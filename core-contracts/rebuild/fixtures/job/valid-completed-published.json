@@ -1,0 +1,75 @@
+{
+  "schema_version": "1.0.0",
+  "id": "job-capture-completed-001",
+  "source_id": "source-text-001",
+  "job_type": "extract_memory",
+  "idempotency_key": "extract-source-text-001",
+  "status": "completed",
+  "attempt": 1,
+  "max_attempts": 3,
+  "lease": null,
+  "progress": {
+    "current": 4,
+    "total": 4,
+    "percent": 100,
+    "message": "published atom and scenario"
+  },
+  "steps": [
+    {
+      "name": "persist_source",
+      "status": "completed",
+      "attempt": 1,
+      "started_at": "2026-06-29T09:00:00+08:00",
+      "completed_at": "2026-06-29T09:00:01+08:00",
+      "progress": 100,
+      "input_refs": [
+        "crp://default/sources/source-text-001"
+      ],
+      "staged_output_refs": [],
+      "log_refs": [
+        "crp://default/logs/jobs/job-capture-completed-001/persist_source.log"
+      ],
+      "error": null
+    },
+    {
+      "name": "extract_atom_candidates",
+      "status": "completed",
+      "attempt": 1,
+      "started_at": "2026-06-29T09:00:02+08:00",
+      "completed_at": "2026-06-29T09:00:05+08:00",
+      "progress": 100,
+      "input_refs": [
+        "crp://default/sources/source-text-001"
+      ],
+      "staged_output_refs": [
+        "crp://default/staging/jobs/job-capture-completed-001/atoms/atom-candidate-001"
+      ],
+      "log_refs": [
+        "crp://default/logs/jobs/job-capture-completed-001/extract_atom_candidates.log"
+      ],
+      "error": null
+    }
+  ],
+  "error": null,
+  "checkpoint": null,
+  "staged_outputs": [],
+  "published_outputs": [
+    {
+      "kind": "atom",
+      "uri": "crp://default/memory/atoms/atom-001",
+      "object_id": "atom-001",
+      "published": true
+    },
+    {
+      "kind": "scenario",
+      "uri": "crp://default/memory/scenarios/scenario-001",
+      "object_id": "scenario-001",
+      "published": true
+    }
+  ],
+  "log_refs": [
+    "crp://default/logs/jobs/job-capture-completed-001/job.log"
+  ],
+  "created_at": "2026-06-29T09:00:00+08:00",
+  "updated_at": "2026-06-29T09:00:10+08:00"
+}

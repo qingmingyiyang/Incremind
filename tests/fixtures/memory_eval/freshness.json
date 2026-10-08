@@ -1,0 +1,27 @@
+{
+  "base_corpus": "corpus.json",
+  "freshness": {
+    "insights": [
+      {"id":"freshness-price-a-old","project_id":"freshness-price","text":"星湾票价80元，学生折扣50元，在旧窗口买票。","conditions":["2025年"]},
+      {"id":"freshness-price-z-current","project_id":"freshness-price","text":"星湾票价120元，预约入口改在线上，儿童半价。","conditions":["2026年"]},
+      {"id":"freshness-opening-a-old","project_id":"freshness-opening","text":"青岩馆开放时间是八点至十六点，周二闭馆，门口现场领票。","conditions":["2025年"]},
+      {"id":"freshness-opening-z-current","project_id":"freshness-opening","text":"青岩馆开放时间是九点至十八点，周一维护，访客必须提前预约。","conditions":["2026年"]},
+      {"id":"freshness-rule-a-old","project_id":"freshness-rule","text":"月湖通行规则允许车辆白天入园，凭纸质卡登记，北口开放。","conditions":["2025年"]},
+      {"id":"freshness-rule-z-current","project_id":"freshness-rule","text":"月湖通行规则只允许步行访客，电子预约核验，入口改到西门。","conditions":["2026年"]},
+      {"id":"freshness-fee-a-old","project_id":"freshness-fee","text":"林岛配送费为五元，周末免费，需电话下单。","conditions":["2025年"]},
+      {"id":"freshness-fee-z-current","project_id":"freshness-fee","text":"林岛配送费为十元，雨天另加三元，可在网站选时段。","conditions":["2026年"]},
+      {"id":"freshness-status-a-old","project_id":"freshness-status","text":"河港书店营业状态是正常开放，二楼有咖啡，周三办读书活动。","conditions":["2025年"]},
+      {"id":"freshness-status-z-current","project_id":"freshness-status","text":"河港书店营业状态是装修暂停，图书转到临时仓库，下月再发布消息。","conditions":["2026年"]},
+      {"id":"freshness-booking-a-old","project_id":"freshness-booking","text":"杉野预约政策接受当天登记，柜台收现金，团体也无需名单。","conditions":["2025年"]},
+      {"id":"freshness-booking-z-current","project_id":"freshness-booking","text":"杉野预约政策要求提前三天登记，线上支付，团体需提交实名名单。","conditions":["2026年"]}
+    ],
+    "questions": [
+      {"id":"freshness-price-question","category":"freshness","project_id":"freshness-price","question":"星湾票价多少？","expected_ids":["freshness-price-z-current"],"expected_first_id":"freshness-price-z-current","expected_evidence":{"freshness-price-z-current":"120元"}},
+      {"id":"freshness-opening-question","category":"freshness","project_id":"freshness-opening","question":"青岩馆现在开放时间？","expected_ids":["freshness-opening-z-current"],"expected_first_id":"freshness-opening-z-current","expected_evidence":{"freshness-opening-z-current":"九点至十八点"}},
+      {"id":"freshness-rule-question","category":"freshness","project_id":"freshness-rule","question":"月湖通行规则是什么？","expected_ids":["freshness-rule-z-current"],"expected_first_id":"freshness-rule-z-current","expected_evidence":{"freshness-rule-z-current":"只允许步行访客"}},
+      {"id":"freshness-fee-question","category":"freshness","project_id":"freshness-fee","question":"林岛配送费多少？","expected_ids":["freshness-fee-z-current"],"expected_first_id":"freshness-fee-z-current","expected_evidence":{"freshness-fee-z-current":"十元"}},
+      {"id":"freshness-status-question","category":"freshness","project_id":"freshness-status","question":"河港书店目前营业状态？","expected_ids":["freshness-status-z-current"],"expected_first_id":"freshness-status-z-current","expected_evidence":{"freshness-status-z-current":"装修暂停"}},
+      {"id":"freshness-booking-question","category":"freshness","project_id":"freshness-booking","question":"杉野预约政策是什么？","expected_ids":["freshness-booking-z-current"],"expected_first_id":"freshness-booking-z-current","expected_evidence":{"freshness-booking-z-current":"提前三天登记"}}
+    ]
+  }
+}

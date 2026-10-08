@@ -1,0 +1,7 @@
+target-version = "py311"
+line-length = 120
+
+[lint]
+# Phase 0 starts with correctness rules only. Broader style and import rules
+# need their own baselines so existing formatting debt cannot mask new defects.
+select = ["E4", "E7", "E9", "F"]

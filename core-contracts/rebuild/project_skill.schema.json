@@ -1,0 +1,317 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/project_skill.schema.json",
+  "title": "ProjectSkill",
+  "description": "项目目标、必读上下文、输出结构、更新规则和冲突状态的 L3 Skill 合约。",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "locator"],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "contextRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context_id", "kind", "object_id", "uri", "reason", "stale"],
+      "properties": {
+        "context_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["source", "atom", "scenario", "persona", "series_memory", "document", "project_skill"]
+        },
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uri": {
+          "type": "string",
+          "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stale": {
+          "type": "boolean"
+        }
+      }
+    },
+    "outputRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "origin", "rule", "priority", "source_refs", "locked_by_user"],
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "origin": {
+          "type": "string",
+          "enum": ["user", "ai", "system", "import"]
+        },
+        "rule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["must", "should", "may"]
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourceRef"
+          }
+        },
+        "locked_by_user": {
+          "type": "boolean"
+        }
+      }
+    },
+    "decisionEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision_id", "reason", "actor", "created_at"],
+      "properties": {
+        "decision_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actor": {
+          "type": "string",
+          "enum": ["user", "system", "ai", "import"]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "project_id",
+    "name",
+    "purpose",
+    "markdown_uri",
+    "json_uri",
+    "markdown_revision",
+    "json_revision",
+    "required_context",
+    "output_rules",
+    "style_preferences",
+    "update_rules",
+    "source_refs",
+    "evidence_refs",
+    "decision_log",
+    "conflict",
+    "revision",
+    "status",
+    "trust_status",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+[.][0-9]+[.][0-9]+$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1
+    },
+    "markdown_uri": {
+      "type": "string",
+      "pattern": "^crp://[a-z0-9][a-z0-9_-]*/projects/[a-zA-Z0-9_-]+/project-skill[.]md$"
+    },
+    "json_uri": {
+      "type": "string",
+      "pattern": "^crp://[a-z0-9][a-z0-9_-]*/projects/[a-zA-Z0-9_-]+/project-skill[.]json$"
+    },
+    "markdown_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "json_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "required_context": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/contextRef"
+      }
+    },
+    "output_rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/outputRule"
+      }
+    },
+    "style_preferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["voice", "format_defaults"],
+      "properties": {
+        "voice": {
+          "type": "string",
+          "minLength": 1
+        },
+        "format_defaults": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "outline": {
+      "type": "array",
+      "description": "可选：项目级模板章节树覆盖。每个 section 声明 section_id/title/kind/required。kind 取值：prompt/series/summary/key_points/body/uncertain/sources。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["section_id", "title", "kind", "required"],
+        "properties": {
+          "section_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["prompt", "series", "summary", "key_points", "body", "uncertain", "sources"]
+          },
+          "required": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "update_rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["patch_strategy", "user_edit_policy", "allowed_auto_updates"],
+      "properties": {
+        "patch_strategy": {
+          "type": "string",
+          "enum": ["patch_existing_first", "add_section_allowed", "rewrite_requires_confirmation"]
+        },
+        "user_edit_policy": {
+          "type": "string",
+          "enum": ["user_wins", "conflict_required"]
+        },
+        "allowed_auto_updates": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["append_low_risk_context", "refresh_stale_refs", "update_style_examples"]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "source_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/sourceRef"
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/sourceRef"
+      }
+    },
+    "decision_log": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/decisionEntry"
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "conflict_refs", "resolution"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["none", "detected", "resolved"]
+        },
+        "conflict_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "resolution": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "active", "conflicted", "archived", "rolled_back"]
+    },
+    "trust_status": {
+      "type": "string",
+      "enum": ["trusted", "imported_unverified", "user_confirmed", "system_generated", "failed"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

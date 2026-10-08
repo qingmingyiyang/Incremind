@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/ai/analyze-source-request.schema.json",
+  "title": "AnalyzeSourceToolInput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["input", "intent", "output_profile", "resource_budget"],
+  "properties": {
+    "input": {"$ref": "#/$defs/input"},
+    "access": {"$ref": "#/$defs/access"},
+    "intent": {"enum": ["organize", "summarize", "extract", "archive", "transcribe", "extract_images"]},
+    "output_profile": {"type": "object", "additionalProperties": false, "required": ["profile_id", "revision"], "properties": {"profile_id": {"type": "string", "minLength": 1}, "revision": {"type": "string", "minLength": 1}}},
+    "resource_budget": {"type": "object", "additionalProperties": false, "required": ["max_assets", "max_bytes", "max_seconds"], "properties": {"max_assets": {"type": "integer", "minimum": 1}, "max_bytes": {"type": "integer", "minimum": 1}, "max_seconds": {"type": "integer", "minimum": 1}}}
+  },
+  "$defs": {
+    "controlledRef": {"type": "string", "pattern": "^crp://[A-Za-z0-9][A-Za-z0-9._~/-]*$"},
+    "access": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "credential_subject_id"],
+      "properties": {
+        "mode": {"enum": ["anonymous_public", "controlled_credential"]},
+        "credential_subject_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      },
+      "oneOf": [
+        {"properties": {"mode": {"const": "anonymous_public"}, "credential_subject_id": {"type": "null"}}},
+        {"properties": {"mode": {"const": "controlled_credential"}, "credential_subject_id": {"type": "string", "minLength": 1}}}
+      ]
+    },
+    "input": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "text", "source_ref"],
+      "properties": {"kind": {"enum": ["text", "source_ref"]}, "text": {"type": ["string", "null"]}, "source_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/controlledRef"}]}},
+      "oneOf": [
+        {"properties": {"kind": {"const": "text"}, "text": {"type": "string", "minLength": 1}, "source_ref": {"type": "null"}}},
+        {"properties": {"kind": {"const": "source_ref"}, "text": {"type": "null"}, "source_ref": {"$ref": "#/$defs/controlledRef"}}}
+      ]
+    }
+  }
+}

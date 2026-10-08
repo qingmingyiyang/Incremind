@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0.0",
+  "id": "recall-request-layer-order-invalid",
+  "query": "直接查原子事实。",
+  "project_id": "project-alpha",
+  "scope": "project",
+  "layers": ["l1_atom", "l0_source"],
+  "trust_filter": {
+    "include": ["trusted", "user_confirmed"],
+    "minimum_confidence": 0.6,
+    "allow_imported_unverified": false
+  },
+  "budget": {
+    "max_hits": 6,
+    "max_tokens": 6000,
+    "per_layer_limits": {
+      "l3_project_skill": 0,
+      "l3_persona": 0,
+      "l3_series_memory": 0,
+      "l2_scenario": 0,
+      "l1_atom": 6,
+      "l0_source": 2
+    }
+  },
+  "cross_project": {
+    "allowed": false,
+    "grant_id": null,
+    "project_ids": []
+  },
+  "required_context_refs": [
+    {
+      "context_id": "ctx-atom",
+      "kind": "atom",
+      "object_id": "atom-alpha-001",
+      "uri": "crp://default/memory/atoms/atom-alpha-001.json",
+      "reason": "错误示例，缺少 Project Skill 优先读取。"
+    }
+  ],
+  "created_at": "2026-06-29T15:12:00+08:00"
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "name": "worker_lifecycle",
+  "platform": "windows",
+  "adapter_id": "desktop_windows",
+  "available": false,
+  "permission_required": false,
+  "permission": "not_applicable",
+  "provided_uri": null,
+  "error": {
+    "code": "worker_unavailable",
+    "message": "Worker lifecycle control is unavailable; local browsing remains available.",
+    "retryable": true,
+    "degradation": "local_only"
+  },
+  "checked_at": "2026-06-29T11:02:00+08:00"
+}

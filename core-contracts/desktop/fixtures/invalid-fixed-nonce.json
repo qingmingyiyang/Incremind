@@ -1,0 +1,21 @@
+{
+  "kind": "desktop_loopback_session",
+  "schema_version": "1.0.0",
+  "protocol_version": "desktop-loopback/1",
+  "mode": "desktop_production",
+  "instance_id": "deskinst_AQ9h6rwYqL3X5nP8cD2vK7",
+  "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "secret": "V7sQ2nL9kR4mX8cD1eF0gHjK3pT6wY5zB2vA9qN7r",
+  "secret_transport": "environment",
+  "auth_header": "X-Chriptmas-Desktop-Session",
+  "host": "127.0.0.1",
+  "requested_port": 0,
+  "port": 49231,
+  "origin": "http://127.0.0.1:49231",
+  "port_allocation": "os_ephemeral",
+  "child_pid": 45678,
+  "issued_at": "2026-07-10T10:00:00+08:00",
+  "expires_at": "2026-07-10T18:00:00+08:00",
+  "renderer_secret_access": false,
+  "secret_exposure": {"command_line": false, "url": false, "logs": false, "crash_report": false}
+}

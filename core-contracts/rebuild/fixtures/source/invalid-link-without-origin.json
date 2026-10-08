@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0.0",
+  "id": "source-link-002",
+  "type": "link",
+  "title": "缺少原始链接",
+  "capture_mode": "snapshot",
+  "storage_uri": "crp://default/sources/source-link-002",
+  "original_url": null,
+  "content_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "media_type": "text/html",
+  "size_bytes": 100,
+  "parser_version": "html-snapshot/1",
+  "processing_state": "ready",
+  "created_at": "2026-06-29T12:15:00Z",
+  "imported_from_legacy": false,
+  "trust_status": "system_generated",
+  "metadata": {}
+}

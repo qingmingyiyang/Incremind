@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0.0",
+  "id": "model-request-remote-redacted-001",
+  "project_id": "project-alpha",
+  "capability": "text_generation",
+  "provider_preference": {
+    "mode": "remote_allowed",
+    "provider": "remote-provider",
+    "model": "remote-text-small",
+    "allow_remote": true,
+    "config_version": 3
+  },
+  "payload": {
+    "kind": "document_draft",
+    "content": "根据脱敏后的证据生成一段项目摘要。",
+    "input_refs": [
+      {
+        "kind": "document",
+        "object_id": "document-project-001",
+        "uri": "crp://default/documents/project-alpha/document-project-001.md"
+      }
+    ],
+    "source_refs": [
+      {
+        "source_id": "source-text-001",
+        "locator": "char:0-80"
+      }
+    ],
+    "recall_result_id": null
+  },
+  "privacy": {
+    "scope": "remote_allowed",
+    "pii": "present",
+    "allow_remote": true,
+    "redaction": {
+      "applied": true,
+      "strategy": "mask_pii"
+    },
+    "retention": "transient_log"
+  },
+  "timeout": {
+    "request_timeout_ms": 45000,
+    "idle_timeout_ms": 12000,
+    "deadline_at": "2026-06-29T16:05:00+08:00"
+  },
+  "cancel": {
+    "cancellable": true,
+    "cancel_token": "cancel-model-remote-001",
+    "requested": false
+  },
+  "budget": {
+    "max_input_tokens": 10000,
+    "max_output_tokens": 2500,
+    "max_total_tokens": 12500,
+    "max_cost_usd": 0.2
+  },
+  "response_schema": {
+    "type": "text",
+    "json_schema_uri": null,
+    "strict": false
+  },
+  "created_at": "2026-06-29T15:58:00+08:00"
+}

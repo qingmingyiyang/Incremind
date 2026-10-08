@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/task.schema.json",
+  "x-contract-version": "1.0",
+  "$defs": {
+    "DateRange": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "title": "Start",
+          "type": "string"
+        },
+        "end": {
+          "title": "End",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "DateRange",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    },
+    "series_id": {
+      "default": "default",
+      "title": "Series Id",
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "daily_report",
+        "weekly_report",
+        "monthly_report",
+        "yearly_report"
+      ],
+      "title": "Type",
+      "type": "string"
+    },
+    "status": {
+      "default": "pending",
+      "enum": [
+        "pending",
+        "running",
+        "success",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "date_range": {
+      "$ref": "#/$defs/DateRange"
+    },
+    "source_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Source Count",
+      "type": "integer"
+    },
+    "output_files": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Output Files",
+      "type": "array"
+    },
+    "error": {
+      "default": "",
+      "title": "Error",
+      "type": "string"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "type",
+    "date_range"
+  ],
+  "title": "ReplayTask",
+  "type": "object"
+}

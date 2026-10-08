@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://schemas/ai/tool-attempt-failure-v1",
+  "title": "AI Tool Attempt Failure",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "invocation_id", "turn_id", "capability_id", "attempt", "error_code", "effect_certainty", "backoff_ms"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "invocation_id": {"type": "string", "pattern": "^tool-call-[0-9a-f]{32}$"},
+    "turn_id": {"type": "string", "minLength": 1},
+    "capability_id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$"},
+    "attempt": {"type": "integer", "minimum": 1, "maximum": 10},
+    "error_code": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{1,127}$"},
+    "effect_certainty": {"const": "confirmed_none"},
+    "backoff_ms": {"type": "integer", "minimum": 0, "maximum": 300000}
+  }
+}

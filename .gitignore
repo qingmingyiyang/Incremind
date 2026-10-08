@@ -1,0 +1,80 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+.trae/
+*.lnk
+.python-version
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.cache/
+
+# Node
+node_modules/
+dist/
+build/
+target/
+
+# Electron 打包产物（由 npm run build 生成，不入库）
+/apps/desktop-electron/release/
+/apps/desktop-electron/frontend-dist/
+/apps/desktop-electron/.sidecar-stage/
+/apps/desktop-electron/.manual-stage/
+
+# Logs / Temp
+*.log
+*.err
+tmp/
+/temp/
+/unused/
+/sample/
+/_tmp_*.py
+/.workbuddy/
+/bear_icon/
+/*.zip
+
+# Local data (user videos, workspace products, models)
+/videos/
+/workspace/
+/data/
+/user-data/
+/runtime/
+/python-runtime/
+/library/
+/.rebuild-data/
+/icon.png
+.worktrees/
+
+# Machine-local application settings (may contain credentials or cookie paths)
+/config/settings.toml
+
+# Local dev scripts (environment-specific)
+/tools/analysis/__pycache__/
+
+# Local env
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.sqlite
+*.db
+
+# Local Codex long-form mission anchor; the compact card and reports remain tracked.
+/.codex/mission.full.md
+
+# Current implementation scratch and frozen comparison sources
+/work/
+# start.bat launcher logs
+/logs/
+
+# Auto-generated project documentation (codex/trae generated, not manually maintained)
+/PROJECT_DOCUMENTATION.md

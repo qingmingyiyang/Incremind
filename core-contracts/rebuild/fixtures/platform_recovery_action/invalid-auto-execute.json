@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0.0",
+  "id": "platform-recovery-auto-execute",
+  "capability": "worker_lifecycle",
+  "severity": "warning",
+  "status": "open",
+  "action_type": "restart_local_worker",
+  "title": "Worker lifecycle is degraded.",
+  "description": "This invalid action tries to execute recovery automatically.",
+  "source": {
+    "health_status": "degraded",
+    "health_ref": "crp://default/product-health/platform"
+  },
+  "evidence": {
+    "degraded_capabilities": [
+      "worker_lifecycle"
+    ],
+    "missing_capabilities": [],
+    "os_path_leaks": []
+  },
+  "execution": {
+    "auto_execute": true,
+    "requires_user_confirmation": true,
+    "job_id": "job-worker-restart"
+  },
+  "user_decision": null,
+  "resolution": null,
+  "created_at": "2026-07-01T02:01:00+08:00",
+  "updated_at": "2026-07-01T02:01:00+08:00"
+}

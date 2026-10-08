@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://schemas/ai/project-boundary-profile-v1",
+  "title": "Project Boundary Profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "profile_id", "project_id", "mode", "revision", "remote_default", "enabled_sources", "denied_effects", "persistent_grants"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "profile_id": {"type": "string", "minLength": 1},
+    "project_id": {"type": "string", "minLength": 1},
+    "mode": {"enum": ["open", "guarded", "sealed"]},
+    "revision": {"type": "integer", "minimum": 1},
+    "remote_default": {"enum": ["allow", "review", "deny"]},
+    "enabled_sources": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "denied_effects": {"type": "array", "uniqueItems": true, "items": {"enum": ["read", "write", "external", "platform", "delete"]}},
+    "persistent_grants": {"type": "array", "items": {"$ref": "boundary-grant.schema.json"}}
+  }
+}

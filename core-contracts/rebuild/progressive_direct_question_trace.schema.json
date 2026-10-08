@@ -1,0 +1,319 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/progressive_direct_question_trace.schema.json",
+  "title": "ProgressiveDirectQuestionTrace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "trace_id",
+    "schema_version",
+    "trace_version",
+    "mode",
+    "project_id",
+    "query_fingerprint",
+    "authority_fingerprint",
+    "projection",
+    "route",
+    "layers_read",
+    "memory_layers",
+    "fallback",
+    "rebuild",
+    "evidence",
+    "drilldown",
+    "performance",
+    "safety"
+  ],
+  "properties": {
+    "trace_id": {"type": "string", "pattern": "^progressive-direct-question-trace-[a-f0-9]{40}$"},
+    "schema_version": {"const": "1.0.0"},
+    "trace_version": {"const": "progressive-direct-question-v4"},
+    "mode": {"const": "production"},
+    "project_id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "query_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "authority_fingerprint": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read_status", "reason_code"],
+      "properties": {
+        "read_status": {"type": "string", "minLength": 1, "maxLength": 80},
+        "reason_code": {"type": "string", "minLength": 1, "maxLength": 120}
+      }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "confidence", "reason_code", "top_k", "candidates"],
+      "properties": {
+        "status": {"enum": ["routed", "fallback"]},
+        "confidence": {"enum": ["high", "medium", "low", "none"]},
+        "reason_code": {"type": "string", "minLength": 1, "maxLength": 120},
+        "top_k": {"type": "integer", "minimum": 0, "maximum": 5},
+        "candidates": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "series_id",
+              "series_memory_id",
+              "projection_id",
+              "rank",
+              "score",
+              "matched_fields",
+              "explicit"
+            ],
+            "properties": {
+              "series_id": {"type": "string"},
+              "series_memory_id": {"type": "string"},
+              "projection_id": {"type": "string"},
+              "rank": {"type": "integer", "minimum": 1, "maximum": 5},
+              "score": {"type": "number", "minimum": 0, "maximum": 1},
+              "matched_fields": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "explicit": {"type": "boolean"}
+            }
+          }
+        }
+      }
+    },
+    "layers_read": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "r0_series_router",
+          "r1_series_digest",
+          "r2_structured_content",
+          "r3_source_evidence"
+        ]
+      },
+      "uniqueItems": true,
+      "maxItems": 4
+    },
+    "memory_layers": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "prefixItems": [
+        {"$ref": "#/$defs/memoryLayerL4"},
+        {"$ref": "#/$defs/memoryLayerL3"},
+        {"$ref": "#/$defs/memoryLayerL2"},
+        {"$ref": "#/$defs/memoryLayerL1"},
+        {"$ref": "#/$defs/memoryLayerL0"}
+      ],
+      "items": false
+    },
+    "fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["used", "reason_code", "legacy_recall_preserved"],
+      "properties": {
+        "used": {"type": "boolean"},
+        "reason_code": {"type": ["string", "null"]},
+        "legacy_recall_preserved": {"const": true}
+      }
+    },
+    "rebuild": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scheduled", "job_id"],
+      "properties": {
+        "scheduled": {"type": "boolean"},
+        "job_id": {"type": ["string", "null"]}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "object_ids"],
+      "properties": {
+        "count": {"type": "integer", "minimum": 0, "maximum": 6},
+        "object_ids": {
+          "type": "array",
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "drilldown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "stages", "drop_codes", "error_codes", "budget"],
+      "properties": {
+        "status": {"enum": ["not_available", "not_requested", "completed"]},
+        "stages": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["stage", "attempted", "item_count", "char_count", "reason_codes"],
+            "properties": {
+              "stage": {"enum": ["r2_structured_content", "r3_source_evidence"]},
+              "attempted": {"type": "boolean"},
+              "item_count": {"type": "integer", "minimum": 0, "maximum": 12},
+              "char_count": {"type": "integer", "minimum": 0, "maximum": 12000},
+              "reason_codes": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {"type": "string", "minLength": 1, "maxLength": 80}
+              }
+            }
+          }
+        },
+        "drop_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 80}
+        },
+        "error_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 80}
+        },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["used_items", "used_chars", "remaining_items", "remaining_chars"],
+          "properties": {
+            "used_items": {"type": "integer", "minimum": 0, "maximum": 12},
+            "used_chars": {"type": "integer", "minimum": 0, "maximum": 12000},
+            "remaining_items": {"type": "integer", "minimum": 0, "maximum": 12},
+            "remaining_chars": {"type": "integer", "minimum": 0, "maximum": 12000}
+          }
+        }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_ms", "legacy_recall_ms", "stages"],
+      "properties": {
+        "total_ms": {"type": "number", "minimum": 0, "maximum": 3600000},
+        "legacy_recall_ms": {"type": "number", "minimum": 0, "maximum": 3600000},
+        "stages": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "prefixItems": [
+            {"$ref": "#/$defs/performanceStageR0"},
+            {"$ref": "#/$defs/performanceStageR1"},
+            {"$ref": "#/$defs/performanceStageR2"},
+            {"$ref": "#/$defs/performanceStageR3"}
+          ],
+          "items": false
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "query_recorded",
+        "content_recorded",
+        "source_refs_recorded",
+        "path_recorded",
+        "url_recorded",
+        "r2_r3_provider_egress_allowed",
+        "business_writes_allowed"
+      ],
+      "properties": {
+        "query_recorded": {"const": false},
+        "content_recorded": {"const": false},
+        "source_refs_recorded": {"const": false},
+        "path_recorded": {"const": false},
+        "url_recorded": {"const": false},
+        "r2_r3_provider_egress_allowed": {"const": false},
+        "business_writes_allowed": {"const": false}
+      }
+    }
+  },
+  "$defs": {
+    "memoryLayerBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layer", "status", "reason", "hit_count", "token_estimate"],
+      "properties": {
+        "layer": {"type": "string"},
+        "status": {
+          "enum": ["selected", "skipped", "unavailable", "budget_dropped"]
+        },
+        "reason": {"type": "string", "minLength": 1, "maxLength": 120},
+        "hit_count": {"type": "integer", "minimum": 0, "maximum": 12},
+        "token_estimate": {"type": "integer", "minimum": 0, "maximum": 12000}
+      }
+    },
+    "memoryLayerL4": {
+      "allOf": [
+        {"$ref": "#/$defs/memoryLayerBase"},
+        {"type": "object", "properties": {"layer": {"const": "L4"}}}
+      ]
+    },
+    "memoryLayerL3": {
+      "allOf": [
+        {"$ref": "#/$defs/memoryLayerBase"},
+        {"type": "object", "properties": {"layer": {"const": "L3"}}}
+      ]
+    },
+    "memoryLayerL2": {
+      "allOf": [
+        {"$ref": "#/$defs/memoryLayerBase"},
+        {"type": "object", "properties": {"layer": {"const": "L2"}}}
+      ]
+    },
+    "memoryLayerL1": {
+      "allOf": [
+        {"$ref": "#/$defs/memoryLayerBase"},
+        {"type": "object", "properties": {"layer": {"const": "L1"}}}
+      ]
+    },
+    "memoryLayerL0": {
+      "allOf": [
+        {"$ref": "#/$defs/memoryLayerBase"},
+        {"type": "object", "properties": {"layer": {"const": "L0"}}}
+      ]
+    },
+    "performanceStageBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "status", "elapsed_ms", "hit_count"],
+      "properties": {
+        "stage": {"type": "string"},
+        "status": {"enum": ["used", "fallback", "not_requested"]},
+        "elapsed_ms": {"type": "number", "minimum": 0, "maximum": 3600000},
+        "hit_count": {"type": "integer", "minimum": 0, "maximum": 12}
+      }
+    },
+    "performanceStageR0": {
+      "allOf": [
+        {"$ref": "#/$defs/performanceStageBase"},
+        {"type": "object", "properties": {"stage": {"const": "r0_series_router"}}}
+      ]
+    },
+    "performanceStageR1": {
+      "allOf": [
+        {"$ref": "#/$defs/performanceStageBase"},
+        {"type": "object", "properties": {"stage": {"const": "r1_series_digest"}}}
+      ]
+    },
+    "performanceStageR2": {
+      "allOf": [
+        {"$ref": "#/$defs/performanceStageBase"},
+        {"type": "object", "properties": {"stage": {"const": "r2_structured_content"}}}
+      ]
+    },
+    "performanceStageR3": {
+      "allOf": [
+        {"$ref": "#/$defs/performanceStageBase"},
+        {"type": "object", "properties": {"stage": {"const": "r3_source_evidence"}}}
+      ]
+    }
+  }
+}

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>设置 · 设备</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500&amp;family=Noto+Serif+SC:wght@500;700&amp;family=Fira+Code:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+.app{--serif:'Noto Serif SC',serif;--sans:'Noto Sans SC',system-ui,sans-serif;--mono:'Fira Code',ui-monospace,monospace}
+.t-light{--paper:#F7F4EE;--panel:#FFFDF9;--sunk:#EFEAE1;--ink:#1C1A17;--ink2:#4E4A44;--muted:#6F6A62;--line:#E6E0D5;--line2:#D2CABC;--red:#C0282F;--mark:#F4E3AE;--onred:#FFFFFF;--shadow:rgba(28,26,23,.14)}
+.t-dark{--paper:#1A1815;--panel:#221F1B;--sunk:#2A2621;--ink:#ECE6DB;--ink2:#C4BDB1;--muted:#A39C90;--line:#332F29;--line2:#48423A;--red:#E66B6F;--mark:#5A4919;--onred:#1A1815;--shadow:rgba(0,0,0,.45)}
+.ic{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--line2);flex-shrink:0}
+.dot.on{background:var(--ink)}
+.dot.red{background:var(--red)}
+.dot.ghost{background:transparent;box-shadow:inset 0 0 0 1.5px var(--line2)}
+.dot.now{background:var(--red);animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+input,textarea{font:inherit;color:var(--ink);background:transparent;border:0;outline:none;resize:none;min-width:0}
+input::placeholder,textarea::placeholder{color:var(--muted)}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+a{color:inherit;text-decoration:none}
+mark{background:var(--mark);color:var(--ink);border-radius:2px;padding:0 1px}
+.tab{color:var(--muted);border-bottom:2px solid transparent}
+.tab.on{color:var(--ink);border-bottom-color:var(--red)}
+.flt{color:var(--muted);border-bottom:1.5px solid transparent}
+.flt.on{color:var(--ink);border-bottom-color:var(--ink)}
+.side{color:var(--ink2)}
+.side.on{color:var(--red)}
+.sel{background:var(--sunk)}
+.seg{color:var(--muted);border-bottom:2px solid transparent}
+.seg.on{color:var(--ink);border-bottom-color:var(--red)}
+.grp{color:var(--muted);border-left:2px solid transparent}
+.grp.on{color:var(--ink);border-left-color:var(--red)}
+.sw{width:40px;height:22px;border-radius:11px;background:var(--line2);position:relative;flex-shrink:0}
+.sw::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--panel)}
+.sw.on{background:var(--red)}
+.sw.on::after{left:21px}
+.tag{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:4px;font-family:var(--mono);font-size:12px;color:var(--ink2);background:var(--panel);white-space:nowrap}
+.av{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--sunk);color:var(--ink2);flex-shrink:0;box-shadow:0 0 0 1.5px var(--paper)}
+.rel{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;font-family:var(--mono);font-size:15px;color:var(--ink2);flex-shrink:0}
+.sup{vertical-align:super;font-size:11px;font-family:var(--mono);color:var(--red);padding:0 2px;line-height:1}
+.lbl{display:inline-flex;align-items:center;height:18px;padding:0 5px;border:1px solid var(--line2);border-radius:4px;font-family:var(--sans);font-size:11px;color:var(--muted);vertical-align:3px;margin:0 2px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border:1px solid var(--line2);border-radius:4px;font-size:14px;color:var(--ink);white-space:nowrap}
+.btn.pri{background:var(--red);color:var(--onred);border-color:var(--red)}
+.menu{background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:0 12px 32px var(--shadow)}
+.ctx{padding:2px 6px;border:1px solid var(--line);border-radius:4px}
+.chev.on{transform:rotate(90deg)}
+</style>
+</helmet>
+<div class="app {{themeClass}}" style="width:1440px;height:1180px;position:relative;overflow:hidden;display:grid;grid-template-columns:64px minmax(0,1fr);background:var(--paper);color:var(--ink);font-family:var(--sans)">
+<nav aria-label="主导航" style="border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:16px 0;gap:4px">
+<a href="Companion.dc.html" aria-label="伙伴" title="伙伴" style="position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center;margin-bottom:20px">
+<img src="/_blob/a1342611c9d3b97bd9c8b4358f376583" alt="" style="width:34px;height:34px;border-radius:50%;background:var(--sunk);object-fit:cover">
+
+</a>
+<a href="Main.dc.html" style="position:relative;width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+<span style="font-size:11px">工作台</span>
+</a>
+<a href="Library.dc.html" style="position:relative;width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"></path><path d="M3 13l9 5 9-5"></path></svg>
+<span style="font-size:11px">资料库</span>
+</a>
+<a href="Settings.dc.html" aria-current="page" style="position:relative;width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--red)">
+<span style="position:absolute;left:0;top:16px;width:2px;height:28px;background:var(--red)"></span>
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+<span style="font-size:11px;color:var(--ink)">设置</span>
+</a>
+<div style="flex-grow:1"></div>
+<button aria-label="切换明暗" title="明暗" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg>
+</button>
+</nav>
+<div style="display:grid;grid-template-columns:240px minmax(0,1fr);min-width:0;min-height:0">
+<div style="border-right:1px solid var(--line);padding:92px 0 24px 28px;display:flex;flex-direction:column;gap:2px">
+<button class="grp" style="height:44px;padding-left:14px;font-size:15px">模型</button><button class="grp" style="height:44px;padding-left:14px;font-size:15px">隐私</button><button class="grp" style="height:44px;padding-left:14px;font-size:15px">项目</button><button class="grp" style="height:44px;padding-left:14px;font-size:15px">数据</button><button class="grp on" style="height:44px;padding-left:14px;font-size:15px">设备</button>
+</div>
+<div style="padding:64px 72px 48px;overflow:hidden;min-width:0;min-height:0">
+<div style="max-width:760px;display:flex;flex-direction:column">
+<h1 style="margin:0 0 28px;font-family:var(--serif);font-size:32px;font-weight:700">设备</h1>
+<div style="display:flex;flex-direction:column;border-bottom:1px solid var(--line)">
+<div style="display:flex;align-items:center;gap:16px;min-height:64px;border-top:1px solid var(--line);"><span style="color:var(--ink2);display:flex"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12" rx="1.5"></rect><path d="M8.5 20h7M12 16.5V20"></path></svg></span>
+<span style="width:160px;font-size:15px">这台电脑</span>
+<span style="color:var(--muted);display:flex" title="角色"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M5 20c1.2-3.6 4-5.5 7-5.5s5.8 1.9 7 5.5"></path></svg></span>
+<span style="flex-grow:1;font-family:var(--mono);font-size:14px;color:var(--ink2)">刚刚</span>
+<button style="height:32px;font-size:13px;color:var(--muted)">作废</button></div>
+<div style="display:flex;align-items:center;gap:16px;min-height:64px;border-top:1px solid var(--line);"><span style="color:var(--ink2);display:flex"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2"></rect><path d="M11 18h2"></path></svg></span>
+<span style="width:160px;font-size:15px">我的手机</span>
+<span style="color:var(--muted);display:flex" title="角色"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M5 20c1.2-3.6 4-5.5 7-5.5s5.8 1.9 7 5.5"></path></svg></span>
+<span style="flex-grow:1;font-family:var(--mono);font-size:14px;color:var(--ink2)">9·30 22:10</span>
+<button style="height:32px;font-size:13px;color:var(--muted)">作废</button></div>
+<div style="display:flex;align-items:center;gap:16px;min-height:64px;border-top:1px solid var(--line);"><span style="color:var(--ink2);display:flex"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="8" cy="15" r="4"></circle><path d="M11 12l9-9M16.5 6.5l3 3"></path></svg></span>
+<span style="width:160px;font-size:15px">Claude Code</span>
+<span style="color:var(--muted);display:flex" title="角色"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="8" cy="15" r="4"></circle><path d="M11 12l9-9M16.5 6.5l3 3"></path></svg></span>
+<span style="flex-grow:1;font-family:var(--mono);font-size:14px;color:var(--ink2)">今天 14:02</span>
+<button style="height:32px;font-size:13px;color:var(--muted)">作废</button></div>
+<div style="border-top:1px solid var(--line);padding:16px 0 20px">
+<div style="display:flex;align-items:center;gap:12px;height:32px;font-size:15px"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" style="color:var(--muted)"><path d="M12 5v14M5 12h14"></path></svg><span>添加设备</span></div>
+<div style="display:flex;align-items:flex-end;gap:20px;padding:12px 0 0 28px"><svg viewBox="0 0 21 21" width="132" height="132" aria-label="配对二维码" style="background:var(--panel);border:8px solid var(--panel);box-shadow:0 0 0 1px var(--line2);border-radius:4px;shape-rendering:crispEdges"><rect x="0" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="1" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="2" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="3" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="4" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="5" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="8" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="14" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="15" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="16" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="17" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="18" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="19" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="0" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="1" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="1" width="1" height="1" fill="var(--ink)"></rect><rect x="14" y="1" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="1" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="2" width="1" height="1" fill="var(--ink)"></rect><rect x="2" y="2" width="1" height="1" fill="var(--ink)"></rect><rect x="3" y="2" width="1" height="1" fill="var(--ink)"></rect><rect x="4" y="2" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="2" width="1" height="1" fill="var(--ink)"></rect><rect x="8" y="2" width="1" height="1" fill="var(--ink)"></rect><rect x="14" y="2" width="1" height="1" fill="var(--ink)"></rect><rect x="16" y="2" width="1" height="1" fill="var(--ink)"></rect><rect x="17" y="2" width="1" height="1" fill="var(--ink)"></rect><rect x="18" y="2" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="2" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="3" width="1" height="1" fill="var(--ink)"></rect><rect x="2" y="3" width="1" height="1" fill="var(--ink)"></rect><rect x="3" y="3" width="1" height="1" fill="var(--ink)"></rect><rect x="4" y="3" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="3" width="1" height="1" fill="var(--ink)"></rect><rect x="14" y="3" width="1" height="1" fill="var(--ink)"></rect><rect x="16" y="3" width="1" height="1" fill="var(--ink)"></rect><rect x="17" y="3" width="1" height="1" fill="var(--ink)"></rect><rect x="18" y="3" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="3" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="4" width="1" height="1" fill="var(--ink)"></rect><rect x="2" y="4" width="1" height="1" fill="var(--ink)"></rect><rect x="3" y="4" width="1" height="1" fill="var(--ink)"></rect><rect x="4" y="4" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="4" width="1" height="1" fill="var(--ink)"></rect><rect x="8" y="4" width="1" height="1" fill="var(--ink)"></rect><rect x="14" y="4" width="1" height="1" fill="var(--ink)"></rect><rect x="16" y="4" width="1" height="1" fill="var(--ink)"></rect><rect x="17" y="4" width="1" height="1" fill="var(--ink)"></rect><rect x="18" y="4" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="4" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="5" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="5" width="1" height="1" fill="var(--ink)"></rect><rect x="14" y="5" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="5" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="1" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="2" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="3" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="4" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="5" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="8" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="14" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="15" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="16" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="17" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="18" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="19" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="6" width="1" height="1" fill="var(--ink)"></rect><rect x="9" y="7" width="1" height="1" fill="var(--ink)"></rect><rect x="11" y="7" width="1" height="1" fill="var(--ink)"></rect><rect x="14" y="7" width="1" height="1" fill="var(--ink)"></rect><rect x="16" y="7" width="1" height="1" fill="var(--ink)"></rect><rect x="19" y="7" width="1" height="1" fill="var(--ink)"></rect><rect x="8" y="9" width="1" height="1" fill="var(--ink)"></rect><rect x="10" y="9" width="1" height="1" fill="var(--ink)"></rect><rect x="13" y="9" width="1" height="1" fill="var(--ink)"></rect><rect x="15" y="9" width="1" height="1" fill="var(--ink)"></rect><rect x="18" y="9" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="9" width="1" height="1" fill="var(--ink)"></rect><rect x="10" y="10" width="1" height="1" fill="var(--ink)"></rect><rect x="11" y="10" width="1" height="1" fill="var(--ink)"></rect><rect x="15" y="10" width="1" height="1" fill="var(--ink)"></rect><rect x="16" y="10" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="10" width="1" height="1" fill="var(--ink)"></rect><rect x="8" y="11" width="1" height="1" fill="var(--ink)"></rect><rect x="9" y="11" width="1" height="1" fill="var(--ink)"></rect><rect x="13" y="11" width="1" height="1" fill="var(--ink)"></rect><rect x="14" y="11" width="1" height="1" fill="var(--ink)"></rect><rect x="18" y="11" width="1" height="1" fill="var(--ink)"></rect><rect x="19" y="11" width="1" height="1" fill="var(--ink)"></rect><rect x="9" y="12" width="1" height="1" fill="var(--ink)"></rect><rect x="11" y="12" width="1" height="1" fill="var(--ink)"></rect><rect x="14" y="12" width="1" height="1" fill="var(--ink)"></rect><rect x="16" y="12" width="1" height="1" fill="var(--ink)"></rect><rect x="19" y="12" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="1" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="2" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="3" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="4" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="5" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="8" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="10" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="13" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="15" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="18" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="14" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="15" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="15" width="1" height="1" fill="var(--ink)"></rect><rect x="10" y="15" width="1" height="1" fill="var(--ink)"></rect><rect x="11" y="15" width="1" height="1" fill="var(--ink)"></rect><rect x="15" y="15" width="1" height="1" fill="var(--ink)"></rect><rect x="16" y="15" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="15" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="16" width="1" height="1" fill="var(--ink)"></rect><rect x="2" y="16" width="1" height="1" fill="var(--ink)"></rect><rect x="3" y="16" width="1" height="1" fill="var(--ink)"></rect><rect x="4" y="16" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="16" width="1" height="1" fill="var(--ink)"></rect><rect x="8" y="16" width="1" height="1" fill="var(--ink)"></rect><rect x="9" y="16" width="1" height="1" fill="var(--ink)"></rect><rect x="13" y="16" width="1" height="1" fill="var(--ink)"></rect><rect x="14" y="16" width="1" height="1" fill="var(--ink)"></rect><rect x="18" y="16" width="1" height="1" fill="var(--ink)"></rect><rect x="19" y="16" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="17" width="1" height="1" fill="var(--ink)"></rect><rect x="2" y="17" width="1" height="1" fill="var(--ink)"></rect><rect x="3" y="17" width="1" height="1" fill="var(--ink)"></rect><rect x="4" y="17" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="17" width="1" height="1" fill="var(--ink)"></rect><rect x="9" y="17" width="1" height="1" fill="var(--ink)"></rect><rect x="11" y="17" width="1" height="1" fill="var(--ink)"></rect><rect x="14" y="17" width="1" height="1" fill="var(--ink)"></rect><rect x="16" y="17" width="1" height="1" fill="var(--ink)"></rect><rect x="19" y="17" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="18" width="1" height="1" fill="var(--ink)"></rect><rect x="2" y="18" width="1" height="1" fill="var(--ink)"></rect><rect x="3" y="18" width="1" height="1" fill="var(--ink)"></rect><rect x="4" y="18" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="18" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="19" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="19" width="1" height="1" fill="var(--ink)"></rect><rect x="8" y="19" width="1" height="1" fill="var(--ink)"></rect><rect x="10" y="19" width="1" height="1" fill="var(--ink)"></rect><rect x="13" y="19" width="1" height="1" fill="var(--ink)"></rect><rect x="15" y="19" width="1" height="1" fill="var(--ink)"></rect><rect x="18" y="19" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="19" width="1" height="1" fill="var(--ink)"></rect><rect x="0" y="20" width="1" height="1" fill="var(--ink)"></rect><rect x="1" y="20" width="1" height="1" fill="var(--ink)"></rect><rect x="2" y="20" width="1" height="1" fill="var(--ink)"></rect><rect x="3" y="20" width="1" height="1" fill="var(--ink)"></rect><rect x="4" y="20" width="1" height="1" fill="var(--ink)"></rect><rect x="5" y="20" width="1" height="1" fill="var(--ink)"></rect><rect x="6" y="20" width="1" height="1" fill="var(--ink)"></rect><rect x="10" y="20" width="1" height="1" fill="var(--ink)"></rect><rect x="11" y="20" width="1" height="1" fill="var(--ink)"></rect><rect x="15" y="20" width="1" height="1" fill="var(--ink)"></rect><rect x="16" y="20" width="1" height="1" fill="var(--ink)"></rect><rect x="20" y="20" width="1" height="1" fill="var(--ink)"></rect></svg><span style="font-family:var(--mono);font-size:22px;color:var(--ink2)">09:42</span></div>
+</div>
+</div>
+<h2 style="margin:40px 0 12px;font-family:var(--serif);font-size:20px;font-weight:700">用户</h2>
+<div style="display:flex;flex-direction:column;border-bottom:1px solid var(--line)">
+<div style="display:flex;align-items:center;gap:16px;min-height:64px;border-top:1px solid var(--line);"><span class="av" style="width:28px;height:28px;font-size:12px">我</span><span style="width:120px;font-size:15px">我</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted);width:80px">管理员</span><span style="flex-grow:1;font-family:var(--mono);font-size:14px;color:var(--ink2)">3 台 · 1.2 GB</span></div>
+<div style="border-top:1px solid var(--line)">
+<div style="display:flex;align-items:center;gap:16px;min-height:64px;"><span class="av" style="width:28px;height:28px;font-size:12px">念</span><span style="width:120px;font-size:15px">阿念</span><span style="width:80px"></span><span style="flex-grow:1;font-family:var(--mono);font-size:14px;color:var(--ink2)">2 台 · 860 MB</span><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" class="ic chev on" style="color:var(--muted)"><path d="M9 6l6 6-6 6"></path></svg></div>
+<div style="padding:0 0 20px 44px;display:flex;flex-direction:column">
+<div style="display:flex;align-items:center;gap:16px;min-height:48px;border-top:1px solid var(--line);"><span style="width:96px;font-size:13px;color:var(--muted)">存储上限</span><span style="flex-grow:1;font-family:var(--mono);font-size:14px">5 GB</span></div>
+<div style="display:flex;align-items:center;gap:16px;min-height:48px;border-top:1px solid var(--line);"><span style="width:96px;font-size:13px;color:var(--muted)">后台时长</span><span style="flex-grow:1;font-family:var(--mono);font-size:14px">60 分钟 / 天</span></div>
+<div style="display:flex;gap:10px;padding-top:14px"><button class="btn pri">进入空间</button><button class="btn">添加设备</button><button class="btn" style="color:var(--ink2)">停用</button></div>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:16px;min-height:64px;border-top:1px solid var(--line);"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" style="color:var(--muted)"><path d="M12 5v14M5 12h14"></path></svg><span style="font-size:15px">新建用户</span></div>
+</div>
+<h2 style="margin:40px 0 12px;font-family:var(--serif);font-size:20px;font-weight:700">访问记录</h2>
+<div style="display:flex;flex-direction:column;font-family:var(--mono);font-size:12px;color:var(--ink2)">
+<div style="display:flex;gap:16px;height:32px;align-items:center;border-top:1px solid var(--line)"><span style="color:var(--muted)">9·30 21:05</span><span>进入</span><span>阿念的空间</span></div>
+<div style="display:flex;gap:16px;height:32px;align-items:center;border-top:1px solid var(--line)"><span style="color:var(--muted)">9·30 21:06</span><span>查看</span><span>成都吃喝攻略</span></div>
+<div style="display:flex;gap:16px;height:32px;align-items:center;border-top:1px solid var(--line)"><span style="color:var(--muted)">9·30 21:08</span><span>移动</span><span>露营装备清单 → #旅行</span></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeClass: this.props.dark ? 't-dark' : 't-light' };
+  }
+}
+</script>
+</body>
+</html>

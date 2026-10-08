@@ -1,0 +1,23 @@
+[Unit]
+Description=Chriptmas memory server
+After=network.target
+
+[Service]
+Type=simple
+User=chriptmas
+Group=chriptmas
+WorkingDirectory=/opt/chriptmas
+Environment=PYTHONPATH=/opt/chriptmas/src
+Environment=CHRIPTMAS_DEPLOY=server
+Environment=CHRIPTMAS_APP_ROOT=/var/lib/chriptmas
+LoadCredential=chriptmas-master-key:/etc/chriptmas/master-key
+ExecStart=/opt/chriptmas/.venv/bin/python -m backend.memory_app.serve
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/chriptmas
+
+[Install]
+WantedBy=multi-user.target

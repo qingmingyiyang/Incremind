@@ -1,0 +1,18 @@
+[
+  {
+    "target": "/api/settings",
+    "token": "v1:1700000000:00112233445566778899aabbccddeeff:9ff6849f10c3cf32b0e547a40162f8f850258afd2312ec6dde3177eb015288fb"
+  },
+  {
+    "target": "/api/settings?",
+    "token": "v1:1700000000:00112233445566778899aabbccddeeff:9ff6849f10c3cf32b0e547a40162f8f850258afd2312ec6dde3177eb015288fb"
+  },
+  {
+    "target": "/api/%2F/%2f?x=%2F&y=%2f",
+    "token": "v1:1700000000:00112233445566778899aabbccddeeff:093730c799424e72482028261be1d29f30d09f32140f97c8fec05060c38ffaf7"
+  },
+  {
+    "target": "/api/settings?x=?",
+    "token": "v1:1700000000:00112233445566778899aabbccddeeff:2e48fd084ee2c383e951a9fc812493c513119b026e355e74907152d39cddf39e"
+  }
+]

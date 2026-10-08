@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/series.schema.json",
+  "x-contract-version": "1.0",
+  "$defs": {
+    "SeriesPreferences": {
+      "additionalProperties": false,
+      "properties": {
+        "smart_model": {
+          "default": "",
+          "title": "Smart Model",
+          "type": "string"
+        },
+        "memory_model": {
+          "default": "",
+          "title": "Memory Model",
+          "type": "string"
+        },
+        "allow_cross_series_search": {
+          "default": false,
+          "title": "Allow Cross Series Search",
+          "type": "boolean"
+        },
+        "require_intake_review": {
+          "default": true,
+          "title": "Require Intake Review",
+          "type": "boolean"
+        },
+        "asset_policy": {
+          "default": "copy_and_extract",
+          "enum": [
+            "copy",
+            "copy_and_extract"
+          ],
+          "title": "Asset Policy",
+          "type": "string"
+        },
+        "video_default_ingest": {
+          "default": true,
+          "title": "Video Default Ingest",
+          "type": "boolean"
+        }
+      },
+      "title": "SeriesPreferences",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "series_id": {
+      "title": "Series Id",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "color": {
+      "default": "#a90000",
+      "title": "Color",
+      "type": "string"
+    },
+    "status": {
+      "default": "active",
+      "enum": [
+        "active",
+        "archived"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "is_default": {
+      "default": false,
+      "title": "Is Default",
+      "type": "boolean"
+    },
+    "relative_path": {
+      "title": "Relative Path",
+      "type": "string"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "title": "Updated At",
+      "type": "string"
+    },
+    "preferences": {
+      "$ref": "#/$defs/SeriesPreferences"
+    }
+  },
+  "required": [
+    "series_id",
+    "name",
+    "relative_path"
+  ],
+  "title": "Series",
+  "type": "object"
+}

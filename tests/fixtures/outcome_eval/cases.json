@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "annotation_basis": "按任务语义、同项目成果用途及最小标题落点独立标注；不依据算法输出修改答案。",
+  "evaluation_notes": "保留原 calibration/heldout 分区与全部标注。continuation@1 开发已观察全部12组，当前结果属于开发固定集，不作为独立盲测；真实模型质量另行验收。",
+  "cases": [
+    {
+      "id": "weekly-progress", "partition": "calibration", "project_id": "team",
+      "outcomes": [{"key": "weekly", "scene": null, "task_text": "编写团队周复盘", "title": "编写团队周复盘", "markdown": "# 团队周复盘\n\n## 进展\n\n本周完成资料整理。\n\n## 下周\n\n准备访谈。\n"}],
+      "next": {"task_text": "补充团队周复盘中的本周进展", "scene": null, "continue_from": null, "new_material": ["周五完成了三场访谈。"]},
+      "expected": {"continue_from": "weekly", "placements": [{"kind": "updated", "path": ["团队周复盘", "进展"], "required_text": "周五完成了三场访谈。"}]}
+    },
+    {
+      "id": "manual-smallest-section", "partition": "calibration", "project_id": "cafe",
+      "outcomes": [{"key": "operations", "scene": null, "task_text": "编写咖啡馆运营手册", "title": "编写咖啡馆运营手册", "markdown": "# 咖啡馆运营手册\n\n## 开店\n\n### 设备检查\n\n检查咖啡机和磨豆机。\n\n### 原料检查\n\n核对库存。\n\n## 闭店\n\n清洁台面。\n"}],
+      "next": {"task_text": "给咖啡馆运营手册补上设备开机检查", "scene": null, "continue_from": null, "new_material": ["开机前确认水箱液位，检查电源线有无破损。"]},
+      "expected": {"continue_from": "operations", "placements": [{"kind": "updated", "path": ["咖啡馆运营手册", "开店", "设备检查"], "required_text": "开机前确认水箱液位，检查电源线有无破损。"}]}
+    },
+    {
+      "id": "explicit-selection", "partition": "calibration", "project_id": "museum",
+      "outcomes": [
+        {"key": "volunteer", "scene": null, "task_text": "编写展览志愿者手册", "title": "编写展览志愿者手册", "markdown": "# 志愿者手册\n\n## 接待\n\n为观众指路。\n"},
+        {"key": "security", "scene": null, "task_text": "编写展览安全手册", "title": "编写展览安全手册", "markdown": "# 安全手册\n\n## 应急\n\n联系值班人员。\n"}
+      ],
+      "next": {"task_text": "把新材料补进这篇手册", "scene": null, "continue_from": "volunteer", "new_material": ["轮椅观众从东侧无障碍入口进入。"]},
+      "expected": {"continue_from": "volunteer", "placements": [{"kind": "updated", "path": ["志愿者手册", "接待"], "required_text": "轮椅观众从东侧无障碍入口进入。"}]}
+    },
+    {
+      "id": "scene-preference", "partition": "calibration", "project_id": "research",
+      "outcomes": [
+        {"key": "online", "scene": "线上", "task_text": "编写访谈复盘", "title": "编写访谈复盘", "markdown": "# 访谈复盘\n\n## 问题\n\n部分录音不清晰。\n"},
+        {"key": "field", "scene": "田野", "task_text": "编写访谈复盘", "title": "编写访谈复盘", "markdown": "# 访谈复盘\n\n## 问题\n\n场地噪声影响记录。\n"}
+      ],
+      "next": {"task_text": "给访谈复盘补充问题记录", "scene": "田野", "continue_from": null, "new_material": ["田野访谈改到上午后，背景噪声降低。"]},
+      "expected": {"continue_from": "field", "placements": [{"kind": "updated", "path": ["访谈复盘", "问题"], "required_text": "田野访谈改到上午后，背景噪声降低。"}]}
+    },
+    {
+      "id": "unrelated-task", "partition": "calibration", "project_id": "life",
+      "outcomes": [{"key": "trip", "scene": null, "task_text": "编写海边旅行清单", "title": "编写海边旅行清单", "markdown": "# 海边旅行\n\n## 行李\n\n带防晒霜。\n"}],
+      "next": {"task_text": "制定本月家庭收支预算", "scene": null, "continue_from": null, "new_material": ["本月需要缴纳物业费。"]},
+      "expected": {"continue_from": null, "placements": [{"kind": "added", "path": ["家庭收支预算", "固定支出"], "required_text": "本月需要缴纳物业费。"}]}
+    },
+    {
+      "id": "ambiguous-sibling", "partition": "calibration", "project_id": "store",
+      "outcomes": [
+        {"key": "north", "scene": null, "task_text": "编写北店运营总结", "title": "编写北店运营总结", "markdown": "# 北店运营总结\n\n## 营收\n\n客流稳定。\n"},
+        {"key": "south", "scene": null, "task_text": "编写南店运营总结", "title": "编写南店运营总结", "markdown": "# 南店运营总结\n\n## 营收\n\n客流稳定。\n"}
+      ],
+      "next": {"task_text": "编写门店运营总结", "scene": null, "continue_from": null, "new_material": ["本月新增外卖业务。"]},
+      "expected": {"continue_from": null, "placements": [{"kind": "added", "path": ["门店运营总结", "业务"], "required_text": "本月新增外卖业务。"}]}
+    },
+    {
+      "id": "append-user-paragraph", "partition": "calibration", "project_id": "launch",
+      "outcomes": [{"key": "retro", "scene": null, "task_text": "编写产品上线复盘", "title": "编写产品上线复盘", "markdown": "# 产品上线复盘\n\n## 决策\n\n优先上线登录功能。\n\n## 后续\n\n观察反馈。\n", "user_markdown": "# 产品上线复盘\n\n## 决策\n\n我们先上线登录，是因为试用者反复遇到登录阻碍。\n\n## 后续\n\n观察反馈。\n"}],
+      "next": {"task_text": "补充产品上线复盘中的决策依据", "scene": null, "continue_from": null, "new_material": ["上线后首周登录投诉减少。"]},
+      "expected": {"continue_from": "retro", "protected_paragraphs": ["我们先上线登录，是因为试用者反复遇到登录阻碍。"], "placements": [{"kind": "updated", "path": ["产品上线复盘", "决策"], "required_text": "上线后首周登录投诉减少。"}]}
+    },
+    {
+      "id": "add-small-heading", "partition": "calibration", "project_id": "training",
+      "outcomes": [{"key": "guide", "scene": null, "task_text": "编写新员工培训手册", "title": "编写新员工培训手册", "markdown": "# 新员工培训手册\n\n## 实践\n\n### 准备\n\n准备练习资料。\n\n## 考核\n\n完成练习。\n"}],
+      "next": {"task_text": "给新员工培训手册增加实践演示环节", "scene": null, "continue_from": null, "new_material": ["实践阶段增加由导师演示完整操作的环节。"]},
+      "expected": {"continue_from": "guide", "placements": [{"kind": "added", "path": ["新员工培训手册", "实践", "演示"], "after_path": ["新员工培训手册", "实践", "准备"], "required_text": "实践阶段增加由导师演示完整操作的环节。"}]}
+    },
+    {
+      "id": "fenced-heading", "partition": "heldout", "project_id": "technical",
+      "outcomes": [{"key": "setup", "scene": null, "task_text": "编写部署操作手册", "title": "编写部署操作手册", "markdown": "# 部署操作手册\n\n## 配置\n\n```text\n## 日志\n这只是配置示例中的文本。\n```\n\n## 日志\n\n检查启动日志。\n"}],
+      "next": {"task_text": "给部署操作手册补充日志检查", "scene": null, "continue_from": null, "new_material": ["日志中出现 ready 后再进行健康检查。"]},
+      "expected": {"continue_from": "setup", "placements": [{"kind": "updated", "path": ["部署操作手册", "日志"], "required_text": "日志中出现 ready 后再进行健康检查。"}]}
+    },
+    {
+      "id": "same-title-different-purpose", "partition": "heldout", "project_id": "community",
+      "outcomes": [
+        {"key": "recruit", "scene": null, "task_text": "编写社区招募宣传方案", "title": "宣传方案", "markdown": "# 社区招募宣传\n\n## 报名\n\n发布报名链接。\n"},
+        {"key": "safety", "scene": null, "task_text": "编写社区防火宣传方案", "title": "宣传方案", "markdown": "# 社区防火宣传\n\n## 提醒\n\n张贴防火提示。\n"}
+      ],
+      "next": {"task_text": "给社区招募宣传方案补充报名方式", "scene": null, "continue_from": null, "new_material": ["增加线下服务台报名。"]},
+      "expected": {"continue_from": "recruit", "placements": [{"kind": "updated", "path": ["社区招募宣传", "报名"], "required_text": "增加线下服务台报名。"}]}
+    },
+    {
+      "id": "new-topic-shared-word", "partition": "heldout", "project_id": "personal",
+      "outcomes": [{"key": "reading", "scene": null, "task_text": "编写读书总结", "title": "编写读书总结", "markdown": "# 读书总结\n\n## 收获\n\n建立每周阅读习惯。\n"}],
+      "next": {"task_text": "编写房屋漏水事故总结", "scene": null, "continue_from": null, "new_material": ["漏水来自厨房管道接头。"]},
+      "expected": {"continue_from": null, "placements": [{"kind": "added", "path": ["房屋漏水事故总结", "原因"], "required_text": "漏水来自厨房管道接头。"}]}
+    },
+    {
+      "id": "two-small-sections", "partition": "heldout", "project_id": "garden",
+      "outcomes": [{"key": "care", "scene": null, "task_text": "编写阳台植物养护手册", "title": "编写阳台植物养护手册", "markdown": "# 阳台植物养护手册\n\n## 日常\n\n### 浇水\n\n按土壤干湿浇水。\n\n### 光照\n\n保持散射光。\n\n## 检查\n\n检查叶片。\n"}],
+      "next": {"task_text": "给阳台植物养护手册补充夏季浇水和光照", "scene": null, "continue_from": null, "new_material": ["夏季在清晨浇水。", "正午需要遮挡强光。"]},
+      "expected": {"continue_from": "care", "placements": [{"kind": "updated", "path": ["阳台植物养护手册", "日常", "浇水"], "required_text": "夏季在清晨浇水。"}, {"kind": "updated", "path": ["阳台植物养护手册", "日常", "光照"], "required_text": "正午需要遮挡强光。"}]}
+    }
+  ]
+}

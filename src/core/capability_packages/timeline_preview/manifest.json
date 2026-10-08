@@ -1,0 +1,30 @@
+{
+  "schema_version": "2.0.0",
+  "core_api": "1",
+  "capability_id": "timeline_preview",
+  "capability_revision": "2.0.0",
+  "display_name": "Timeline Preview",
+  "kind": "read_only_view",
+  "execution_state_owner": "core_effect_log",
+  "recovery_owner": "core_reaper",
+  "secret_access": "lease_reference_only",
+  "memory_write": "proposal_only",
+  "document_write": "draft_only",
+  "project_skill_write": "proposal_only",
+  "contributions": ["read_only_preview"],
+  "provides": {"views": ["timeline"]},
+  "tools": [
+    {
+      "id": "timeline.preview",
+      "exposure": "internal",
+      "contributes": "read_only_preview",
+      "handler": "preview.py:timeline_preview"
+    }
+  ],
+  "workflows": [],
+  "permissions": {"net": [], "fs": [], "secrets": []},
+  "budgets": {"max_bytes": 1048576, "max_seconds": 5},
+  "effects": {"timeline_preview": "PURE"},
+  "ui": {"label": "Timeline", "icon": "timeline", "progress_steps": []},
+  "tests": ["tests/contract_test.py"]
+}

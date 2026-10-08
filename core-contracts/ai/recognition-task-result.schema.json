@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://default/contracts/recognition-task-result.schema.json",
+  "title": "RecognitionTaskResultReference",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "content"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "kind": {"const": "recognition.task.result"},
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "document_id", "document_revision"],
+      "properties": {
+        "task_id": {"type": "string", "minLength": 1},
+        "document_id": {"type": "string", "minLength": 1},
+        "document_revision": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

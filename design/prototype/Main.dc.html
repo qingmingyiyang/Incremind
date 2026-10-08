@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>工作台</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500&amp;family=Noto+Serif+SC:wght@500;700&amp;family=Fira+Code:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+.app{--serif:'Noto Serif SC',serif;--sans:'Noto Sans SC',system-ui,sans-serif;--mono:'Fira Code',ui-monospace,monospace}
+.t-light{--paper:#F7F4EE;--panel:#FFFDF9;--sunk:#EFEAE1;--ink:#1C1A17;--ink2:#4E4A44;--muted:#6F6A62;--line:#E6E0D5;--line2:#D2CABC;--red:#C0282F;--mark:#F4E3AE;--onred:#FFFFFF;--shadow:rgba(28,26,23,.14)}
+.t-dark{--paper:#1A1815;--panel:#221F1B;--sunk:#2A2621;--ink:#ECE6DB;--ink2:#C4BDB1;--muted:#A39C90;--line:#332F29;--line2:#48423A;--red:#E66B6F;--mark:#5A4919;--onred:#1A1815;--shadow:rgba(0,0,0,.45)}
+.ic{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--line2);flex-shrink:0}
+.dot.on{background:var(--ink)}
+.dot.now{background:var(--red);animation:pulse 1s ease-in-out infinite}
+.dot.red{background:var(--red)}
+.dot.fail{background:transparent;box-shadow:inset 0 0 0 2px var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:focus-visible,a:focus-visible,textarea:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+textarea{font:inherit;color:var(--ink);background:transparent;border:0;outline:none;resize:none}
+textarea::placeholder{color:var(--muted)}
+a{color:inherit;text-decoration:none}
+mark{background:var(--mark);color:var(--ink);border-radius:2px;padding:0 1px}
+mark.hl{outline:2px solid var(--red);outline-offset:1px}
+.seg{color:var(--muted);border-bottom:2px solid transparent}
+.seg.on{color:var(--ink);border-bottom-color:var(--red)}
+.chip.ok{border-color:var(--ink2)}
+</style>
+</helmet>
+<div class="app {{themeClass}}" style="width:1440px;height:900px;position:relative;overflow:hidden;display:grid;grid-template-columns:64px minmax(0,1fr);background:var(--paper);color:var(--ink);font-family:var(--sans)">
+
+<nav aria-label="主导航" style="border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:16px 0;gap:4px">
+<a href="Companion.dc.html" aria-label="伙伴" title="伙伴" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;margin-bottom:20px">
+<img src="{{bearSrc}}" alt="" style="width:34px;height:34px;border-radius:50%;background:var(--sunk);object-fit:cover">
+</a>
+<a href="Main.dc.html" aria-current="page" style="position:relative;width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--red)">
+<span style="position:absolute;left:0;top:16px;width:2px;height:28px;background:var(--red)"></span>
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+<span style="font-size:11px;color:var(--ink)">工作台</span>
+</a>
+<a href="Library.dc.html" style="width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"></path><path d="M3 13l9 5 9-5"></path></svg>
+<span style="font-size:11px">资料库</span>
+</a>
+<a href="Settings.dc.html" style="width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+<span style="font-size:11px">设置</span>
+</a>
+<div style="flex-grow:1"></div>
+<button aria-label="切换明暗" title="明暗" onClick="{{toggleTheme}}" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg>
+</button>
+</nav>
+
+<div style="display:flex;flex-direction:column;min-width:0;height:900px">
+<header style="height:56px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 28px">
+<button aria-label="切换项目" style="display:flex;align-items:center;gap:8px;height:44px;font-size:14px;color:var(--ink)">
+<span style="width:6px;height:6px;border-radius:50%;background:var(--red)"></span>
+<span>创作助手</span>
+<svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color:var(--muted)"><path d="M6 9l6 6 6-6"></path></svg>
+</button>
+<span style="font-size:13px;color:var(--muted);font-family:var(--mono)">9·30 周三</span>
+</header>
+
+<div style="flex-grow:1;min-height:0;display:grid;grid-template-columns:{{gridCols}}">
+<div style="position:relative;display:flex;flex-direction:column;min-width:0;min-height:0">
+
+<sc-if value="{{isEmpty}}" hint-placeholder-val="{{ true }}">
+<div style="flex-grow:1;display:flex;align-items:flex-end;justify-content:center;padding:0 40px 40px">
+<h1 style="margin:0;font-family:var(--serif);font-weight:700;font-size:52px;letter-spacing:0.02em;color:var(--ink)">今天想记住什么？</h1>
+</div>
+</sc-if>
+
+<sc-if value="{{isThread}}" hint-placeholder-val="{{ false }}">
+<div style="flex-grow:1;min-height:0;overflow:auto;padding:16px 28px 24px">
+<div style="max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:28px">
+
+<sc-if value="{{showRem}}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<div style="align-self:flex-end;max-width:520px;background:var(--sunk);border-radius:12px;padding:10px 14px;font-size:15px;line-height:1.6;color:var(--ink2);word-break:break-all">{{remUser}}</div>
+<div style="display:flex;gap:14px;align-items:flex-start">
+<span aria-hidden="true" style="width:20px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--red);flex-shrink:0">
+<svg class="ic" viewBox="0 0 24 24" width="16" height="16"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"></path></svg>
+</span>
+<div style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;align-items:center;gap:14px;min-height:28px">
+<span style="font-size:16px;font-weight:500;color:{{remTitleColor}}">{{remTitle}}</span>
+<span title="原件 · 正文 · 整理 · 入库" style="display:inline-flex;gap:5px;align-items:center">
+<sc-for list="{{remDots}}" as="d" hint-placeholder-count="4"><span class="dot {{d.cls}}"></span></sc-for>
+</span>
+<div style="flex-grow:1"></div>
+<sc-if value="{{remDone}}" hint-placeholder-val="{{ true }}">
+<button aria-label="打开整理稿" title="整理稿" onClick="{{openDraft}}" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--ink2);border-radius:4px">
+<svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"></path></svg>
+</button>
+</sc-if>
+</div>
+<sc-if value="{{remDone}}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+<sc-for list="{{chips}}" as="c" hint-placeholder-count="2">
+<sc-if value="{{c.visible}}" hint-placeholder-val="{{ true }}">
+<span class="chip {{c.cls}}" style="display:inline-flex;align-items:center;gap:2px;height:34px;padding:0 4px 0 12px;border:1px solid var(--line2);border-radius:4px;font-size:14px;background:var(--panel);color:var(--ink)">
+<span style="padding-right:4px">{{c.text}}</span>
+<sc-if value="{{c.pending}}" hint-placeholder-val="{{ true }}">
+<span style="display:inline-flex">
+<button aria-label="确认" title="确认" onClick="{{c.ok}}" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--ink2);border-radius:4px">
+<svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+</button>
+<button aria-label="丢弃" title="丢弃" onClick="{{c.drop}}" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--muted);border-radius:4px">
+<svg class="ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+</button>
+</span>
+</sc-if>
+<sc-if value="{{c.confirmed}}" hint-placeholder-val="{{ false }}">
+<span aria-label="已确认" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--red)">
+<svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+</span>
+</sc-if>
+</span>
+</sc-if>
+</sc-for>
+<button title="和「钩子公式」相关" aria-label="相关认识 1 条" onClick="{{openRelated}}" style="height:34px;padding:0 8px;font-family:var(--mono);font-size:13px;color:var(--muted)">∞ 1</button>
+</div>
+</sc-if>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{showAsk}}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<div style="align-self:flex-end;max-width:520px;background:var(--sunk);border-radius:12px;padding:10px 14px;font-size:15px;line-height:1.6;color:var(--ink2)">{{askUser}}</div>
+<div style="display:flex;gap:14px;align-items:flex-start">
+<span aria-hidden="true" style="width:20px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--red);flex-shrink:0">
+<svg viewBox="0 0 24 24" width="14" height="14" style="fill:currentColor"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"></path></svg>
+</span>
+<sc-if value="{{askThinking}}" hint-placeholder-val="{{ false }}">
+<span style="display:inline-flex;gap:5px;align-items:center;height:30px"><span class="dot now"></span><span class="dot"></span><span class="dot"></span></span>
+</sc-if>
+<sc-if value="{{askReady}}" hint-placeholder-val="{{ true }}">
+<div style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:10px">
+<p style="margin:0;font-family:var(--serif);font-size:18px;line-height:1.8;color:var(--ink)">三种：制造悬念、制造反差、用具体数字。开头 3 秒内用上其中一种<button aria-label="引用 1" onClick="{{cite1}}" style="vertical-align:super;font-size:11px;font-family:var(--mono);color:var(--red);padding:0 3px;line-height:1">1</button>，数字比形容词更抓人<button aria-label="引用 2" onClick="{{cite2}}" style="vertical-align:super;font-size:11px;font-family:var(--mono);color:var(--red);padding:0 3px;line-height:1">2</button>。</p>
+<button aria-label="本次上下文" title="认识 2 · 摘要 1 · 原文 1" onClick="{{openAskCtx}}" style="align-self:flex-start;display:flex;gap:6px;align-items:center;font-family:var(--mono);font-size:12px;color:var(--muted);min-height:32px">
+<span style="padding:2px 6px;border:1px solid var(--line);border-radius:4px">认 2</span>
+<span style="padding:2px 6px;border:1px solid var(--line);border-radius:4px">摘 1</span>
+<span style="padding:2px 6px;border:1px solid var(--line);border-radius:4px">原 1</span>
+<span style="margin-left:4px">1.1k</span>
+</button>
+</div>
+</sc-if>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{showDo}}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<div style="align-self:flex-end;max-width:520px;background:var(--sunk);border-radius:12px;padding:10px 14px;font-size:15px;line-height:1.6;color:var(--ink2)">{{doUser}}</div>
+<div style="display:flex;gap:14px;align-items:center">
+<span aria-hidden="true" style="width:20px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--red);flex-shrink:0">
+<svg class="ic" viewBox="0 0 24 24" width="15" height="15"><path d="M12 4l8.5 15h-17z"></path></svg>
+</span>
+<span style="font-size:16px;font-weight:500">写 10 个选题</span>
+<span title="读取认识 · 生成 · 存为文档" style="display:inline-flex;gap:5px;align-items:center">
+<sc-for list="{{doDots}}" as="d" hint-placeholder-count="3"><span class="dot {{d.cls}}"></span></sc-for>
+</span>
+<div style="flex-grow:1"></div>
+<button aria-label="本次上下文" title="{{doCtxTitle}}" onClick="{{openDoCtx}}" style="height:34px;padding:0 6px;display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;color:var(--muted)">
+<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" style="transform:rotate(-90deg)"><circle cx="10" cy="10" r="7" fill="none" stroke="var(--line2)" stroke-width="3"></circle><circle cx="10" cy="10" r="7" fill="none" stroke="var(--ink)" stroke-width="3" pathLength="100" stroke-dasharray="{{doCtxDash}}"></circle></svg>
+<span>{{doCtxPct}}</span>
+</button>
+<sc-if value="{{doWaiting}}" hint-placeholder-val="{{ true }}">
+<button onClick="{{approve}}" style="height:34px;padding:0 16px;border:1px solid var(--red);color:var(--red);border-radius:4px;font-size:14px">批准</button>
+</sc-if>
+<sc-if value="{{doDone}}" hint-placeholder-val="{{ false }}">
+<button onClick="{{openDo}}" style="height:34px;padding:0 6px;display:flex;align-items:center;gap:6px;font-size:14px;color:var(--ink)">选题清单<svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"></path></svg></button>
+</sc-if>
+</div>
+</div>
+</sc-if>
+
+</div>
+</div>
+</sc-if>
+
+<div style="flex-shrink:0;padding:0 28px {{composerPad}}">
+<div style="max-width:720px;margin:0 auto;background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:14px 12px 8px 18px;display:flex;flex-direction:column;gap:6px">
+<textarea aria-label="输入" rows="2" placeholder="{{placeholder}}" value="{{text}}" onChange="{{onText}}" onKeyDown="{{onKey}}" style="width:100%;font-size:16px;line-height:1.6;min-height:52px"></textarea>
+<div style="display:flex;align-items:center;gap:2px">
+<button aria-label="添加文件" title="文件" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:var(--muted);border-radius:4px">
+<svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+</button>
+<button aria-label="录音" title="录音" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:var(--muted);border-radius:4px">
+<svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg>
+</button>
+<span style="margin-left:8px;font-size:13px;color:var(--muted);font-family:var(--mono)">#创作助手</span>
+<div style="flex-grow:1"></div>
+<sc-for list="{{intents}}" as="it" hint-placeholder-count="3">
+<button class="seg {{it.cls}}" aria-pressed="{{it.pressed}}" onClick="{{it.pick}}" style="height:32px;padding:0 10px;font-size:13px">{{it.label}}</button>
+</sc-for>
+<button aria-label="发送" onClick="{{send}}" style="margin-left:10px;width:38px;height:38px;border-radius:50%;background:var(--red);color:var(--onred);display:flex;align-items:center;justify-content:center">
+<svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" style="stroke-width:2"><path d="M12 19V5M6 11l6-6 6 6"></path></svg>
+</button>
+</div>
+</div>
+</div>
+
+<sc-if value="{{isEmpty}}" hint-placeholder-val="{{ true }}">
+<div style="flex-grow:1.4"></div>
+</sc-if>
+
+</div>
+
+<sc-if value="{{focusOpen}}" hint-placeholder-val="{{ false }}">
+<aside aria-label="聚焦面板" style="border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-width:0;min-height:0">
+<div style="height:56px;flex-shrink:0;display:flex;align-items:center;gap:14px;padding:0 12px 0 24px;border-bottom:1px solid var(--line)">
+<span style="font-size:15px;font-weight:500">{{focusTitle}}</span>
+<sc-if value="{{isDraft}}" hint-placeholder-val="{{ true }}">
+<span style="font-size:12px;color:{{verColor}}">{{verLabel}}</span>
+</sc-if>
+<div style="flex-grow:1"></div>
+<sc-if value="{{showVerify}}" hint-placeholder-val="{{ true }}">
+<button onClick="{{verify}}" style="height:32px;padding:0 10px;font-size:13px;color:var(--red)">核对完成</button>
+</sc-if>
+<button aria-label="关闭" onClick="{{closeFocus}}" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+</button>
+</div>
+<div style="flex-grow:1;min-height:0;overflow:auto;padding:24px 24px 96px">
+
+<sc-if value="{{isDraft}}" hint-placeholder-val="{{ true }}">
+<div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:28px">
+<section>
+<div style="font-size:12px;color:var(--muted);padding-bottom:8px;border-bottom:1px solid var(--line);margin-bottom:14px">原文</div>
+<p style="margin:0 0 14px;font-size:14px;line-height:1.95;color:var(--ink2)">很多人把视频做坏，不是内容不好，而是开头没留住人。<mark class="{{hlA}}">观众通常在开头三秒内决定是否继续看</mark>。</p>
+<p style="margin:0 0 14px;font-size:14px;line-height:1.95;color:var(--ink2)">好的开头有三种办法：制造悬念，让人想知道结果；制造反差，打破预期；<mark class="{{hlB}}">用具体数字代替形容词，“3 个方法”比“几个好方法”更抓人</mark>。</p>
+<p style="margin:0;font-size:14px;line-height:1.95;color:var(--ink2)">别在开头自我介绍。先给钩子，再给信息。</p>
+</section>
+<section>
+<div style="font-size:12px;color:var(--muted);padding-bottom:8px;border-bottom:1px solid var(--line);margin-bottom:14px">整理</div>
+<div style="display:flex;flex-direction:column;gap:18px;font-size:14px;line-height:1.75">
+<div>
+<div style="font-size:12px;color:var(--muted)">标题</div>
+<div style="font-family:var(--serif);font-size:18px;font-weight:700">短视频开头的三个钩子</div>
+</div>
+<div>
+<div style="font-size:12px;color:var(--muted)">摘要</div>
+<div>开头三秒决定去留；悬念、反差、具体数字三种钩子最有效。</div>
+</div>
+<div>
+<div style="font-size:12px;color:var(--muted)">事实</div>
+<button onClick="{{cite1}}" style="display:block;text-align:left;padding:3px 0">观众在开头三秒决定是否继续 <span style="color:var(--red);font-family:var(--mono);font-size:12px">↩</span></button>
+<button onClick="{{cite2}}" style="display:block;text-align:left;padding:3px 0">具体数字比形容词更抓人 <span style="color:var(--red);font-family:var(--mono);font-size:12px">↩</span></button>
+</div>
+<div>
+<div style="font-size:12px;color:var(--muted)">待办</div>
+<div>下期开头改用数字钩子</div>
+</div>
+</div>
+</section>
+</div>
+</sc-if>
+
+<sc-if value="{{isInsight}}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:22px">
+<div aria-label="层级" style="display:flex;gap:8px;font-size:13px;color:var(--muted)"><span style="color:var(--red)">认识</span><span>›</span><span>摘要</span><span>›</span><span>整理稿</span><span>›</span><span>原件</span></div>
+<p style="margin:0;font-family:var(--serif);font-size:28px;line-height:1.5;font-weight:700">钩子公式：悬念 + 反差 + 利益点</p>
+<div style="font-size:13px;color:var(--muted);display:flex;gap:14px;font-family:var(--mono)"><span>选题</span><span>3 来源</span><span>生效</span></div>
+<a href="Library.dc.html" style="align-self:flex-start;font-size:14px;color:var(--red);padding:6px 0;border-bottom:1px solid var(--red)">在资料库下钻</a>
+</div>
+</sc-if>
+
+<sc-if value="{{isCtx}}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:28px">
+
+<section aria-label="用量" style="display:flex;flex-direction:column;gap:14px">
+<div style="display:flex;align-items:baseline;gap:10px">
+<span style="font-family:var(--mono);font-size:30px;font-weight:500;letter-spacing:-0.5px">{{ctxUsed}}</span>
+<span style="font-family:var(--mono);font-size:15px;color:var(--muted)">/ {{ctxWin}}</span>
+<div style="flex-grow:1"></div>
+<span style="font-family:var(--mono);font-size:15px;color:var(--ink2)">{{ctxPct}}</span>
+</div>
+<div style="position:relative;padding:4px 0">
+<div aria-hidden="true" style="height:8px;background:var(--sunk);border-radius:4px;overflow:hidden;display:flex">
+<sc-for list="{{ctxSegs}}" as="g" hint-placeholder-count="5"><span title="{{g.label}}" style="width:{{g.w}};min-width:2px;background:{{g.bg}};flex-shrink:0"></span></sc-for>
+</div>
+<sc-for list="{{ctxTicks}}" as="k" hint-placeholder-count="0"><span title="{{k.label}}" style="position:absolute;left:{{k.x}};top:0;width:1px;height:16px;background:{{k.color}}"></span></sc-for>
+</div>
+<div style="display:flex;flex-direction:column">
+<sc-for list="{{ctxRows}}" as="r" hint-placeholder-count="7">
+<div style="display:grid;grid-template-columns:14px minmax(0,1fr) 72px 64px;gap:12px;align-items:center;height:34px;font-size:14px;color:{{r.fg}}">
+<span style="width:11px;height:11px;border-radius:2px;background:{{r.bg}};box-shadow:inset 0 0 0 1px var(--line2)"></span>
+<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{r.label}}<span style="margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--muted)">{{r.count}}</span></span>
+<span style="text-align:right;font-family:var(--mono);font-size:13px;color:var(--muted)">{{r.tok}}</span>
+<span style="text-align:right;font-family:var(--mono);font-size:13px">{{r.pct}}</span>
+</div>
+</sc-for>
+</div>
+</section>
+
+<sc-if value="{{ctxIsAsk}}" hint-placeholder-val="{{ true }}">
+<section aria-label="阶梯" style="border-top:1px solid var(--line);padding-top:6px">
+<button aria-expanded="{{secLadder}}" onClick="{{toggleLadder}}" style="width:100%;height:40px;display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink2)">
+<svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="transform:{{ladderRot}}"><path d="M6 9l6 6 6-6"></path></svg>
+<span>阶梯</span><div style="flex-grow:1"></div><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">≥60%</span>
+</button>
+<sc-if value="{{secLadder}}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-direction:column;padding:2px 0 6px 22px">
+<sc-for list="{{ctxTrace}}" as="t" hint-placeholder-count="4">
+<div style="display:grid;grid-template-columns:56px 64px minmax(0,1fr) 44px 14px;gap:12px;align-items:center;height:34px;font-size:13px;color:{{t.fg}}">
+<span>{{t.label}}</span>
+<span style="font-family:var(--mono);font-size:12px;color:var(--muted)">{{t.pick}}</span>
+<span aria-hidden="true" style="position:relative;height:4px;background:var(--sunk);border-radius:2px">
+<span style="position:absolute;left:0;top:0;bottom:0;width:{{t.cov}};background:{{t.bar}};border-radius:2px"></span>
+<span style="position:absolute;left:60%;top:-4px;width:1px;height:12px;background:var(--line2)"></span>
+</span>
+<span style="text-align:right;font-family:var(--mono);font-size:12px">{{t.covText}}</span>
+<span class="dot {{t.dot}}" title="{{t.dotTitle}}"></span>
+</div>
+</sc-for>
+</div>
+</sc-if>
+</section>
+</sc-if>
+
+<section aria-label="条目" style="border-top:1px solid var(--line);padding-top:6px">
+<button aria-expanded="{{secItems}}" onClick="{{toggleItems}}" style="width:100%;height:40px;display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink2)">
+<svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="transform:{{itemsRot}}"><path d="M6 9l6 6 6-6"></path></svg>
+<span>{{ctxItemsLabel}}</span><div style="flex-grow:1"></div><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">{{ctxItemsCount}}</span>
+</button>
+<sc-if value="{{secItems}}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-direction:column;padding:2px 0 6px 22px">
+<sc-for list="{{ctxItems}}" as="i" hint-placeholder-count="4">
+<button onClick="{{i.open}}" style="display:grid;grid-template-columns:28px minmax(0,1fr) 20px 52px;gap:10px;align-items:center;height:36px;text-align:left;font-size:14px">
+<span style="font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;text-align:center;padding:1px 0">{{i.badge}}</span>
+<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{i.title}}</span>
+<span style="font-family:var(--mono);font-size:11px;color:var(--red);text-align:center">{{i.cite}}</span>
+<span style="text-align:right;font-family:var(--mono);font-size:12px;color:var(--muted)">{{i.tok}}</span>
+</button>
+</sc-for>
+</div>
+</sc-if>
+</section>
+
+<section aria-label="外发" style="border-top:1px solid var(--line);padding-top:14px;display:flex;flex-direction:column">
+<sc-for list="{{ctxSend}}" as="e" hint-placeholder-count="4">
+<div style="display:flex;align-items:center;gap:12px;height:34px;font-size:14px">
+<span style="color:var(--muted)">{{e.label}}</span><div style="flex-grow:1"></div>
+<span style="font-family:var(--mono);font-size:13px;color:{{e.fg}}">{{e.value}}</span>
+</div>
+</sc-for>
+<a href="Settings.dc.html" style="align-self:flex-start;margin-top:10px;font-size:13px;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--line2)">外发设置</a>
+</section>
+
+</div>
+</sc-if>
+
+<sc-if value="{{isResult}}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px">
+<h2 style="margin:0;font-family:var(--serif);font-size:26px;font-weight:700">选题清单</h2>
+<ol style="margin:0;padding-left:22px;display:flex;flex-direction:column;gap:10px;font-size:15px;line-height:1.6">
+<li>用 3 个数字讲清你的行业</li>
+<li>我做错的 5 个开头</li>
+<li>同一条视频，两种开头对比</li>
+<li>30 秒拆解一条爆款</li>
+<li>反常识：为什么越短越难做</li>
+<li>新手最常问的 3 个问题</li>
+<li>一周拍摄计划怎么排</li>
+<li>标题实验：形容词对数字</li>
+<li>从评论区挖选题</li>
+<li>复盘上个月最差的一条</li>
+</ol>
+</div>
+</sc-if>
+
+</div>
+</aside>
+</sc-if>
+
+</div>
+</div>
+
+<div style="position:absolute;right:24px;bottom:20px;display:flex;flex-direction:column;align-items:flex-end;gap:8px;z-index:5">
+<sc-if value="{{trayOpen}}" hint-placeholder-val="{{ false }}">
+<div role="region" aria-label="进度列表" style="width:320px;background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:0 12px 32px var(--shadow);padding:4px 0">
+<sc-for list="{{trayItems}}" as="t" hint-placeholder-count="3">
+<div style="display:flex;align-items:center;gap:12px;min-height:44px;padding:0 16px;border-top:1px solid {{t.border}}">
+<span class="dot {{t.dot}}"></span>
+<span style="flex-grow:1;min-width:0;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{t.title}}</span>
+<span style="font-family:var(--mono);font-size:12px;color:var(--muted)">{{t.meta}}</span>
+<sc-if value="{{t.retryable}}" hint-placeholder-val="{{ false }}">
+<button onClick="{{t.retry}}" style="height:32px;font-size:13px;color:var(--red)">重试</button>
+</sc-if>
+</div>
+</sc-for>
+</div>
+</sc-if>
+<button aria-label="进度" aria-expanded="{{trayOpen}}" onClick="{{toggleTray}}" style="height:36px;padding:0 14px;border:1px solid var(--line2);border-radius:18px;background:var(--panel);display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;color:var(--ink)">
+<span class="dot now"></span><span>{{procCount}}</span>
+<span class="dot red" style="margin-left:6px"></span><span>{{pendCount}}</span>
+<sc-if value="{{hasFail}}" hint-placeholder-val="{{ true }}">
+<span style="display:inline-flex;align-items:center;gap:8px;margin-left:6px"><span class="dot fail"></span><span>{{failCount}}</span></span>
+</sc-if>
+</button>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"initialStage":{"editor":"enum","options":["empty","thread","context"],"default":"empty"},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    const ctx = props.initialStage === 'context';
+    const thread = ctx || props.initialStage === 'thread';
+    this.timers = [];
+    this.state = {
+      darkOverride: null,
+      text: '',
+      intent: thread ? 'ask' : 'remember',
+      locked: false,
+      showRem: thread, remStep: thread ? 4 : 0, remUser: 'https://mp.weixin.qq.com/s/hook-3s',
+      showAsk: thread, askPhase: thread ? 2 : 0, askUser: '上次那篇说的开头技巧有哪些？',
+      showDo: ctx, doStep: ctx ? 4 : 0, doUser: '帮我基于选题认识写 10 个选题',
+      chips: { c1: 'pending', c2: 'pending' },
+      focus: ctx ? 'context' : null, hl: null, verified: false,
+      ctxOf: 'ask', secLadder: true, secItems: true,
+      trayOpen: false, retry: 0
+    };
+  }
+  componentWillUnmount() { this.timers.forEach(function (id) { clearTimeout(id); }); }
+  later(ms, fn) { this.timers.push(setTimeout(fn, ms)); }
+  guess(text) {
+    const t = text.trim();
+    if (/^https?:\/\//i.test(t) || /\.(pdf|docx|m4a|mp3|mp4)$/i.test(t)) return 'remember';
+    if (/^(帮我|请帮|写|整理一份|做一份)/.test(t)) return 'do';
+    if (/[？?]$/.test(t) || /^(什么|怎么|为什么|哪|上次)/.test(t)) return 'ask';
+    return null;
+  }
+  send() {
+    const s = this.state;
+    const text = s.text.trim();
+    if (s.intent === 'remember') {
+      if (s.showRem && s.remStep < 4) return;
+      this.setState({ showRem: true, remStep: 1, remUser: text || 'https://mp.weixin.qq.com/s/hook-3s', chips: { c1: 'pending', c2: 'pending' }, text: '', intent: 'ask', locked: false });
+      this.later(800, () => this.setState({ remStep: 2 }));
+      this.later(1700, () => this.setState({ remStep: 3 }));
+      this.later(2600, () => this.setState({ remStep: 4 }));
+    } else if (s.intent === 'ask') {
+      this.setState({ showAsk: true, askPhase: 1, askUser: text || '上次那篇说的开头技巧有哪些？', text: '', intent: 'do', locked: false });
+      this.later(1100, () => this.setState({ askPhase: 2 }));
+    } else {
+      this.setState({ showDo: true, doStep: 0, doUser: text || '帮我基于选题认识写 10 个选题', text: '', intent: 'remember', locked: false });
+    }
+  }
+  renderVals() {
+    const s = this.state;
+    const dark = s.darkOverride === null ? !!this.props.dark : s.darkOverride;
+    const set = (patch) => this.setState(patch);
+    const remDone = s.showRem && s.remStep >= 4;
+    const chipDefs = [
+      { id: 'c1', text: '开头 3 秒决定完播率' },
+      { id: 'c2', text: '标题用具体数字更有效' }
+    ];
+    const chips = chipDefs.map((c) => {
+      const st = s.chips[c.id];
+      return {
+        text: c.text,
+        visible: st !== 'drop',
+        pending: st === 'pending',
+        confirmed: st === 'ok',
+        cls: st === 'ok' ? 'ok' : '',
+        ok: () => this.setState({ chips: Object.assign({}, this.state.chips, { [c.id]: 'ok' }) }),
+        drop: () => this.setState({ chips: Object.assign({}, this.state.chips, { [c.id]: 'drop' }) })
+      };
+    });
+    const pendingChips = remDone ? chips.filter((c) => c.pending).length : 0;
+    const remDots = [0, 1, 2, 3].map((i) => ({ cls: i < s.remStep ? 'on' : (i === s.remStep && s.showRem && s.remStep < 4 ? 'now' : '') }));
+    const doDots = [1, 2, 3].map((i) => ({ cls: i < s.doStep ? 'on' : (i === s.doStep ? 'now' : '') }));
+    const doWaiting = s.showDo && s.doStep === 0;
+    const doDone = s.showDo && s.doStep >= 4;
+    const approve = () => {
+      this.setState({ doStep: 1 });
+      this.later(900, () => this.setState({ doStep: 2 }));
+      this.later(2000, () => this.setState({ doStep: 3 }));
+      this.later(2800, () => this.setState({ doStep: 4 }));
+    };
+    const items = [];
+    if (s.showRem && s.remStep < 4) items.push({ title: 'mp.weixin.qq.com', meta: s.remStep + '/4', dot: 'now' });
+    items.push({ title: '面试复盘.m4a', meta: '62%', dot: 'now' });
+    if (pendingChips > 0) items.push({ title: '短视频开头的三个钩子', meta: String(pendingChips), dot: 'red' });
+    if (doWaiting) items.push({ title: '写 10 个选题', meta: '待批准', dot: 'red' });
+    if (s.showDo && s.doStep > 0 && s.doStep < 4) items.push({ title: '写 10 个选题', meta: s.doStep + '/3', dot: 'now' });
+    if (s.retry === 0) items.push({ title: '用户研究.pdf', meta: '', dot: 'fail', retryable: true, retry: () => { this.setState({ retry: 1 }); this.later(1800, () => this.setState({ retry: 2 })); } });
+    if (s.retry === 1) items.push({ title: '用户研究.pdf', meta: '…', dot: 'now' });
+    const trayItems = items.map((t, i) => Object.assign({ retryable: false, retry: null }, t, { border: i === 0 ? 'transparent' : 'var(--line)' }));
+    const procCount = trayItems.filter((t) => t.dot === 'now').length;
+    const pendCount = trayItems.filter((t) => t.dot === 'red').length;
+    const failCount = trayItems.filter((t) => t.dot === 'fail').length;
+    const isThread = s.showRem || s.showAsk || s.showDo;
+    const intentDefs = [['remember', '记住'], ['ask', '问'], ['do', '干活']];
+    const placeholders = { remember: '丢进来，或者问我', ask: '问问你记住的', do: '要我做什么' };
+    const focus = s.focus;
+    const cx = this.contextView(s);
+    return Object.assign(cx, {
+      themeClass: dark ? 't-dark' : 't-light',
+      bearSrc: pendCount > 0 ? '/_blob/534ec8071ddfdf6c7d1ed4414f26015e' : '/_blob/a1342611c9d3b97bd9c8b4358f376583',
+      toggleTheme: () => set({ darkOverride: !dark }),
+      isEmpty: !isThread,
+      isThread: isThread,
+      composerPad: isThread ? '24px' : '0px',
+      gridCols: focus ? 'minmax(0,1fr) 600px' : 'minmax(0,1fr) 0px',
+      text: s.text,
+      placeholder: isThread ? placeholders[s.intent] : placeholders.remember,
+      onText: (e) => {
+        const text = e.target.value;
+        const g = this.guess(text);
+        this.setState((prev) => ({ text: text, intent: (!prev.locked && g) ? g : prev.intent }));
+      },
+      onKey: (e) => {
+        const composing = e.nativeEvent && e.nativeEvent.isComposing;
+        if (e.key === 'Enter' && !e.shiftKey && !composing) { e.preventDefault(); this.send(); }
+      },
+      send: () => this.send(),
+      intents: intentDefs.map((d) => ({ label: d[1], cls: s.intent === d[0] ? 'on' : '', pressed: s.intent === d[0], pick: () => set({ intent: d[0], locked: true }) })),
+      showRem: s.showRem, remUser: s.remUser,
+      remTitle: s.remStep >= 2 ? '短视频开头的三个钩子' : 'mp.weixin.qq.com',
+      remTitleColor: s.remStep >= 2 ? 'var(--ink)' : 'var(--muted)',
+      remDots: remDots, remDone: remDone, chips: chips,
+      openDraft: () => set({ focus: 'draft', hl: null }),
+      openRelated: () => set({ focus: 'insight' }),
+      showAsk: s.showAsk, askUser: s.askUser,
+      askThinking: s.askPhase === 1, askReady: s.askPhase === 2,
+      cite1: () => set({ focus: 'draft', hl: 'a' }),
+      cite2: () => set({ focus: 'draft', hl: 'b' }),
+      showDo: s.showDo, doUser: s.doUser, doDots: doDots, doWaiting: doWaiting, doDone: doDone, approve: approve,
+      openDo: () => set({ focus: 'result' }),
+      openAskCtx: () => set({ focus: 'context', ctxOf: 'ask' }),
+      openDoCtx: () => set({ focus: 'context', ctxOf: 'do' }),
+      doCtxPct: '9%', doCtxDash: '9 91', doCtxTitle: '86k / 1M',
+      focusOpen: !!focus,
+      isDraft: focus === 'draft', isInsight: focus === 'insight', isResult: focus === 'result', isCtx: focus === 'context',
+      focusTitle: ({ draft: '整理稿', insight: '认识', result: '成果', context: '上下文' })[focus] || '',
+      verLabel: s.verified ? '● 已核对' : '○ 未核对',
+      verColor: s.verified ? 'var(--ink2)' : 'var(--muted)',
+      showVerify: focus === 'draft' && !s.verified,
+      verify: () => set({ verified: true }),
+      closeFocus: () => set({ focus: null }),
+      hlA: s.hl === 'a' ? 'hl' : '',
+      hlB: s.hl === 'b' ? 'hl' : '',
+      trayOpen: s.trayOpen,
+      toggleTray: () => set({ trayOpen: !s.trayOpen }),
+      trayItems: trayItems, procCount: procCount, pendCount: pendCount, failCount: failCount, hasFail: failCount > 0
+    });
+  }
+  // Mirrors the backend: ask = v2/ladder.py trace + workspace_query usage; do = agent/context/budget.py sources.
+  contextView(s) {
+    const WIN = 1000000;
+    const k = (n) => n >= 1000 ? (Math.round(n / 100) / 10) + 'k' : String(n);
+    const pct = (n) => { const v = n / WIN * 100; return v < 0.1 ? '<0.1%' : (Math.round(v * 10) / 10) + '%'; };
+    const hatch = 'repeating-linear-gradient(135deg,var(--line2) 0 2px,transparent 2px 5px)';
+    const ask = s.ctxOf !== 'do';
+    const parts = ask ? [
+      { label: '认识', count: '1', n: 60, bg: 'var(--ink)' },
+      { label: '我', count: '1', n: 40, bg: 'var(--ink2)' },
+      { label: '摘要', count: '1', n: 120, bg: 'var(--muted)' },
+      { label: '整理稿', count: '0', n: 0, bg: 'var(--line2)' },
+      { label: '原文', count: '1', n: 780, bg: 'var(--red)' },
+      { label: '指令', count: '', n: 90, bg: 'var(--sunk)' },
+      { label: '问题', count: '', n: 20, bg: 'var(--sunk)' }
+    ] : [
+      { label: '指令', count: '', n: 4100, bg: 'var(--ink)' },
+      { label: '对话', count: '14', n: 41200, bg: 'var(--ink2)' },
+      { label: '资料', count: '6', n: 9600, bg: 'var(--red)' },
+      { label: '约束', count: '2', n: 60, bg: 'var(--line2)' },
+      { label: '工具结果', count: '9', n: 31100, bg: 'var(--muted)' }
+    ];
+    const reserve = ask ? 7000 : 20000;
+    const used = parts.reduce((a, p) => a + p.n, 0);
+    const rows = parts.map((p) => ({ label: p.label, count: p.count, bg: p.bg, fg: p.n ? 'var(--ink)' : 'var(--muted)', tok: p.n ? k(p.n) : '—', pct: p.n ? pct(p.n) : '' }));
+    rows.push({ label: '预留回答', count: '', bg: hatch, fg: 'var(--ink)', tok: k(reserve), pct: pct(reserve) });
+    rows.push({ label: '空余', count: '', bg: 'transparent', fg: 'var(--muted)', tok: k(WIN - used - reserve), pct: pct(WIN - used - reserve) });
+    const segs = parts.filter((p) => p.n).map((p) => ({ label: p.label, bg: p.bg, w: (p.n / WIN * 100) + '%' }));
+    segs.push({ label: '预留回答', bg: hatch, w: (reserve / WIN * 100) + '%' });
+    const ticks = ask ? [] : [
+      { label: '提醒 60%', x: '60%', color: 'var(--line2)' },
+      { label: '压缩 80%', x: '80%', color: 'var(--ink2)' },
+      { label: '阻断 92%', x: '92%', color: 'var(--red)' }
+    ];
+    const cite = (hl) => () => this.setState({ focus: 'draft', hl: hl });
+    const trace = [
+      { label: '认识', pick: '6 → 2', c: 38, stop: false },
+      { label: '摘要', pick: '3 → 1', c: 52, stop: false },
+      { label: '整理稿', pick: '2 → 0', c: 52, stop: false },
+      { label: '原文', pick: '2 → 1', c: 74, stop: true }
+    ].map((t) => ({ label: t.label, pick: t.pick, cov: t.c + '%', covText: t.c + '%', fg: 'var(--ink)', bar: t.c >= 60 ? 'var(--ink)' : 'var(--line2)', dot: t.stop ? 'red' : '', dotTitle: t.stop ? '停' : '' }));
+    const toInsight = () => this.setState({ focus: 'insight' });
+    const items = ask ? [
+      { badge: '认', title: '钩子公式：悬念 + 反差 + 利益点', cite: '', tok: '60', open: toInsight },
+      { badge: '我', title: '偏好具体数字，不用形容词', cite: '', tok: '40', open: toInsight },
+      { badge: '摘', title: '短视频开头的三个钩子', cite: '1', tok: '120', open: cite('a') },
+      { badge: '原', title: '短视频开头的三个钩子 · 第 2 段', cite: '2', tok: '780', open: cite('b') }
+    ] : [
+      { badge: '认', title: '钩子公式：悬念 + 反差 + 利益点', cite: '', tok: '60', open: toInsight },
+      { badge: '认', title: '开头 3 秒决定完播率', cite: '', tok: '40', open: toInsight },
+      { badge: '我', title: '偏好具体数字，不用形容词', cite: '', tok: '40', open: toInsight },
+      { badge: '摘', title: '短视频开头的三个钩子', cite: '', tok: '120', open: cite(null) },
+      { badge: '稿', title: '上月选题复盘', cite: '', tok: '4.8k', open: cite(null) },
+      { badge: '稿', title: '评论区高频问题', cite: '', tok: '4.5k', open: cite(null) }
+    ];
+    const send = [
+      { label: '模型', value: 'DeepSeek · 云端', fg: 'var(--ink)' },
+      { label: '授权', value: '全局 · r12', fg: 'var(--ink)' },
+      { label: '私密排除', value: '2', fg: 'var(--ink)' },
+      ask ? { label: '实际用量', value: '入 1.1k · 出 160', fg: 'var(--ink)' }
+          : { label: '压缩', value: '0', fg: 'var(--muted)' }
+    ];
+    return {
+      ctxIsAsk: ask,
+      ctxUsed: k(used), ctxWin: '1M', ctxPct: pct(used),
+      ctxSegs: segs, ctxTicks: ticks, ctxRows: rows, ctxTrace: trace,
+      ctxItems: items, ctxItemsLabel: ask ? '条目' : '资料', ctxItemsCount: String(items.length),
+      ctxSend: send,
+      secLadder: s.secLadder, secItems: s.secItems,
+      ladderRot: s.secLadder ? 'none' : 'rotate(-90deg)', itemsRot: s.secItems ? 'none' : 'rotate(-90deg)',
+      toggleLadder: () => this.setState({ secLadder: !this.state.secLadder }),
+      toggleItems: () => this.setState({ secItems: !this.state.secItems })
+    };
+  }
+}
+</script>
+</body>
+</html>

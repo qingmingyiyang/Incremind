@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://christmas-os.local/contracts/ai/application-skill-snapshot.schema.json",
+  "title": "Application Skill Snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "turn_id", "project_id", "profile_id", "profile_revision", "consumer", "task_kind", "task_fingerprint", "snapshot_revision", "catalog_revision", "binding_registry_revision", "selected", "excluded", "selected_instruction_bytes", "context_budget_bytes"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "turn_id": {"type": "string", "minLength": 1},
+    "project_id": {"type": "string", "minLength": 1},
+    "profile_id": {"type": "string", "minLength": 1},
+    "profile_revision": {"type": "integer", "minimum": 1},
+    "consumer": {"const": "turn.workbench-question"},
+    "task_kind": {"const": "workbench.question.answer"},
+    "task_fingerprint": {"type": "string", "minLength": 64, "maxLength": 64},
+    "snapshot_revision": {"type": "string", "minLength": 1},
+    "catalog_revision": {"type": "string", "minLength": 1},
+    "binding_registry_revision": {"type": "integer", "minimum": 0},
+    "selected": {"type": "array", "maxItems": 3, "items": {"type": "object", "additionalProperties": false, "required": ["skill_id", "source_id", "source_kind", "skill_fingerprint", "binding_id", "binding_revision", "instruction_bytes", "instruction_payload_ref"], "properties": {"skill_id": {"type": "string", "minLength": 1}, "source_id": {"type": "string", "minLength": 1}, "source_kind": {"enum": ["bundled", "user", "plugin"]}, "skill_fingerprint": {"type": "string", "minLength": 64, "maxLength": 64}, "binding_id": {"type": "string", "minLength": 1}, "binding_revision": {"type": "integer", "minimum": 1}, "instruction_bytes": {"type": "integer", "minimum": 1}, "instruction_payload_ref": {"type": "string", "pattern": "^crp://session/"}}}},
+    "excluded": {"type": "array", "uniqueItems": true, "items": {"type": "object", "additionalProperties": false, "required": ["skill_id", "reason"], "properties": {"skill_id": {"type": "string", "minLength": 1}, "reason": {"enum": ["missing_binding", "missing_package", "fingerprint_drift", "inactive_binding", "budget", "unmatched", "not_selected"]}}}},
+    "selected_instruction_bytes": {"type": "integer", "minimum": 0, "maximum": 16384},
+    "context_budget_bytes": {"type": "integer", "minimum": 1024, "maximum": 32768}
+  }
+}

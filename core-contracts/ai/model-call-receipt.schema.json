@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/ai/model-call-receipt.schema.json",
+  "title": "AI Model Call Receipt",
+  "description": "Planner model call terminal receipt. It intentionally excludes prompts, messages, output, endpoints, paths, credentials and provider response bodies.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "receipt_id", "turn_id", "model_request_id", "status", "requested_at", "completed_at", "duration_ms", "provider_id", "model_id", "usage_status", "usage", "input_recorded", "output_recorded", "error_code"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "receipt_id": {"type": "string", "pattern": "^model-receipt-[A-Za-z0-9._~-]{8,112}$"},
+    "turn_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "model_request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "status": {"enum": ["completed", "failed", "cancelled", "timed_out"]},
+    "requested_at": {"type": "string", "format": "date-time"},
+    "completed_at": {"type": "string", "format": "date-time"},
+    "duration_ms": {"type": "integer", "minimum": 0, "maximum": 86400000},
+    "provider_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "model_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:~/-]{0,127}$"},
+    "usage_status": {"enum": ["recorded", "not_recorded"]},
+    "usage": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["input_tokens", "output_tokens", "total_tokens"],
+      "properties": {
+        "input_tokens": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "output_tokens": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "total_tokens": {"type": "integer", "minimum": 0, "maximum": 2147483647}
+      }
+    },
+    "input_recorded": {"const": false},
+    "output_recorded": {"const": false},
+    "error_code": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9_.-]{2,127}$"}
+  },
+  "allOf": [
+    {"if": {"properties": {"usage_status": {"const": "recorded"}}}, "then": {"properties": {"usage": {"type": "object"}}}},
+    {"if": {"properties": {"usage_status": {"const": "not_recorded"}}}, "then": {"properties": {"usage": {"type": "null"}}}},
+    {"if": {"properties": {"status": {"const": "completed"}}}, "then": {"properties": {"error_code": {"type": "null"}}}},
+    {"if": {"properties": {"status": {"enum": ["failed", "cancelled", "timed_out"]}}}, "then": {"properties": {"error_code": {"type": "string"}}}}
+  ]
+}

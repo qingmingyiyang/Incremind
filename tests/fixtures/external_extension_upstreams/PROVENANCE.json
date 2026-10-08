@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0.0",
+  "fixtures": [
+    {
+      "fixture": "openai-codex-path-types/SKILL.md",
+      "repository": "https://github.com/openai/codex",
+      "revision": "dde85b435b16994f956bce08e5fb796ed94c27fd",
+      "source_path": ".codex/skills/path-types/SKILL.md",
+      "note": "Body reduced to a bounded representative excerpt; frontmatter is exact."
+    },
+    {
+      "fixture": "deepseek-harness-model-only/SKILL.md",
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "revision": "cd5ef8148158c3a752a658978873241fdf8e2bbc",
+      "source_path": "snapshots/session/skill-load/workspace/.dsh/skills/model-only-skill/SKILL.md",
+      "note": "Exact upstream file."
+    },
+    {
+      "fixture": "agent-skills-pdf-processing/SKILL.md",
+      "repository": "https://github.com/agentskills/agentskills",
+      "revision": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+      "source_path": "docs/specification.mdx#example-with-optional-fields",
+      "note": "Exact specification frontmatter example with a bounded executable body."
+    }
+  ]
+}

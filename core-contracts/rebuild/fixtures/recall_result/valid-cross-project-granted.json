@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0.0",
+  "id": "recall-result-cross-project-001",
+  "request_id": "recall-request-cross-project-001",
+  "project_id": "project-alpha",
+  "status": "partial",
+  "hits": [
+    {
+      "hit_id": "hit-skill-beta",
+      "layer": "l3_project_skill",
+      "object_id": "skill-project-beta",
+      "project_id": "project-beta",
+      "source_project_label": "Beta 项目",
+      "trust_status": "user_confirmed",
+      "score": 0.78,
+      "token_estimate": 800,
+      "source_refs": [
+        {
+          "source_id": "source-beta-001",
+          "locator": "char:0-90"
+        }
+      ],
+      "snippet": "Beta 项目使用双周复盘结构。",
+      "explanation": "跨项目授权后返回带项目标签的证据。"
+    }
+  ],
+  "coverage": {
+    "status": "partial",
+    "requested_layers": ["l3_project_skill", "l3_series_memory", "l2_scenario", "l1_atom"],
+    "covered_layers": ["l3_project_skill"],
+    "missing_layers": ["l3_series_memory", "l2_scenario", "l1_atom"],
+    "low_trust": false,
+    "source_ref_count": 1
+  },
+  "truncation": {
+    "applied": false,
+    "reason": "none",
+    "dropped_hit_ids": [],
+    "final_hit_count": 1,
+    "final_token_estimate": 800
+  },
+  "explanation": {
+    "summary": "跨项目召回只返回已授权项目证据，并标注来源项目。",
+    "layer_order": ["l3_project_skill", "l3_series_memory", "l2_scenario", "l1_atom"],
+    "warnings": ["partial_coverage"]
+  },
+  "cross_project": {
+    "used": true,
+    "grant_id": "grant-alpha-beta-001",
+    "project_ids": ["project-beta"]
+  },
+  "errors": [],
+  "created_at": "2026-06-29T15:30:00+08:00"
+}

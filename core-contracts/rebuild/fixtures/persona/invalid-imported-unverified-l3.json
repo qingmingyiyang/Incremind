@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0.0",
+  "id": "persona-invalid-imported",
+  "scope": "global",
+  "statements": [
+    {
+      "id": "stmt-invalid",
+      "content": "未验证导入内容不能自动进入 L3。",
+      "category": "preference",
+      "confidence": 0.7
+    }
+  ],
+  "evidence_refs": [
+    {
+      "object_type": "source",
+      "object_id": "source-legacy-001",
+      "source_refs": [
+        {
+          "source_id": "source-legacy-001",
+          "locator": "legacy:note"
+        }
+      ]
+    }
+  ],
+  "confirmation": {
+    "required": true,
+    "status": "pending",
+    "actor": null,
+    "reason": null
+  },
+  "revision": 1,
+  "created_at": "2026-06-29T12:20:00+08:00",
+  "updated_at": "2026-06-29T12:20:00+08:00",
+  "trust_status": "imported_unverified"
+}

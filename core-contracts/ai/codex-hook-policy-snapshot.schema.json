@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://schemas/ai/codex-hook-policy-snapshot-v1",
+  "title": "Codex Hook Policy Snapshot",
+  "description": "Immutable local control-plane snapshot consumed by the Hook Runtime. It does not contain hook source, secrets, payloads, or local paths.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "snapshot_id", "revision", "upstream_revision", "manifest_ref", "manifest_revision", "handlers", "local_hard_guard_revision", "audit_delivery"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "kind": {"const": "codex-hook-policy-snapshot"},
+    "snapshot_id": {"$ref": "#/$defs/id"},
+    "revision": {"$ref": "#/$defs/revision"},
+    "upstream_revision": {"const": "0fe877b4dedc86a29c8bebb3edbd3efcc3580c7d"},
+    "manifest_ref": {"type": "string", "pattern": "^crp://[A-Za-z0-9._~:/-]+$"},
+    "manifest_revision": {"$ref": "#/$defs/revision"},
+    "handlers": {"type": "array", "items": {"$ref": "#/$defs/handler_snapshot"}},
+    "local_hard_guard_revision": {"$ref": "#/$defs/revision"},
+    "audit_delivery": {"const": "async_best_effort"}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"},
+    "revision": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"},
+    "event": {"enum": ["PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact", "PostCompact", "SessionStart", "SessionEnd", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop"]},
+    "handler_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["handler_id", "handler_revision", "event", "order", "sync", "enabled", "handler_ref", "timeout_ms"],
+      "properties": {
+        "handler_id": {"$ref": "#/$defs/id"},
+        "handler_revision": {"$ref": "#/$defs/revision"},
+        "event": {"$ref": "#/$defs/event"},
+        "order": {"type": "integer", "minimum": 0},
+        "sync": {"type": "boolean"},
+        "enabled": {"type": "boolean"},
+        "handler_ref": {"type": "string", "pattern": "^crp://[A-Za-z0-9._~:/-]+$"},
+        "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 60000}
+      }
+    }
+  }
+}

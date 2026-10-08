@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0.0",
+  "id": "model-result-privacy-output-invalid",
+  "request_id": "model-request-remote-pii-invalid",
+  "status": "privacy_blocked",
+  "provider": {
+    "provider_id": null,
+    "mode": "none",
+    "remote": false,
+    "config_version": null
+  },
+  "model": {
+    "name": null,
+    "version": null,
+    "capability": "none"
+  },
+  "output": {
+    "kind": "text",
+    "content": "不应出现的输出。",
+    "structured": null,
+    "output_refs": []
+  },
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 1,
+    "total_tokens": 1,
+    "cost_usd": 0,
+    "currency": "none"
+  },
+  "latency": {
+    "started_at": "2026-06-29T16:18:00+08:00",
+    "completed_at": "2026-06-29T16:18:00+08:00",
+    "elapsed_ms": 0,
+    "timed_out": false
+  },
+  "error": {
+    "code": "privacy_blocked",
+    "message": "隐私策略阻止远程模型调用。",
+    "retryable": false
+  },
+  "safety": {
+    "blocked": true,
+    "categories": ["privacy"],
+    "redaction_applied": false,
+    "output_truncated": false
+  },
+  "created_at": "2026-06-29T16:18:00+08:00"
+}

@@ -1,0 +1,152 @@
+[importlinter]
+root_packages =
+    backend
+    core
+source_roots =
+    src
+include_external_packages = true
+exclude_type_checking_imports = true
+
+[importlinter:contract:api_must_not_depend_on_memory_app]
+name = api must not depend on memory_app
+type = forbidden
+source_modules =
+    backend.api
+forbidden_modules =
+    backend.memory_app
+# Exact legacy compatibility edges for T11.1 composition migration.
+ignore_imports =
+    backend.api.ai_runtime -> backend.memory_app.kernel.ai_runtime
+    backend.api.ai_execution_control -> backend.memory_app.kernel.ai_execution_control
+    backend.api.agent_coordinator -> backend.memory_app.kernel.agent_coordinator
+    backend.api.agent_runtime_composition -> backend.memory_app.kernel.agent_runtime_composition
+    backend.api.agent_organization_runtime -> backend.memory_app.kernel.agent_organization_runtime
+    backend.shared.memory_sidecars -> backend.memory_app.v2.policies
+    backend.shared.memory_sidecars -> backend.memory_app.v2.policies.types
+
+[importlinter:contract:backend_top_level_acyclic]
+name = backend top-level siblings must be acyclic
+type = acyclic_siblings
+ancestors =
+    backend
+depth = 1
+ignore_imports =
+    backend.api.ai_runtime -> backend.memory_app.kernel.ai_runtime
+    backend.api.ai_execution_control -> backend.memory_app.kernel.ai_execution_control
+    backend.api.agent_coordinator -> backend.memory_app.kernel.agent_coordinator
+    backend.api.agent_runtime_composition -> backend.memory_app.kernel.agent_runtime_composition
+    backend.api.agent_organization_runtime -> backend.memory_app.kernel.agent_organization_runtime
+    backend.shared.memory_sidecars -> backend.memory_app.v2.policies
+    backend.shared.memory_sidecars -> backend.memory_app.v2.policies.types
+    backend.memory_app.kernel.policy_runtime -> backend.memory_app.v2.policies
+    backend.memory_app.kernel.policy_runtime -> backend.memory_app.v2.policies.pipelines
+    backend.memory_app.kernel.turn_requests -> backend.memory_app.v2.policies.pipelines
+
+[importlinter:contract:agent_core_must_not_read_orchestration_or_product]
+name = agent core must not depend on orchestration or product packages
+type = forbidden
+source_modules =
+    backend.agent
+forbidden_modules =
+    backend.video_summary
+
+[importlinter:contract:domain_must_not_depend_on_infra_or_api]
+name = video_summary domain must not depend on api or infrastructure
+type = forbidden
+source_modules =
+    backend.video_summary.domain
+forbidden_modules =
+    backend.api
+    backend.video_summary.infrastructure
+
+[importlinter:contract:video_summary_layers]
+name = video_summary package must keep inward dependency direction
+type = layers
+containers =
+    backend.video_summary
+layers =
+    infrastructure
+    library
+    generation
+    domain
+
+[importlinter:contract:generation_must_not_read_library]
+name = generation must not depend on library
+type = forbidden
+source_modules =
+    backend.video_summary.generation
+forbidden_modules =
+    backend.video_summary.library
+
+[importlinter:contract:video_summary_tools_must_not_read_infrastructure]
+name = video_summary tools must not depend on infrastructure
+type = forbidden
+source_modules =
+    backend.video_summary.tools
+forbidden_modules =
+    backend.video_summary.infrastructure
+
+[importlinter:contract:video_summary_agent_adapter_must_be_only_agent_bridge]
+name = tool executor and agent adapter are the only video_summary modules allowed to depend on backend.agent
+type = forbidden
+source_modules =
+    backend.video_summary.domain
+    backend.video_summary.generation
+    backend.video_summary.library
+    backend.video_summary.infrastructure
+forbidden_modules =
+    backend.agent
+
+[importlinter:contract:bilibili_must_not_read_video_summary_infra]
+name = bilibili must not depend on video_summary infrastructure directly
+type = forbidden
+source_modules =
+    backend.bilibili
+forbidden_modules =
+    backend.video_summary.infrastructure
+
+[importlinter:contract:memory_app_must_use_product_kernel_composition]
+name = memory_app must use product kernel composition directly
+type = forbidden
+source_modules =
+    backend.memory_app
+forbidden_modules =
+    backend.api.ai_runtime
+    backend.api.ai_execution_control
+    backend.api.agent_coordinator
+allow_indirect_imports = true
+
+[importlinter:contract:product_orchestration_must_not_import_model_gateway]
+name = v2 and workspace orchestration must not import model gateways
+type = forbidden
+allow_indirect_imports = true
+source_modules =
+    backend.memory_app.v2
+    backend.memory_app.workspace_audio
+    backend.memory_app.workspace_bilibili_media
+    backend.memory_app.workspace_confirmation
+    backend.memory_app.workspace_contracts
+    backend.memory_app.workspace_generation
+    backend.memory_app.workspace_intake
+    backend.memory_app.workspace_items
+    backend.memory_app.workspace_links
+    backend.memory_app.workspace_media_url
+    backend.memory_app.workspace_query
+    backend.memory_app.workspace_review
+    backend.memory_app.workspace_xhs_media
+forbidden_modules =
+    backend.shared.llm.litellm_gateway
+    core.model_gateway
+
+[importlinter:contract:memory_policies_must_be_pure]
+name = memory policies must not depend on storage, kernel or APIs
+type = forbidden
+source_modules =
+    backend.memory_app.v2.policies
+forbidden_modules =
+    core.storage_provider
+    core.ai_kernel
+    core.effect_log
+    backend.memory_app.kernel
+    backend.api
+    fastapi

@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0.0",
+  "request_id": "request:forget:001",
+  "occurred_at": "2026-07-19T11:10:00+08:00",
+  "source": "fastapi_sidecar",
+  "payload": {
+    "receipt_id": "receipt:forget:001",
+    "message_id": "message:user:001",
+    "status": "completed",
+    "deleted_counts": {
+      "messages": 1,
+      "context_links": 2,
+      "cache_entries": 1,
+      "fts_entries": 1,
+      "vector_entries": 0,
+      "candidates": 0,
+      "derived_summaries": 0
+    },
+    "withdrawn_memory_ids": [],
+    "failed_steps": [],
+    "context_epoch": 2,
+    "completed_at": "2026-07-19T11:10:00+08:00"
+  }
+}

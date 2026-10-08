@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0.0",
+  "id": "series-memory-cross-001",
+  "series_id": "series-rebuild",
+  "scope": "cross_project",
+  "overview": "跨项目记忆需要明确项目关系和证据。",
+  "scenario_ids": [],
+  "source_refs": [
+    {
+      "source_id": "source-text-003",
+      "locator": "char:0-70"
+    }
+  ],
+  "project_ids": [
+    "project-alpha",
+    "project-beta"
+  ],
+  "stale": true,
+  "stale_reason": "project-beta source changed",
+  "revision": 3,
+  "created_at": "2026-06-29T12:31:00+08:00",
+  "updated_at": "2026-06-29T12:32:00+08:00",
+  "trust_status": "system_generated"
+}

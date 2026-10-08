@@ -1,0 +1,259 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/progressive_recall_context_bundle.schema.json",
+  "title": "ProgressiveRecallContextBundle",
+  "description": "只存在于请求内存中的有界 R2/R3 证据包。正文不得写入投影、日志或长期记忆；Provider 外发留待独立 Gate。",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "locator",
+        "source_content_hash"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:[\\\\/])(?![/\\\\]).+"
+        },
+        "source_content_hash": {
+          "$ref": "#/$defs/fingerprint"
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "layer",
+        "item_id",
+        "series_id",
+        "object_type",
+        "object_id",
+        "revision_identity",
+        "content",
+        "content_hash",
+        "excerpt_hash",
+        "source_refs",
+        "char_count",
+        "truncated"
+      ],
+      "properties": {
+        "layer": {
+          "type": "string",
+          "enum": [
+            "r2_structured_content",
+            "r3_source_evidence"
+          ]
+        },
+        "item_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "series_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "object_type": {
+          "type": "string",
+          "enum": [
+            "document_block",
+            "source_structure",
+            "media_structure",
+            "source_content_read",
+            "inline_source"
+          ]
+        },
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision_identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content_hash": {
+          "$ref": "#/$defs/fingerprint"
+        },
+        "excerpt_hash": {
+          "$ref": "#/$defs/fingerprint"
+        },
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/sourceRef"
+          }
+        },
+        "char_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "bundle_version",
+    "bundle_id",
+    "project_id",
+    "authority_fingerprint",
+    "query_fingerprint",
+    "intent",
+    "stages_read",
+    "items",
+    "budget",
+    "drop_codes",
+    "safety"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "bundle_version": {
+      "const": "progressive-recall-context-v1"
+    },
+    "bundle_id": {
+      "type": "string",
+      "pattern": "^progressive-context-[0-9a-f]{40}$"
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority_fingerprint": {
+      "$ref": "#/$defs/fingerprint"
+    },
+    "query_fingerprint": {
+      "$ref": "#/$defs/fingerprint"
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "overview",
+        "standard",
+        "fact_lookup",
+        "deep_synthesis",
+        "source_verification",
+        "skill_execution"
+      ]
+    },
+    "stages_read": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "r2_structured_content",
+          "r3_source_evidence"
+        ]
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_items",
+        "max_chars",
+        "used_items",
+        "used_chars",
+        "remaining_items",
+        "remaining_chars"
+      ],
+      "properties": {
+        "max_items": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_chars": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "used_items": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "used_chars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remaining_items": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remaining_chars": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "drop_codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ephemeral",
+        "read_only",
+        "persistence_allowed",
+        "logging_allowed",
+        "provider_egress_allowed",
+        "business_writes_allowed"
+      ],
+      "properties": {
+        "ephemeral": {
+          "const": true
+        },
+        "read_only": {
+          "const": true
+        },
+        "persistence_allowed": {
+          "const": false
+        },
+        "logging_allowed": {
+          "const": false
+        },
+        "provider_egress_allowed": {
+          "const": false
+        },
+        "business_writes_allowed": {
+          "const": false
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas.local/contracts/rebuild/progressive_memory_scale_benchmark.schema.json",
+  "title": "Progressive Memory Scale Benchmark",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "benchmark_version",
+    "profile",
+    "metrics",
+    "outcome",
+    "privacy"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "benchmark_version": {"const": "progressive-memory-scale-v2"},
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "authority_item_count",
+        "series_count",
+        "scenario_count",
+        "atom_count",
+        "repetitions"
+      ],
+      "properties": {
+        "label": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$"},
+        "authority_item_count": {"type": "integer", "minimum": 1, "maximum": 100000},
+        "series_count": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "scenario_count": {"type": "integer", "minimum": 0, "maximum": 8000},
+        "atom_count": {"type": "integer", "minimum": 1, "maximum": 100000},
+        "repetitions": {"type": "integer", "minimum": 1, "maximum": 20}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projection_build_ms",
+        "projection_persist_ms",
+        "production_generation_read_ms",
+        "projection_cache_read_ms",
+        "r0_route_ms",
+        "r1_read_ms",
+        "r2_r3_drilldown_ms",
+        "projection_build_peak_memory_mib"
+      ],
+      "properties": {
+        "projection_build_ms": {"$ref": "#/$defs/timing"},
+        "projection_persist_ms": {"$ref": "#/$defs/timing"},
+        "production_generation_read_ms": {"$ref": "#/$defs/timing"},
+        "projection_cache_read_ms": {"$ref": "#/$defs/timing"},
+        "r0_route_ms": {"$ref": "#/$defs/timing"},
+        "r1_read_ms": {"$ref": "#/$defs/timing"},
+        "r2_r3_drilldown_ms": {"$ref": "#/$defs/timing"},
+        "projection_build_peak_memory_mib": {"type": "number", "minimum": 0}
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projection_status",
+        "projection_cache_hit_rate",
+        "route_success_rate",
+        "r0_item_count",
+        "r1_item_count",
+        "deep_item_count",
+        "context_budget_within_limit"
+      ],
+      "properties": {
+        "projection_status": {"enum": ["ready", "empty"]},
+        "projection_cache_hit_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "route_success_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "r0_item_count": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "r1_item_count": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "deep_item_count": {"type": "integer", "minimum": 0, "maximum": 12},
+        "context_budget_within_limit": {"type": "boolean"}
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "synthetic_data_only",
+        "temporary_vault_only",
+        "query_included",
+        "content_included",
+        "object_ids_included",
+        "source_refs_included",
+        "paths_included",
+        "provider_called",
+        "network_used"
+      ],
+      "properties": {
+        "synthetic_data_only": {"const": true},
+        "temporary_vault_only": {"const": true},
+        "query_included": {"const": false},
+        "content_included": {"const": false},
+        "object_ids_included": {"const": false},
+        "source_refs_included": {"const": false},
+        "paths_included": {"const": false},
+        "provider_called": {"const": false},
+        "network_used": {"const": false}
+      }
+    }
+  },
+  "$defs": {
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sample_count", "p50", "p95", "max"],
+      "properties": {
+        "sample_count": {"type": "integer", "minimum": 1, "maximum": 20},
+        "p50": {"type": "number", "minimum": 0},
+        "p95": {"type": "number", "minimum": 0},
+        "max": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

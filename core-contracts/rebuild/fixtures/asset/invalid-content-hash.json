@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0.0",
+  "id": "asset-file-005",
+  "source_id": "source-file-005",
+  "uri": "crp://default/assets/asset-file-005",
+  "content_hash": "invalid",
+  "size_bytes": 64,
+  "media_type": "text/plain",
+  "storage_mode": "copy",
+  "availability": "available",
+  "availability_reason": null,
+  "created_at": "2026-06-29T13:45:00Z",
+  "verified_at": null,
+  "metadata": {}
+}

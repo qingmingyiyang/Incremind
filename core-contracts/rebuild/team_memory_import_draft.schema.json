@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas.local/contracts/rebuild/team_memory_import_draft.schema.json",
+  "title": "Team Memory Import Draft",
+  "description": "经过逐资产授权和版本固定的 Team Memory 本地待审草稿。它不是已发布 Memory 或 Project Skill，也不得自动进入召回。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "project_id",
+    "target_layer",
+    "candidate_type",
+    "status",
+    "proposed_content",
+    "source",
+    "authorization",
+    "review",
+    "safety",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {"enum": ["1.0.0", "1.1.0"]},
+    "id": {"type": "string", "pattern": "^team-memory-import-draft-[0-9a-f]{32}$"},
+    "project_id": {"$ref": "#/$defs/identifier"},
+    "target_layer": {"enum": ["atom", "scenario", "series_memory", "project_skill"]},
+    "candidate_type": {"enum": ["answer_fact", "answer_decision", "answer_action", "answer_summary", "document_takeaway", "other"]},
+    "status": {"enum": ["pending_review", "rejected", "withdrawn"]},
+    "proposed_content": {
+      "oneOf": [
+        {"type": "string", "minLength": 1, "maxLength": 262144},
+        {"type": "null"}
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "source_kind", "service_id", "team_id", "asset_id", "asset_type", "asset_name", "asset_version", "visibility", "content_sha256", "locator"],
+      "properties": {
+        "source_id": {"type": "string", "pattern": "^team-memory-source-[0-9a-f]{32}$"},
+        "source_kind": {"const": "team_memory_asset"},
+        "service_id": {"$ref": "#/$defs/identifier"},
+        "team_id": {"$ref": "#/$defs/identifier"},
+        "asset_id": {"$ref": "#/$defs/identifier"},
+        "asset_type": {"enum": ["chat_memory", "skill", "llm_wiki", "code_graph"]},
+        "asset_name": {"type": "string", "minLength": 1, "maxLength": 160},
+        "asset_version": {"type": "integer", "minimum": 1},
+        "visibility": {"enum": ["private", "team", "restricted", "agent", "task"]},
+        "content_sha256": {"$ref": "#/$defs/sha256"},
+        "locator": {"type": "string", "pattern": "^team-memory:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}@[1-9][0-9]*$"}
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "authorization_fingerprint", "inventory_fingerprint", "verified_at", "consent_fingerprint", "per_asset_confirmation"],
+      "properties": {
+        "action": {"const": "read"},
+        "authorization_fingerprint": {"$ref": "#/$defs/sha256"},
+        "inventory_fingerprint": {"$ref": "#/$defs/sha256"},
+        "verified_at": {"type": "string", "format": "date-time"},
+        "consent_fingerprint": {"$ref": "#/$defs/sha256"},
+        "per_asset_confirmation": {"const": true}
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requires_human_review", "publication_allowed", "automatic_recall_allowed", "auto_promote_allowed", "reviewed_by", "reviewed_at", "reason"],
+      "properties": {
+        "requires_human_review": {"const": true},
+        "publication_allowed": {"const": false},
+        "automatic_recall_allowed": {"const": false},
+        "auto_promote_allowed": {"const": false},
+        "reviewed_by": {"enum": ["user", null]},
+        "reviewed_at": {
+          "oneOf": [
+            {"type": "string", "format": "date-time"},
+            {"type": "null"}
+          ]
+        },
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["network_called", "provider_called", "remote_write_allowed", "memory_write_allowed", "project_skill_write_allowed", "projection_write_allowed", "credentials_recorded", "endpoint_recorded"],
+      "properties": {
+        "network_called": {"const": false},
+        "provider_called": {"const": false},
+        "remote_write_allowed": {"const": false},
+        "memory_write_allowed": {"const": false},
+        "project_skill_write_allowed": {"const": false},
+        "projection_write_allowed": {"const": false},
+        "credentials_recorded": {"const": false},
+        "endpoint_recorded": {"const": false}
+      }
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "occurred_at": {
+      "oneOf": [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"}
+      ]
+    },
+    "recorded_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"schema_version": {"const": "1.1.0"}}},
+      "then": {"required": ["occurred_at", "recorded_at"]}
+    },
+    {
+      "if": {"properties": {"status": {"const": "pending_review"}}},
+      "then": {
+        "properties": {
+          "proposed_content": {"type": "string", "minLength": 1},
+          "review": {
+            "properties": {
+              "reviewed_by": {"type": "null"},
+              "reviewed_at": {"type": "null"}
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "proposed_content": {"type": "null"},
+          "review": {
+            "properties": {
+              "reviewed_by": {"const": "user"},
+              "reviewed_at": {"type": "string", "format": "date-time"}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

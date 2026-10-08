@@ -1,0 +1,8 @@
+import-linter>=2.5,<3
+grimp>=3.13,<4
+jsonschema>=4.26,<5
+pytest>=8.3,<9
+pytest-asyncio>=0.24,<1
+ruff>=0.11,<0.12
+# Decode actual pairing QR payloads in device tests (Apache-2.0).
+zxing-cpp>=2.3,<4

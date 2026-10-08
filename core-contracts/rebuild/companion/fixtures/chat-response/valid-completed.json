@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0.0",
+  "request_id": "request:chat:001",
+  "occurred_at": "2026-07-19T11:05:01+08:00",
+  "source": "fastapi_sidecar",
+  "payload": {
+    "status": "completed",
+    "session_id": "session:companion:001",
+    "message_id": "message:assistant:001",
+    "context_epoch": 1,
+    "text": "当然，我会陪着你。",
+    "retryable": false,
+    "failure": null,
+    "trace": {
+      "route": "companion.chat",
+      "provider_mode": "local",
+      "prompt_revision": 1,
+      "profile_revision": 1,
+      "memory_ids": []
+    },
+    "state_hint": "talking"
+  }
+}

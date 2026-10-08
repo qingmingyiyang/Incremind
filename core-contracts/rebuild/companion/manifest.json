@@ -1,0 +1,53 @@
+{
+  "domain": "companion",
+  "schema_draft": "https://json-schema.org/draft/2020-12/schema",
+  "current_version": "1.0.0",
+  "previous_version": null,
+  "accepted_versions": ["1.0.0"],
+  "unknown_version_policy": "reject",
+  "compatibility_policy": "accept_current_and_immediately_previous_published_version",
+  "contracts": [
+    {
+      "name": "action-request",
+      "file": "action-request.schema.json",
+      "producer": "trusted_renderer_preload",
+      "consumers": ["electron_main", "fastapi_sidecar"]
+    },
+    {
+      "name": "overlay-event",
+      "file": "overlay-event.schema.json",
+      "producer": "electron_main",
+      "consumers": ["overlay_renderer"]
+    },
+    {
+      "name": "state-projection",
+      "file": "state-projection.schema.json",
+      "producer": "electron_main",
+      "consumers": ["pet_renderer"]
+    },
+    {
+      "name": "chat-request",
+      "file": "chat-request.schema.json",
+      "producer": "electron_main",
+      "consumers": ["fastapi_sidecar"]
+    },
+    {
+      "name": "chat-response",
+      "file": "chat-response.schema.json",
+      "producer": "fastapi_sidecar",
+      "consumers": ["electron_main"]
+    },
+    {
+      "name": "provider-job",
+      "file": "provider-job.schema.json",
+      "producer": "fastapi_sidecar",
+      "consumers": ["electron_main", "main_renderer"]
+    },
+    {
+      "name": "forget-receipt",
+      "file": "forget-receipt.schema.json",
+      "producer": "fastapi_sidecar",
+      "consumers": ["electron_main", "main_renderer"]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0.0",
+  "id": "memory-transition-001",
+  "object_type": "persona",
+  "object_id": "persona-global-001",
+  "transition_type": "confirm",
+  "from_trust_status": "system_generated",
+  "to_trust_status": "user_confirmed",
+  "from_revision": 1,
+  "to_revision": 2,
+  "actor": "user",
+  "reason": "user confirmed stable preference",
+  "evidence_refs": [
+    {
+      "object_type": "atom",
+      "object_id": "atom-001",
+      "source_refs": [
+        {
+          "source_id": "source-text-001",
+          "locator": "char:0-40"
+        }
+      ]
+    }
+  ],
+  "created_at": "2026-06-29T12:40:00+08:00"
+}

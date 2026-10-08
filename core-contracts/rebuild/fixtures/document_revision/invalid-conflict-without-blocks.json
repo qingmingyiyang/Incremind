@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0.0",
+  "id": "document-revision-invalid-conflict",
+  "document_id": "document-report-001",
+  "revision": 3,
+  "parent_revision": 2,
+  "operation": "ai_patch",
+  "author": "system",
+  "reason": "conflict requires blocks",
+  "base_content_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "new_content_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "source_snapshot": {
+    "snapshot_id": "snapshot-invalid-conflict",
+    "snapshot_hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "source_refs": [
+      {
+        "source_id": "source-text-001",
+        "locator": "char:0-80"
+      }
+    ],
+    "captured_at": "2026-06-29T13:20:00+08:00"
+  },
+  "changed_blocks": [
+    {
+      "operation": "update",
+      "block_id": "block-summary",
+      "block": {
+        "id": "block-summary",
+        "block_type": "paragraph",
+        "origin": "ai",
+        "content": "冲突状态必须指出冲突块。",
+        "source_refs": [
+          {
+            "source_id": "source-text-001",
+            "locator": "char:0-80"
+          }
+        ],
+        "edited_by_user": false,
+        "lock_policy": "source_required"
+      }
+    }
+  ],
+  "conflict": {
+    "status": "detected",
+    "conflict_blocks": [],
+    "resolution": null
+  },
+  "created_at": "2026-06-29T13:20:00+08:00"
+}

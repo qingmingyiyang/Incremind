@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas.local/contracts/rebuild/team_memory_source_staging.schema.json",
+  "title": "Team Memory Local Source Staging",
+  "description": "由固定 Team Import Draft 生成、尚未写入本地 Source 权威的确认 staging record。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "preview_id",
+    "draft_id",
+    "draft_revision",
+    "project_id",
+    "status",
+    "origin",
+    "proposed_source",
+    "difference",
+    "receipt",
+    "safety",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {"enum": ["1.0.0", "1.1.0"]},
+    "id": {"type": "string", "pattern": "^team-source-staging-[0-9a-f]{32}$"},
+    "preview_id": {"type": "string", "pattern": "^team-source-preview-[0-9a-f]{32}$"},
+    "draft_id": {"type": "string", "pattern": "^team-memory-import-draft-[0-9a-f]{32}$"},
+    "draft_revision": {"type": "integer", "minimum": 1},
+    "project_id": {"$ref": "#/$defs/identifier"},
+    "status": {"enum": ["staged", "committing", "completed", "withdrawn", "abandoned", "forgetting", "forgotten"]},
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_kind", "service_id", "team_id", "asset_id", "asset_type", "asset_version", "visibility", "authorization_fingerprint", "inventory_fingerprint"],
+      "properties": {
+        "source_kind": {"const": "team_memory_asset"},
+        "service_id": {"$ref": "#/$defs/identifier"},
+        "team_id": {"$ref": "#/$defs/identifier"},
+        "asset_id": {"$ref": "#/$defs/identifier"},
+        "asset_type": {"enum": ["chat_memory", "skill", "llm_wiki", "code_graph"]},
+        "asset_version": {"type": "integer", "minimum": 1},
+        "visibility": {"enum": ["private", "team", "restricted", "agent", "task"]},
+        "authorization_fingerprint": {"$ref": "#/$defs/sha256"},
+        "inventory_fingerprint": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "proposed_source": {
+      "$ref": "https://chriptmas-replay.local/contracts/rebuild/source.schema.json"
+    },
+    "difference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "previous_asset_version", "previous_content_sha256", "content_changed"],
+      "properties": {
+        "state": {"enum": ["new_source", "new_remote_version"]},
+        "previous_asset_version": {
+          "oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+        },
+        "previous_content_sha256": {
+          "oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
+        },
+        "content_changed": {"type": "boolean"}
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["confirmed", "source_created", "memory_created", "project_skill_created", "publication_created", "automatic_recall_enabled"],
+      "properties": {
+        "confirmed": {"const": true},
+        "source_created": {"type": "boolean"},
+        "memory_created": {"const": false},
+        "project_skill_created": {"const": false},
+        "publication_created": {"const": false},
+        "automatic_recall_enabled": {"const": false},
+        "operation_id": {"type": "string", "pattern": "^team-source-operation-[0-9a-f]{32}$"},
+        "claimed_staging_revision": {"type": "integer", "minimum": 1},
+        "claimed_at": {"type": "string", "format": "date-time"},
+        "completed_at": {"type": "string", "format": "date-time"},
+        "source_uri": {"type": "string", "pattern": "^crp://[a-z0-9][a-z0-9._-]*/sources/[A-Za-z0-9][A-Za-z0-9._~-]*$"},
+        "source_revision": {"type": "integer", "minimum": 1},
+        "withdrawn": {"const": true},
+        "withdraw_reason": {"type": "string", "minLength": 1, "maxLength": 500},
+        "withdrawn_at": {"type": "string", "format": "date-time"},
+        "abandoned": {"const": true},
+        "abandon_reason": {"type": "string", "minLength": 1, "maxLength": 500},
+        "abandoned_at": {"type": "string", "format": "date-time"},
+        "conflict_code": {"const": "source_identity_conflict"},
+        "forget_operation_id": {"type": "string", "pattern": "^team-source-forget-[0-9a-f]{32}$"},
+        "forget_requested_staging_revision": {"type": "integer", "minimum": 1},
+        "forget_requested_at": {"type": "string", "format": "date-time"},
+        "forget_reason": {"type": "string", "minLength": 1, "maxLength": 500},
+        "forgotten_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["network_called", "provider_called", "source_authority_written", "memory_written", "project_skill_written", "projection_written", "automatic_recall_enabled"],
+      "properties": {
+        "network_called": {"const": false},
+        "provider_called": {"const": false},
+        "source_authority_written": {"type": "boolean"},
+        "memory_written": {"const": false},
+        "project_skill_written": {"const": false},
+        "projection_written": {"const": false},
+        "automatic_recall_enabled": {"const": false}
+      }
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "occurred_at": {
+      "oneOf": [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"}
+      ]
+    },
+    "recorded_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"schema_version": {"const": "1.1.0"}}},
+      "then": {"required": ["occurred_at", "recorded_at"]}
+    },
+    {
+      "if": {"properties": {"status": {"enum": ["staged", "committing"]}}},
+      "then": {
+        "properties": {
+          "proposed_source": {
+            "properties": {
+              "metadata": {"required": ["content"]}
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "proposed_source": {
+            "properties": {
+              "metadata": {
+                "not": {"required": ["content"]}
+              }
+            }
+          },
+          "receipt": {}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "staged"}}},
+      "then": {
+        "properties": {
+          "receipt": {
+            "properties": {"source_created": {"const": false}}
+          },
+          "safety": {
+            "properties": {"source_authority_written": {"const": false}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "committing"}}},
+      "then": {
+        "properties": {
+          "receipt": {
+            "required": ["operation_id", "claimed_staging_revision", "claimed_at"],
+            "properties": {"source_created": {"const": false}}
+          },
+          "safety": {
+            "properties": {"source_authority_written": {"const": false}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "completed"}}},
+      "then": {
+        "properties": {
+          "receipt": {
+            "required": ["operation_id", "claimed_staging_revision", "claimed_at", "completed_at", "source_uri", "source_revision"],
+            "properties": {"source_created": {"const": true}}
+          },
+          "safety": {
+            "properties": {"source_authority_written": {"const": true}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "withdrawn"}}},
+      "then": {
+        "properties": {
+          "receipt": {
+            "required": ["withdrawn", "withdraw_reason", "withdrawn_at"],
+            "properties": {"source_created": {"const": false}}
+          },
+          "safety": {
+            "properties": {"source_authority_written": {"const": false}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "abandoned"}}},
+      "then": {
+        "properties": {
+          "receipt": {
+            "required": ["operation_id", "claimed_staging_revision", "claimed_at", "abandoned", "abandon_reason", "abandoned_at", "conflict_code"],
+            "properties": {"source_created": {"const": false}}
+          },
+          "safety": {
+            "properties": {"source_authority_written": {"const": false}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "forgetting"}}},
+      "then": {
+        "properties": {
+          "receipt": {
+            "required": ["operation_id", "claimed_staging_revision", "claimed_at", "completed_at", "source_uri", "source_revision", "forget_operation_id", "forget_requested_staging_revision", "forget_requested_at", "forget_reason"],
+            "properties": {"source_created": {"const": true}}
+          },
+          "safety": {
+            "properties": {"source_authority_written": {"const": true}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "forgotten"}}},
+      "then": {
+        "properties": {
+          "receipt": {
+            "required": ["operation_id", "claimed_staging_revision", "claimed_at", "completed_at", "source_uri", "source_revision", "forget_operation_id", "forget_requested_staging_revision", "forget_requested_at", "forget_reason", "forgotten_at"],
+            "properties": {"source_created": {"const": false}}
+          },
+          "safety": {
+            "properties": {"source_authority_written": {"const": false}}
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

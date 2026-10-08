@@ -1,0 +1,260 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/source.schema.json",
+  "title": "Source",
+  "description": "L0 原始材料及其追溯、完整性和处理状态。Source 先于任何派生对象保存。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "type",
+    "title",
+    "capture_mode",
+    "storage_uri",
+    "original_url",
+    "content_hash",
+    "media_type",
+    "size_bytes",
+    "parser_version",
+    "processing_state",
+    "created_at",
+    "imported_from_legacy",
+    "trust_status",
+    "metadata"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0", "1.1.0", "1.2.0"]
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "text",
+        "link",
+        "file",
+        "image",
+        "audio",
+        "video",
+        "question",
+        "other"
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "capture_mode": {
+      "type": "string",
+      "enum": [
+        "inline",
+        "snapshot",
+        "copy",
+        "reference",
+        "legacy_import"
+      ]
+    },
+    "storage_uri": {
+      "type": "string",
+      "description": "平台中立受控 URI，不保存 Windows 盘符或 macOS 绝对路径。",
+      "pattern": "^crp://[a-z0-9][a-z0-9._-]*/sources/[A-Za-z0-9][A-Za-z0-9._~-]*$"
+    },
+    "original_url": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://"
+        }
+      ]
+    },
+    "content_hash": {
+      "description": "SHA-256 模式为规范化原始字节的小写摘要；工作台确认模式明确为 null，不伪造摘要。",
+      "oneOf": [
+        {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        {"type": "null"}
+      ]
+    },
+    "identity_method": {
+      "type": "string",
+      "enum": ["sha256", "workspace_confirmation"]
+    },
+    "source_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "confirmation_operation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workspace_item_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "media_type": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+        }
+      ]
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "parser_version": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "processing_state": {
+      "type": "string",
+      "enum": [
+        "captured",
+        "queued",
+        "processing",
+        "reference_only",
+        "ready",
+        "failed",
+        "archived"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "occurred_at": {
+      "oneOf": [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"}
+      ],
+      "description": "Material occurrence time. Null means the original occurrence is not known."
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Time this local authority recorded the Source."
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Legacy alias derived from recorded_at at the persistence boundary."
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "imported_from_legacy": {
+      "type": "boolean"
+    },
+    "trust_status": {
+      "type": "string",
+      "enum": [
+        "trusted",
+        "imported_unverified",
+        "user_confirmed",
+        "system_generated",
+        "failed"
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"schema_version": {"const": "1.2.0"}},
+        "required": ["schema_version"]
+      },
+      "then": {"required": ["identity_method", "occurred_at", "recorded_at"]}
+    },
+    {
+      "if": {
+        "properties": {"identity_method": {"const": "workspace_confirmation"}},
+        "required": ["identity_method"]
+      },
+      "then": {
+        "required": ["source_revision", "confirmation_operation_id", "workspace_item_id"],
+        "properties": {
+          "schema_version": {"const": "1.2.0"},
+          "content_hash": {"type": "null"}
+        }
+      },
+      "else": {
+        "properties": {"content_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"schema_version": {"const": "1.1.0"}},
+        "required": ["schema_version"]
+      },
+      "then": {"required": ["occurred_at", "recorded_at"]}
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "link"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "original_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "file",
+              "image",
+              "audio",
+              "video"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "media_type": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+          }
+        }
+      }
+    }
+  ]
+}

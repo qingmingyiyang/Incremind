@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://chriptmas-os.local/contracts/ai/agent-interrupt-request.schema.json","type":"object","additionalProperties":false,"required":["child_run_id","reason"],"properties":{"child_run_id":{"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},"reason":{"type":"string","minLength":1,"maxLength":256}}}

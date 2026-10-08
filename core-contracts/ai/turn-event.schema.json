@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/ai/turn-event.schema.json",
+  "title": "AITurnEvent",
+  "description": "追加式 Turn 事件。模型可见或影响执行的内容必须能够通过 payload_ref、receipt_ref 或 evidence_refs 重建。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "turn_id", "session_id", "sequence", "type", "actor", "correlation", "data", "occurred_at"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "event_id": {"type": "string", "pattern": "^event-[0-9a-f]{32}$"},
+    "turn_id": {"type": "string", "pattern": "^turn-[0-9a-f]{32}$"},
+    "session_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "sequence": {"type": "integer", "minimum": 1},
+    "type": {"enum": ["turn.accepted", "turn.resumed", "turn.cancel.requested", "context.resolved", "expert.selection.recorded", "expert.binding.frozen", "model.requested", "model.routed", "model.attempt.dispatched", "model.attempt.terminal", "model.completed", "model.failed", "model.cancelled", "model.timed_out", "model.result.discarded", "hook.invoked", "tool.requested", "tool.intent.recorded", "tool.dispatch.claimed", "approval.required", "approval.resolved", "tool.started", "tool.attempt.failed", "tool.outcome.recorded", "tool.completed", "tool.failed", "tool.cancelled", "turn.completed", "turn.failed", "turn.cancelled"]},
+    "actor": {"enum": ["user", "kernel", "model", "tool", "human", "system"]},
+    "correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "tool_call_id", "model_request_id", "operation_id"],
+      "properties": {
+        "step_id": {"type": ["string", "null"], "maxLength": 128},
+        "tool_call_id": {"type": ["string", "null"], "maxLength": 128},
+        "model_request_id": {"type": ["string", "null"], "maxLength": 128},
+        "operation_id": {"type": ["string", "null"], "pattern": "^op-[A-Za-z0-9._~-]{8,125}$"}
+      }
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summary", "capability_id", "payload_ref", "receipt_ref", "evidence_refs", "error_code", "retryable"],
+      "properties": {
+        "status": {"enum": ["accepted", "running", "waiting_approval", "completed", "failed", "cancelled"]},
+        "summary": {"type": "string", "maxLength": 2000},
+        "capability_id": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9_.-]{2,127}$"},
+        "payload_ref": {"type": ["string", "null"], "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"},
+        "receipt_ref": {"type": ["string", "null"], "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"},
+        "evidence_refs": {"type": "array", "uniqueItems": true, "maxItems": 256, "items": {"type": "string", "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"}},
+        "error_code": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9_.-]{2,127}$"},
+        "retryable": {"type": "boolean"}
+      }
+    },
+    "occurred_at": {"type": "string", "format": "date-time"}
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/rebuild/companion/forget-receipt.schema.json",
+  "title": "Companion Forget Receipt",
+  "description": "Hard Forget Saga 的无正文回执，公开删除计数、撤回引用和失败步骤。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "occurred_at", "source", "payload"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0.0"},
+    "request_id": {"$ref": "#/$defs/id"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "source": {"type": "string", "enum": ["fastapi_sidecar"]},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receipt_id",
+        "message_id",
+        "status",
+        "deleted_counts",
+        "withdrawn_memory_ids",
+        "failed_steps",
+        "context_epoch",
+        "completed_at"
+      ],
+      "properties": {
+        "receipt_id": {"$ref": "#/$defs/id"},
+        "message_id": {"$ref": "#/$defs/id"},
+        "status": {"type": "string", "enum": ["completed", "partial_failed", "not_found"]},
+        "deleted_counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["messages", "context_links", "cache_entries", "fts_entries", "vector_entries", "candidates", "derived_summaries"],
+          "properties": {
+            "messages": {"type": "integer", "minimum": 0},
+            "context_links": {"type": "integer", "minimum": 0},
+            "cache_entries": {"type": "integer", "minimum": 0},
+            "fts_entries": {"type": "integer", "minimum": 0},
+            "vector_entries": {"type": "integer", "minimum": 0},
+            "candidates": {"type": "integer", "minimum": 0},
+            "derived_summaries": {"type": "integer", "minimum": 0}
+          }
+        },
+        "withdrawn_memory_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/id"}
+        },
+        "failed_steps": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["message", "context", "cache", "fts", "vector", "candidate", "summary", "published_memory_withdrawal"]
+          }
+        },
+        "context_epoch": {"type": "integer", "minimum": 1},
+        "completed_at": {"type": "string", "format": "date-time"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "completed"}}},
+          "then": {"properties": {"failed_steps": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "partial_failed"}}},
+          "then": {"properties": {"failed_steps": {"minItems": 1}}}
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9:_-]{0,127}$"}
+  }
+}

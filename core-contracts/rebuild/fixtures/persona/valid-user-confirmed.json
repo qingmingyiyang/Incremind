@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0.0",
+  "id": "persona-global-001",
+  "scope": "global",
+  "statements": [
+    {
+      "id": "stmt-001",
+      "content": "用户偏好直接、务实、少客套的技术沟通。",
+      "category": "style",
+      "confidence": 0.94
+    }
+  ],
+  "evidence_refs": [
+    {
+      "object_type": "atom",
+      "object_id": "atom-001",
+      "source_refs": [
+        {
+          "source_id": "source-text-001",
+          "locator": "char:0-40",
+          "quote": "直接、务实、少客套"
+        }
+      ]
+    }
+  ],
+  "confirmation": {
+    "required": true,
+    "status": "confirmed",
+    "actor": "user",
+    "reason": "explicit preference confirmed"
+  },
+  "revision": 1,
+  "created_at": "2026-06-29T12:20:00+08:00",
+  "updated_at": "2026-06-29T12:20:00+08:00",
+  "trust_status": "user_confirmed"
+}

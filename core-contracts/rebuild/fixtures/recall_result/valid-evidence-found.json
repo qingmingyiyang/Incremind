@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0.0",
+  "id": "recall-result-project-alpha-001",
+  "request_id": "recall-request-project-alpha-001",
+  "project_id": "project-alpha",
+  "status": "evidence_found",
+  "hits": [
+    {
+      "hit_id": "hit-skill-alpha",
+      "layer": "l3_project_skill",
+      "object_id": "skill-project-alpha",
+      "project_id": "project-alpha",
+      "source_project_label": null,
+      "trust_status": "user_confirmed",
+      "score": 0.96,
+      "token_estimate": 900,
+      "source_refs": [
+        {
+          "source_id": "source-text-001",
+          "locator": "char:0-80",
+          "quote": "生成文档必须保留可追溯 source refs。"
+        }
+      ],
+      "snippet": "项目 Skill 要求后续输出沿用既有结构，并保留来源引用。",
+      "explanation": "L3 Project Skill 是项目问答的首个证据层。"
+    },
+    {
+      "hit_id": "hit-scenario-alpha",
+      "layer": "l2_scenario",
+      "object_id": "scenario-alpha-001",
+      "project_id": "project-alpha",
+      "source_project_label": null,
+      "trust_status": "trusted",
+      "score": 0.82,
+      "token_estimate": 700,
+      "source_refs": [
+        {
+          "source_id": "source-text-002",
+          "locator": "char:120-220"
+        }
+      ],
+      "snippet": "当前阶段的主要约束是先关闭合约门禁，再进入业务闭环。",
+      "explanation": "L2 场景摘要补充当前项目阶段。"
+    }
+  ],
+  "coverage": {
+    "status": "sufficient",
+    "requested_layers": ["l3_project_skill", "l3_series_memory", "l2_scenario", "l1_atom", "l0_source"],
+    "covered_layers": ["l3_project_skill", "l2_scenario"],
+    "missing_layers": ["l3_series_memory", "l1_atom", "l0_source"],
+    "low_trust": false,
+    "source_ref_count": 2
+  },
+  "truncation": {
+    "applied": false,
+    "reason": "none",
+    "dropped_hit_ids": [],
+    "final_hit_count": 2,
+    "final_token_estimate": 1600
+  },
+  "explanation": {
+    "summary": "先返回 Project Skill，再返回阶段摘要，证据足够支持回答。",
+    "layer_order": ["l3_project_skill", "l3_series_memory", "l2_scenario", "l1_atom", "l0_source"],
+    "warnings": []
+  },
+  "cross_project": {
+    "used": false,
+    "grant_id": null,
+    "project_ids": []
+  },
+  "errors": [],
+  "created_at": "2026-06-29T15:20:00+08:00"
+}

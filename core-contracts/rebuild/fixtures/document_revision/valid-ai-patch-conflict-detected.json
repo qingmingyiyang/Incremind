@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0.0",
+  "id": "document-revision-003",
+  "document_id": "document-report-001",
+  "revision": 3,
+  "parent_revision": 2,
+  "operation": "ai_patch",
+  "author": "system",
+  "reason": "AI patch detected protected user block conflict",
+  "base_content_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "new_content_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "source_snapshot": {
+    "snapshot_id": "snapshot-document-report-001-r3",
+    "snapshot_hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "source_refs": [
+      {
+        "source_id": "source-text-001",
+        "locator": "char:0-120"
+      }
+    ],
+    "captured_at": "2026-06-29T13:20:00+08:00"
+  },
+  "changed_blocks": [
+    {
+      "operation": "update",
+      "block_id": "block-user-note",
+      "block": {
+        "id": "block-user-note",
+        "block_type": "paragraph",
+        "origin": "user",
+        "content": "用户补充：交付前必须运行验证。",
+        "source_refs": [],
+        "edited_by_user": true,
+        "lock_policy": "user_edit_protected"
+      }
+    }
+  ],
+  "conflict": {
+    "status": "detected",
+    "conflict_blocks": [
+      "block-user-note"
+    ],
+    "resolution": null
+  },
+  "created_at": "2026-06-29T13:20:00+08:00"
+}

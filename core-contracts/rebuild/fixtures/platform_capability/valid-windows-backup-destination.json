@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "name": "backup_destination",
+  "platform": "windows",
+  "adapter_id": "desktop_windows",
+  "available": true,
+  "permission_required": false,
+  "permission": "not_applicable",
+  "provided_uri": "platform-backup://chriptmas-replay/snapshots",
+  "error": null,
+  "checked_at": "2026-06-30T23:58:00+08:00"
+}

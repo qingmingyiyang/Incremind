@@ -1,0 +1,15 @@
+[storage]
+# R005 keeps physical development roots separate while production resolves app_root_uri through PlatformAdapter.
+namespace_id = "default"
+storage_version = 1
+app_root_uri = "platform-app-data://chriptmas-replay"
+root_uri = "crp://default/"
+reference_root_uri = "crp-ref://default/"
+root = ".rebuild-data"
+legacy_root = "library"
+legacy_access = "disabled"
+
+[storage.backup]
+enabled = true
+retention_count = 5
+pre_restore_required = true

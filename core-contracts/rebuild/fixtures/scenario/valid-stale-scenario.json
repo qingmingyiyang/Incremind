@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0.0",
+  "id": "scenario-002",
+  "title": "旧摘要待更新",
+  "summary": "来源材料发生变化，当前摘要需要重新生成。",
+  "atom_ids": [],
+  "source_refs": [
+    {
+      "source_id": "source-text-002",
+      "locator": "char:0-30"
+    }
+  ],
+  "tags": [
+    "stale"
+  ],
+  "series_id": "series-default",
+  "project_id": "project-alpha",
+  "stale": true,
+  "stale_reason": "source source-text-002 was revised",
+  "revision": 2,
+  "created_at": "2026-06-29T12:11:00+08:00",
+  "updated_at": "2026-06-29T12:12:00+08:00",
+  "trust_status": "system_generated"
+}

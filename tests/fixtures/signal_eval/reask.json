@@ -1,0 +1,296 @@
+[
+  {
+    "id": "reask-0",
+    "first": "项目预算应该怎么处理",
+    "second": "应该怎么处理项目预算",
+    "label": "reask",
+    "split": "calibration"
+  },
+  {
+    "id": "follow-0",
+    "first": "项目预算应该怎么处理",
+    "second": "那项目预算的具体步骤呢",
+    "label": "followup",
+    "split": "calibration"
+  },
+  {
+    "id": "topic-0",
+    "first": "项目预算应该怎么处理",
+    "second": "明天上海天气怎样0",
+    "label": "new_topic",
+    "split": "calibration"
+  },
+  {
+    "id": "reask-1",
+    "first": "合同审批应该怎么处理",
+    "second": "应该怎么处理合同审批",
+    "label": "reask",
+    "split": "calibration"
+  },
+  {
+    "id": "follow-1",
+    "first": "合同审批应该怎么处理",
+    "second": "那合同审批的具体步骤呢",
+    "label": "followup",
+    "split": "calibration"
+  },
+  {
+    "id": "topic-1",
+    "first": "合同审批应该怎么处理",
+    "second": "明天上海天气怎样1",
+    "label": "new_topic",
+    "split": "calibration"
+  },
+  {
+    "id": "reask-2",
+    "first": "资料整理应该怎么处理",
+    "second": "应该怎么处理资料整理",
+    "label": "reask",
+    "split": "calibration"
+  },
+  {
+    "id": "follow-2",
+    "first": "资料整理应该怎么处理",
+    "second": "那资料整理的具体步骤呢",
+    "label": "followup",
+    "split": "calibration"
+  },
+  {
+    "id": "topic-2",
+    "first": "资料整理应该怎么处理",
+    "second": "明天上海天气怎样2",
+    "label": "new_topic",
+    "split": "calibration"
+  },
+  {
+    "id": "reask-3",
+    "first": "门店库存应该怎么处理",
+    "second": "应该怎么处理门店库存",
+    "label": "reask",
+    "split": "calibration"
+  },
+  {
+    "id": "follow-3",
+    "first": "门店库存应该怎么处理",
+    "second": "那门店库存的具体步骤呢",
+    "label": "followup",
+    "split": "calibration"
+  },
+  {
+    "id": "topic-3",
+    "first": "门店库存应该怎么处理",
+    "second": "明天上海天气怎样3",
+    "label": "new_topic",
+    "split": "calibration"
+  },
+  {
+    "id": "reask-4",
+    "first": "设备配对应该怎么处理",
+    "second": "应该怎么处理设备配对",
+    "label": "reask",
+    "split": "validation"
+  },
+  {
+    "id": "follow-4",
+    "first": "设备配对应该怎么处理",
+    "second": "那设备配对的具体步骤呢",
+    "label": "followup",
+    "split": "validation"
+  },
+  {
+    "id": "topic-4",
+    "first": "设备配对应该怎么处理",
+    "second": "明天上海天气怎样4",
+    "label": "new_topic",
+    "split": "validation"
+  },
+  {
+    "id": "reask-5",
+    "first": "旅游路线应该怎么处理",
+    "second": "应该怎么处理旅游路线",
+    "label": "reask",
+    "split": "validation"
+  },
+  {
+    "id": "follow-5",
+    "first": "旅游路线应该怎么处理",
+    "second": "那旅游路线的具体步骤呢",
+    "label": "followup",
+    "split": "validation"
+  },
+  {
+    "id": "topic-5",
+    "first": "旅游路线应该怎么处理",
+    "second": "明天上海天气怎样5",
+    "label": "new_topic",
+    "split": "validation"
+  },
+  {
+    "id": "reask-6",
+    "first": "课程安排应该怎么处理",
+    "second": "应该怎么处理课程安排",
+    "label": "reask",
+    "split": "validation"
+  },
+  {
+    "id": "follow-6",
+    "first": "课程安排应该怎么处理",
+    "second": "那课程安排的具体步骤呢",
+    "label": "followup",
+    "split": "validation"
+  },
+  {
+    "id": "topic-6",
+    "first": "课程安排应该怎么处理",
+    "second": "明天上海天气怎样6",
+    "label": "new_topic",
+    "split": "validation"
+  },
+  {
+    "id": "reask-7",
+    "first": "质量检查应该怎么处理",
+    "second": "应该怎么处理质量检查",
+    "label": "reask",
+    "split": "validation"
+  },
+  {
+    "id": "follow-7",
+    "first": "质量检查应该怎么处理",
+    "second": "那质量检查的具体步骤呢",
+    "label": "followup",
+    "split": "validation"
+  },
+  {
+    "id": "topic-7",
+    "first": "质量检查应该怎么处理",
+    "second": "明天上海天气怎样7",
+    "label": "new_topic",
+    "split": "validation"
+  },
+  {
+    "id": "reask-8",
+    "first": "发货流程应该怎么处理",
+    "second": "应该怎么处理发货流程",
+    "label": "reask",
+    "split": "validation"
+  },
+  {
+    "id": "follow-8",
+    "first": "发货流程应该怎么处理",
+    "second": "那发货流程的具体步骤呢",
+    "label": "followup",
+    "split": "validation"
+  },
+  {
+    "id": "topic-8",
+    "first": "发货流程应该怎么处理",
+    "second": "明天上海天气怎样8",
+    "label": "new_topic",
+    "split": "validation"
+  },
+  {
+    "id": "reask-9",
+    "first": "产品价格应该怎么处理",
+    "second": "应该怎么处理产品价格",
+    "label": "reask",
+    "split": "validation"
+  },
+  {
+    "id": "follow-9",
+    "first": "产品价格应该怎么处理",
+    "second": "那产品价格的具体步骤呢",
+    "label": "followup",
+    "split": "validation"
+  },
+  {
+    "id": "topic-9",
+    "first": "产品价格应该怎么处理",
+    "second": "明天上海天气怎样9",
+    "label": "new_topic",
+    "split": "validation"
+  },
+  {
+    "id": "reask-10",
+    "first": "服务器备份应该怎么处理",
+    "second": "应该怎么处理服务器备份",
+    "label": "reask",
+    "split": "validation"
+  },
+  {
+    "id": "follow-10",
+    "first": "服务器备份应该怎么处理",
+    "second": "那服务器备份的具体步骤呢",
+    "label": "followup",
+    "split": "validation"
+  },
+  {
+    "id": "topic-10",
+    "first": "服务器备份应该怎么处理",
+    "second": "明天上海天气怎样10",
+    "label": "new_topic",
+    "split": "validation"
+  },
+  {
+    "id": "reask-11",
+    "first": "回款日期应该怎么处理",
+    "second": "应该怎么处理回款日期",
+    "label": "reask",
+    "split": "validation"
+  },
+  {
+    "id": "follow-11",
+    "first": "回款日期应该怎么处理",
+    "second": "那回款日期的具体步骤呢",
+    "label": "followup",
+    "split": "validation"
+  },
+  {
+    "id": "topic-11",
+    "first": "回款日期应该怎么处理",
+    "second": "明天上海天气怎样11",
+    "label": "new_topic",
+    "split": "validation"
+  },
+  {
+    "id": "negative-shared-1",
+    "first": "项目预算应该怎么处理",
+    "second": "设备配对应该怎么处理",
+    "label": "new_topic",
+    "split": "calibration"
+  },
+  {
+    "id": "negative-shared-2",
+    "first": "合同审批应该怎么处理",
+    "second": "旅游路线应该怎么处理",
+    "label": "new_topic",
+    "split": "validation"
+  },
+  {
+    "id": "negative-number",
+    "first": "预算100元够吗",
+    "second": "预算200元够吗",
+    "label": "new_topic",
+    "split": "calibration"
+  },
+  {
+    "id": "positive-identical",
+    "first": "服务器备份多久一次",
+    "second": "服务器备份多久一次？",
+    "label": "reask",
+    "split": "calibration"
+  },
+  {
+    "id": "positive-short",
+    "first": "库存怎么查",
+    "second": "怎么查库存",
+    "label": "reask",
+    "split": "validation"
+  },
+  {
+    "id": "follow-detail",
+    "first": "库存怎么查",
+    "second": "具体用哪个菜单",
+    "label": "followup",
+    "split": "validation"
+  }
+]

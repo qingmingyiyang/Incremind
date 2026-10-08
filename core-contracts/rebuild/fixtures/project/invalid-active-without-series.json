@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0.0",
+  "id": "project-no-series",
+  "name": "无系列项目",
+  "purpose": "验证 active 项目必须关联至少一个系列。",
+  "status": "active",
+  "series_ids": [],
+  "skill_id": "skill-project-alpha",
+  "document_ids": [],
+  "default_scope": "project_only",
+  "cross_project_policy": {
+    "mode": "disabled",
+    "grant_ids": []
+  },
+  "revision": 1,
+  "created_at": "2026-06-29T14:00:00+08:00",
+  "updated_at": "2026-06-29T14:00:00+08:00"
+}

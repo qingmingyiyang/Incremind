@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0.0",
+  "id": "recall-result-cross-project-invalid",
+  "request_id": "recall-request-project-alpha-005",
+  "project_id": "project-alpha",
+  "status": "partial",
+  "hits": [
+    {
+      "hit_id": "hit-skill-beta",
+      "layer": "l3_project_skill",
+      "object_id": "skill-project-beta",
+      "project_id": "project-beta",
+      "source_project_label": null,
+      "trust_status": "user_confirmed",
+      "score": 0.7,
+      "token_estimate": 500,
+      "source_refs": [{"source_id": "source-beta-001", "locator": "char:0-80"}],
+      "snippet": "跨项目证据。",
+      "explanation": "错误示例，缺少授权和来源项目标签。"
+    }
+  ],
+  "coverage": {
+    "status": "partial",
+    "requested_layers": ["l3_project_skill"],
+    "covered_layers": ["l3_project_skill"],
+    "missing_layers": [],
+    "low_trust": false,
+    "source_ref_count": 1
+  },
+  "truncation": {
+    "applied": false,
+    "reason": "none",
+    "dropped_hit_ids": [],
+    "final_hit_count": 1,
+    "final_token_estimate": 500
+  },
+  "explanation": {
+    "summary": "错误示例。",
+    "layer_order": ["l3_project_skill"],
+    "warnings": []
+  },
+  "cross_project": {
+    "used": false,
+    "grant_id": null,
+    "project_ids": []
+  },
+  "errors": [],
+  "created_at": "2026-06-29T15:45:00+08:00"
+}

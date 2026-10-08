@@ -1,0 +1,15 @@
+[Unit]
+Description=Chriptmas consistent server backup
+
+[Service]
+Type=oneshot
+User=chriptmas
+Group=chriptmas
+WorkingDirectory=/opt/chriptmas
+Environment=CHRIPTMAS_APP_ROOT=/var/lib/chriptmas
+ExecStart=/opt/chriptmas/.venv/bin/python tools/backup.py --output /var/backups/chriptmas
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/chriptmas

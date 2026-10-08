@@ -1,0 +1,22 @@
+{
+  "documents": [],
+  "insights": [
+    {"id":"gift-budget","project_id":"people","text":"先核对花费上限与对方近期愿望","conditions":["挑礼物时"]},
+    {"id":"gift-space","project_id":"people","text":"考虑收纳空间和换货余地","conditions":["挑礼物时"]},
+    {"id":"gift-sibling","project_id":"people","scene":"小李","text":"只挑银质饰品","conditions":["挑礼物时"]},
+    {"id":"travel","project_id":"life","text":"留出机动时间并核对天气","conditions":["旅行安排时"]},
+    {"id":"interview","project_id":"work","text":"用真实事例交代结果和依据","conditions":["面试准备时"]},
+    {"id":"research","project_id":"work","text":"先明确变量和可证伪假设","conditions":["设计实验时"]},
+    {"id":"meeting","project_id":"work","text":"记录决定与具体负责人","conditions":["组织会议时"]},
+    {"id":"writing","project_id":"work","text":"用结论领起再给证据","conditions":["写汇报时"]},
+    {"id":"body-distractor","project_id":"people","text":"生日礼物依据统计分布呈现","conditions":["写论文时"]}
+  ],
+  "questions": [
+    {"id":"method-life-1","category":"applicable_methods","project_id":"people","scene":"小王","question":"给小王送什么生日礼物？","expected_ids":["gift-budget","gift-space"]},
+    {"id":"method-life-2","category":"applicable_methods","project_id":"life","question":"春节旅行怎么安排？","expected_ids":["travel"]},
+    {"id":"method-work-1","category":"applicable_methods","project_id":"work","question":"下一轮面试该怎样准备？","expected_ids":["interview"]},
+    {"id":"method-work-2","category":"applicable_methods","project_id":"work","question":"帮我设计实验步骤","expected_ids":["research"]},
+    {"id":"method-work-3","category":"applicable_methods","project_id":"work","question":"组织会议需要注意什么？","expected_ids":["meeting"]},
+    {"id":"method-work-4","category":"applicable_methods","project_id":"work","question":"帮我写汇报","expected_ids":["writing"]}
+  ]
+}

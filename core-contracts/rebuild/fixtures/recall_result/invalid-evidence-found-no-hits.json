@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0.0",
+  "id": "recall-result-no-hits-invalid",
+  "request_id": "recall-request-project-alpha-003",
+  "project_id": "project-alpha",
+  "status": "evidence_found",
+  "hits": [],
+  "coverage": {
+    "status": "insufficient",
+    "requested_layers": ["l3_project_skill"],
+    "covered_layers": [],
+    "missing_layers": ["l3_project_skill"],
+    "low_trust": false,
+    "source_ref_count": 0
+  },
+  "truncation": {
+    "applied": false,
+    "reason": "none",
+    "dropped_hit_ids": [],
+    "final_hit_count": 0,
+    "final_token_estimate": 0
+  },
+  "explanation": {
+    "summary": "错误示例。",
+    "layer_order": ["l3_project_skill"],
+    "warnings": []
+  },
+  "cross_project": {
+    "used": false,
+    "grant_id": null,
+    "project_ids": []
+  },
+  "errors": [],
+  "created_at": "2026-06-29T15:35:00+08:00"
+}

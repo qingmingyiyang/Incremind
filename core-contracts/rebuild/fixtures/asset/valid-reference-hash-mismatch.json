@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0.0",
+  "id": "asset-image-001",
+  "source_id": "source-image-001",
+  "uri": "crp-ref://default/assets/asset-image-001",
+  "content_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+  "size_bytes": 2048,
+  "media_type": "image/png",
+  "storage_mode": "reference",
+  "availability": "hash_mismatch",
+  "availability_reason": "current_bytes_do_not_match_captured_hash",
+  "created_at": "2026-06-29T13:15:00Z",
+  "verified_at": "2026-06-29T13:20:00Z",
+  "metadata": {}
+}

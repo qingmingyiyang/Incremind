@@ -1,0 +1,22 @@
+.ui-conversation-menu{position:relative;width:fit-content;margin:8px 0 0 auto}
+.ui-conversation-menu>button,.ui-conversation-menu [role=menuitem]{border:0;background:transparent;color:var(--muted);padding:8px;cursor:pointer;font:14px var(--sans)}
+.ui-conversation-menu>button{display:flex;align-items:center;justify-content:center}
+.ui-conversation-menu [role=menu]{position:absolute;right:0;bottom:100%;z-index:2;min-width:96px;padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-control);box-shadow:0 12px 32px var(--shadow)}
+.ui-conversation-menu [role=menuitem]{display:block;width:100%;text-align:left;color:var(--ink)}
+.ui-conversation-menu [role=menuitem]:hover{background:var(--sunk)}
+.ui-conversation-menu [role=menuitem]:disabled{color:var(--muted);cursor:default}
+.ui-conversation-destinations{display:flex;flex-wrap:wrap;gap:8px;align-items:center;border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:24px}
+.ui-conversation-destinations button,.ui-conversation-share [role=alert] button{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line2);border-radius:var(--r-control);padding:8px 12px;background:var(--panel);color:var(--ink);font:14px var(--sans);cursor:pointer}
+.ui-conversation-destinations button:disabled{color:var(--muted);cursor:default}
+.ui-conversation-share h3{margin:24px 0 12px;font:500 13px var(--sans);color:var(--muted)}
+.ui-conversation-share h3 span{font-family:var(--mono)}
+.ui-conversation-question{padding:12px 16px;border-radius:var(--r-panel);background:var(--sunk);white-space:pre-wrap;overflow-wrap:anywhere;font:15px/1.6 var(--sans);color:var(--ink2)}
+.ui-conversation-citations{display:flex;flex-direction:column;gap:16px}
+.ui-conversation-citation-label{display:flex;align-items:center;gap:8px;max-width:100%;width:fit-content;border:1px solid var(--line);border-radius:var(--r-control);padding:4px 8px;font:13px var(--sans);color:var(--ink2)}
+.ui-conversation-citation-label span{min-width:0;overflow-wrap:anywhere}
+.ui-conversation-citation-label button{display:flex;flex:none;align-items:center;justify-content:center;border:0;background:transparent;color:var(--muted);padding:4px;cursor:pointer}
+.ui-conversation-citations blockquote{margin:8px 0 0;padding:0 0 0 12px;border-left:1px solid var(--line2);white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.6 var(--sans);color:var(--ink2)}
+.ui-conversation-images{display:flex;flex-wrap:wrap;gap:12px;margin:16px 0;color:var(--ink2);font:12px var(--mono)}
+.ui-conversation-images a{display:inline-flex;align-items:center;gap:4px;color:inherit}
+.ui-conversation-error{font:13px var(--sans);color:var(--red)}
+.ui-conversation-share .ui-markdown-body{overflow-wrap:anywhere}

@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0.0",
+  "id": "source-text-002",
+  "type": "text",
+  "title": "错误哈希",
+  "capture_mode": "inline",
+  "storage_uri": "crp://default/sources/source-text-002",
+  "original_url": null,
+  "content_hash": "not-a-sha256",
+  "media_type": "text/plain",
+  "size_bytes": 12,
+  "parser_version": null,
+  "processing_state": "captured",
+  "created_at": "2026-06-29T12:20:00Z",
+  "imported_from_legacy": false,
+  "trust_status": "user_confirmed",
+  "metadata": {}
+}

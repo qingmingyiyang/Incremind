@@ -1,0 +1,302 @@
+{
+  "version": "project-route-gold-v1",
+  "data_class": "fictional_desensitized",
+  "projects": [
+    {
+      "project_id": "memory-os",
+      "series": [
+        {
+          "series_id": "four-layer-memory",
+          "title": "四层记忆与渐进召回",
+          "description": "项目记忆按总览、详细摘要、结构化内容和原始来源分层，先路由项目与系列，再按需读取深层证据。",
+          "keywords": ["四层记忆", "渐进召回", "项目路由", "系列", "原档追溯"]
+        },
+        {
+          "series_id": "memory-governance",
+          "title": "记忆发布与治理",
+          "description": "长期记忆经过候选、审阅、发布、回滚、遗忘和备份恢复。",
+          "keywords": ["记忆发布", "回滚", "遗忘", "备份恢复"]
+        }
+      ]
+    },
+    {
+      "project_id": "brand-rice",
+      "series": [
+        {
+          "series_id": "rice-brand-strategy",
+          "title": "桥米品牌策略",
+          "description": "区域公用品牌、桥米包装、消费者价值和产业定位。",
+          "keywords": ["桥米", "区域公用品牌", "包装", "消费者价值"]
+        },
+        {
+          "series_id": "government-brand-report",
+          "title": "品牌产业政府汇报",
+          "description": "面向政府决策的品牌产业方案与正式汇报结构。",
+          "keywords": ["政府汇报", "产业", "品牌定位", "决策"]
+        }
+      ]
+    },
+    {
+      "project_id": "desktop-companion",
+      "series": [
+        {
+          "series_id": "desktop-pet",
+          "title": "桌面宠物原生交互",
+          "description": "桌面宠物窗口、托盘、多屏 DPI、拖拽、右键菜单和提醒气泡。",
+          "keywords": ["桌面宠物", "托盘", "多屏", "DPI", "拖拽"]
+        },
+        {
+          "series_id": "companion-voice",
+          "title": "宠物半双工语音",
+          "description": "麦克风录音、本地 ASR、聊天、TTS 播放确认与取消。",
+          "keywords": ["半双工", "语音", "ASR", "TTS", "麦克风"]
+        }
+      ]
+    },
+    {
+      "project_id": "video-workbench",
+      "series": [
+        {
+          "series_id": "video-processing",
+          "title": "视频下载转写与摘要",
+          "description": "视频下载、音频提取、字幕转写、分块摘要和关键画面。",
+          "keywords": ["视频", "下载", "转写", "字幕", "摘要", "关键画面"]
+        },
+        {
+          "series_id": "video-evidence-answer",
+          "title": "视频证据问答",
+          "description": "依据视频时间戳和转写证据回答问题并保留引用。",
+          "keywords": ["视频问答", "时间戳", "转写证据", "引用"]
+        }
+      ]
+    },
+    {
+      "project_id": "project-collaboration",
+      "series": [
+        {
+          "series_id": "agent-collaboration",
+          "title": "跨 Agent 协作",
+          "description": "使用 claim、handoff、Git index 窗口和精确提交协调多个 Agent。",
+          "keywords": ["Agent", "claim", "handoff", "Git index", "提交"]
+        },
+        {
+          "series_id": "project-skill",
+          "title": "Project Skill 项目方法",
+          "description": "把项目中验证过的工作方式、约束和流程沉淀为可复用项目方法。",
+          "keywords": ["Project Skill", "项目方法", "复用", "工作规则"]
+        }
+      ]
+    },
+    {
+      "project_id": "document-studio",
+      "series": [
+        {
+          "series_id": "document-generation",
+          "title": "Word PPT PDF 文档生成",
+          "description": "生成、排版和检查 Word、PPT、PDF 与 Markdown 交付物。",
+          "keywords": ["Word", "PPT", "PDF", "Markdown", "排版"]
+        },
+        {
+          "series_id": "library-structuring",
+          "title": "资料库文档结构化",
+          "description": "把资料整理成章节、表格、问答、标签和结构化文档。",
+          "keywords": ["资料库", "文档", "结构化", "章节", "表格", "标签"]
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "memory-01",
+      "query": "四层记忆怎样做渐进召回",
+      "expected_status": "routed",
+      "expected_project_id": "memory-os",
+      "ai_replay": {
+        "selected_project_id": "memory-os",
+        "confidence": 0.98,
+        "reason_code": "series_scope_match",
+        "scores": {"memory-os": 0.99, "brand-rice": 0.05, "desktop-companion": 0.05, "video-workbench": 0.08, "project-collaboration": 0.12, "document-studio": 0.14}
+      }
+    },
+    {
+      "id": "memory-02",
+      "query": "删除长期记忆以后怎样回滚和备份恢复",
+      "expected_status": "routed",
+      "expected_project_id": "memory-os",
+      "ai_replay": {
+        "selected_project_id": "memory-os",
+        "confidence": 0.97,
+        "reason_code": "semantic_topic_match",
+        "scores": {"memory-os": 0.98, "brand-rice": 0.03, "desktop-companion": 0.04, "video-workbench": 0.03, "project-collaboration": 0.10, "document-studio": 0.08}
+      }
+    },
+    {
+      "id": "brand-01",
+      "query": "桥米包装如何表达消费者价值",
+      "expected_status": "routed",
+      "expected_project_id": "brand-rice",
+      "ai_replay": {
+        "selected_project_id": "brand-rice",
+        "confidence": 0.99,
+        "reason_code": "series_scope_match",
+        "scores": {"memory-os": 0.02, "brand-rice": 0.99, "desktop-companion": 0.03, "video-workbench": 0.02, "project-collaboration": 0.04, "document-studio": 0.08}
+      }
+    },
+    {
+      "id": "brand-02",
+      "query": "政府决策汇报里的产业品牌定位怎么写",
+      "expected_status": "routed",
+      "expected_project_id": "brand-rice",
+      "ai_replay": {
+        "selected_project_id": "brand-rice",
+        "confidence": 0.96,
+        "reason_code": "semantic_topic_match",
+        "scores": {"memory-os": 0.03, "brand-rice": 0.97, "desktop-companion": 0.03, "video-workbench": 0.04, "project-collaboration": 0.10, "document-studio": 0.18}
+      }
+    },
+    {
+      "id": "companion-01",
+      "query": "桌面宠物在多屏 DPI 下怎样恢复托盘窗口",
+      "expected_status": "routed",
+      "expected_project_id": "desktop-companion",
+      "ai_replay": {
+        "selected_project_id": "desktop-companion",
+        "confidence": 0.99,
+        "reason_code": "series_scope_match",
+        "scores": {"memory-os": 0.02, "brand-rice": 0.02, "desktop-companion": 0.99, "video-workbench": 0.03, "project-collaboration": 0.04, "document-studio": 0.02}
+      }
+    },
+    {
+      "id": "companion-02",
+      "query": "半双工语音里 ASR 和 TTS 如何取消",
+      "expected_status": "routed",
+      "expected_project_id": "desktop-companion",
+      "ai_replay": {
+        "selected_project_id": "desktop-companion",
+        "confidence": 0.98,
+        "reason_code": "semantic_topic_match",
+        "scores": {"memory-os": 0.03, "brand-rice": 0.02, "desktop-companion": 0.99, "video-workbench": 0.12, "project-collaboration": 0.03, "document-studio": 0.02}
+      }
+    },
+    {
+      "id": "video-01",
+      "query": "视频字幕转写以后怎样生成摘要和关键画面",
+      "expected_status": "routed",
+      "expected_project_id": "video-workbench",
+      "ai_replay": {
+        "selected_project_id": "video-workbench",
+        "confidence": 0.99,
+        "reason_code": "series_scope_match",
+        "scores": {"memory-os": 0.08, "brand-rice": 0.03, "desktop-companion": 0.08, "video-workbench": 0.99, "project-collaboration": 0.03, "document-studio": 0.20}
+      }
+    },
+    {
+      "id": "video-02",
+      "query": "视频问答如何保留时间戳引用",
+      "expected_status": "routed",
+      "expected_project_id": "video-workbench",
+      "ai_replay": {
+        "selected_project_id": "video-workbench",
+        "confidence": 0.98,
+        "reason_code": "semantic_topic_match",
+        "scores": {"memory-os": 0.12, "brand-rice": 0.02, "desktop-companion": 0.04, "video-workbench": 0.99, "project-collaboration": 0.04, "document-studio": 0.12}
+      }
+    },
+    {
+      "id": "collaboration-01",
+      "query": "claim 和 handoff 提交前怎样协调 Git index",
+      "expected_status": "routed",
+      "expected_project_id": "project-collaboration",
+      "ai_replay": {
+        "selected_project_id": "project-collaboration",
+        "confidence": 0.99,
+        "reason_code": "series_scope_match",
+        "scores": {"memory-os": 0.04, "brand-rice": 0.02, "desktop-companion": 0.04, "video-workbench": 0.03, "project-collaboration": 0.99, "document-studio": 0.03}
+      }
+    },
+    {
+      "id": "collaboration-02",
+      "query": "把验证过的项目方法沉淀成 Project Skill 供下次复用",
+      "expected_status": "routed",
+      "expected_project_id": "project-collaboration",
+      "ai_replay": {
+        "selected_project_id": "project-collaboration",
+        "confidence": 0.98,
+        "reason_code": "semantic_topic_match",
+        "scores": {"memory-os": 0.20, "brand-rice": 0.04, "desktop-companion": 0.04, "video-workbench": 0.03, "project-collaboration": 0.99, "document-studio": 0.16}
+      }
+    },
+    {
+      "id": "document-01",
+      "query": "Word PPT 和 PDF 交付物怎样排版检查",
+      "expected_status": "routed",
+      "expected_project_id": "document-studio",
+      "ai_replay": {
+        "selected_project_id": "document-studio",
+        "confidence": 0.99,
+        "reason_code": "series_scope_match",
+        "scores": {"memory-os": 0.03, "brand-rice": 0.12, "desktop-companion": 0.02, "video-workbench": 0.03, "project-collaboration": 0.04, "document-studio": 0.99}
+      }
+    },
+    {
+      "id": "document-02",
+      "query": "资料库文档如何整理成章节表格和标签",
+      "expected_status": "routed",
+      "expected_project_id": "document-studio",
+      "ai_replay": {
+        "selected_project_id": "document-studio",
+        "confidence": 0.97,
+        "reason_code": "semantic_topic_match",
+        "scores": {"memory-os": 0.28, "brand-rice": 0.06, "desktop-companion": 0.03, "video-workbench": 0.15, "project-collaboration": 0.14, "document-studio": 0.98}
+      }
+    },
+    {
+      "id": "ambiguous-01",
+      "query": "项目资料应该怎样整理和复用",
+      "expected_status": "ambiguous",
+      "expected_project_id": null,
+      "ai_replay": {
+        "selected_project_id": null,
+        "confidence": 0.42,
+        "reason_code": "ambiguous",
+        "scores": {"memory-os": 0.66, "brand-rice": 0.12, "desktop-companion": 0.08, "video-workbench": 0.20, "project-collaboration": 0.68, "document-studio": 0.67}
+      }
+    },
+    {
+      "id": "ambiguous-02",
+      "query": "摘要和结构化内容应该放在哪个项目",
+      "expected_status": "ambiguous",
+      "expected_project_id": null,
+      "ai_replay": {
+        "selected_project_id": null,
+        "confidence": 0.45,
+        "reason_code": "ambiguous",
+        "scores": {"memory-os": 0.69, "brand-rice": 0.08, "desktop-companion": 0.05, "video-workbench": 0.68, "project-collaboration": 0.14, "document-studio": 0.70}
+      }
+    },
+    {
+      "id": "fallback-01",
+      "query": "今晚天气如何",
+      "expected_status": "fallback",
+      "expected_project_id": null,
+      "ai_replay": {
+        "selected_project_id": null,
+        "confidence": 0.10,
+        "reason_code": "insufficient_context",
+        "scores": {"memory-os": 0.05, "brand-rice": 0.04, "desktop-companion": 0.04, "video-workbench": 0.03, "project-collaboration": 0.03, "document-studio": 0.03}
+      }
+    },
+    {
+      "id": "fallback-02",
+      "query": "帮我预订明天的机票",
+      "expected_status": "fallback",
+      "expected_project_id": null,
+      "ai_replay": {
+        "selected_project_id": null,
+        "confidence": 0.08,
+        "reason_code": "insufficient_context",
+        "scores": {"memory-os": 0.03, "brand-rice": 0.03, "desktop-companion": 0.03, "video-workbench": 0.03, "project-collaboration": 0.03, "document-studio": 0.03}
+      }
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/ai/analyze-source-result.schema.json",
+  "title": "AnalyzeSourceToolResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "reason", "manifest_ref", "manifest_revision", "job_id", "job_ref", "job_revision", "replayed"],
+  "properties": {
+    "status": {"enum": ["terminal", "admitted"]},
+    "reason": {"oneOf": [{"type": "null"}, {"enum": ["feature_disabled", "unknown_platform", "ambiguous_platform", "provider_unavailable", "unsupported_source", "unknown_content_kind", "source_permission_denied", "source_permission_unresolved", "unsupported_content_kind", "budget_rejected"]}]},
+    "manifest_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/controlledRef"}]},
+    "manifest_revision": {"type": ["string", "null"]},
+    "source_manifest_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/controlledRef"}]},
+    "source_manifest_revision": {"type": ["string", "null"]},
+    "job_id": {"type": ["string", "null"]},
+    "job_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/controlledRef"}]},
+    "canonical_job_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/controlledRef"}]},
+    "job_revision": {"type": ["integer", "null"], "minimum": 1},
+    "credential_use": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorization_revision", "secret_generation", "result"],
+      "properties": {
+        "authorization_revision": {"type": "integer", "minimum": 1},
+        "secret_generation": {"type": "integer", "minimum": 1},
+        "result": {"enum": ["resolved", "admitted", "terminal"]}
+      }
+    },
+    "replayed": {"type": "boolean"}
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "terminal"}}}, "then": {"properties": {"reason": {"type": "string"}, "job_id": {"type": "null"}, "job_ref": {"type": "null"}, "job_revision": {"type": "null"}, "replayed": {"const": false}}}},
+    {"if": {"properties": {"status": {"const": "admitted"}}}, "then": {"required": ["source_manifest_ref", "source_manifest_revision", "canonical_job_ref"], "properties": {"reason": {"type": "null"}, "manifest_ref": {"$ref": "#/$defs/controlledRef"}, "manifest_revision": {"type": "string", "minLength": 1}, "source_manifest_ref": {"$ref": "#/$defs/controlledRef"}, "source_manifest_revision": {"type": "string", "minLength": 1}, "job_id": {"type": "string", "minLength": 1}, "job_ref": {"$ref": "#/$defs/controlledRef"}, "canonical_job_ref": {"$ref": "#/$defs/controlledRef"}, "job_revision": {"type": "integer", "minimum": 1}}}}
+  ],
+  "$defs": {"controlledRef": {"type": "string", "pattern": "^crp://[A-Za-z0-9][A-Za-z0-9._~/-]*$"}}
+}

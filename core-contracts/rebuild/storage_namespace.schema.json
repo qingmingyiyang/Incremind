@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/storage_namespace.schema.json",
+  "title": "StorageNamespace",
+  "description": "本地优先存储命名空间。只保存平台中立 URI 与策略，不保存 Windows 或 macOS 绝对路径。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "namespace_id",
+    "storage_version",
+    "app_root_uri",
+    "root_uri",
+    "reference_root_uri",
+    "legacy_access",
+    "legacy_root_uri",
+    "write_policy",
+    "backup_policy",
+    "migration",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "namespace_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "storage_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "app_root_uri": {
+      "type": "string",
+      "description": "由 Platform Adapter 解析到 Windows appDataDir 或 macOS Application Support。",
+      "pattern": "^platform-app-data://[a-z0-9][a-z0-9._-]*$"
+    },
+    "root_uri": {
+      "type": "string",
+      "pattern": "^crp://[a-z0-9][a-z0-9._-]{0,63}/$"
+    },
+    "reference_root_uri": {
+      "type": "string",
+      "pattern": "^crp-ref://[a-z0-9][a-z0-9._-]{0,63}/$"
+    },
+    "legacy_access": {
+      "type": "string",
+      "enum": [
+        "disabled",
+        "read_only"
+      ]
+    },
+    "legacy_root_uri": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^legacy-readonly://[a-z0-9][a-z0-9._/-]*$"
+        }
+      ]
+    },
+    "write_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "atomic_object_writes",
+        "transactional_metadata",
+        "legacy_write_allowed"
+      ],
+      "properties": {
+        "atomic_object_writes": {
+          "type": "boolean",
+          "const": true
+        },
+        "transactional_metadata": {
+          "type": "boolean",
+          "const": true
+        },
+        "legacy_write_allowed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "backup_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "snapshot_uri_prefix",
+        "retention_count",
+        "pre_restore_required"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "snapshot_uri_prefix": {
+          "type": "string",
+          "pattern": "^crp://[a-z0-9][a-z0-9._-]{0,63}/backups/$"
+        },
+        "retention_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "pre_restore_required": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "from_version",
+        "target_version",
+        "manifest_uri",
+        "rollback_snapshot_uri"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "planned",
+            "running",
+            "completed",
+            "failed",
+            "rolled_back"
+          ]
+        },
+        "from_version": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "target_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "manifest_uri": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^crp://[a-z0-9][a-z0-9._-]{0,63}/migrations/[A-Za-z0-9][A-Za-z0-9._~-]*\\.json$"
+            }
+          ]
+        },
+        "rollback_snapshot_uri": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^crp://[a-z0-9][a-z0-9._-]{0,63}/backups/[A-Za-z0-9][A-Za-z0-9._~-]*$"
+            }
+          ]
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "legacy_access": {
+            "const": "disabled"
+          }
+        },
+        "required": [
+          "legacy_access"
+        ]
+      },
+      "then": {
+        "properties": {
+          "legacy_root_uri": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "legacy_access": {
+            "const": "read_only"
+          }
+        },
+        "required": [
+          "legacy_access"
+        ]
+      },
+      "then": {
+        "properties": {
+          "legacy_root_uri": {
+            "type": "string",
+            "pattern": "^legacy-readonly://[a-z0-9][a-z0-9._/-]*$"
+          }
+        }
+      }
+    }
+  ]
+}

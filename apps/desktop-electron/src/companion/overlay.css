@@ -1,0 +1,22 @@
+:root { color-scheme: light dark; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 10px; overflow: hidden; background: transparent; }
+.overlay-card { height: calc(100vh - 20px); overflow: auto; padding: 14px; border: 1px solid rgba(126, 47, 47, .24); border-radius: 16px; background: rgba(255, 253, 248, .96); color: #2d2926; box-shadow: 0 14px 40px rgba(31, 24, 20, .18); }
+header, footer, .actions { display: flex; align-items: center; gap: 8px; }
+header { justify-content: space-between; color: #8c3030; font-size: 12px; font-weight: 700; }
+button, textarea { font: inherit; }
+button { border: 1px solid rgba(126, 47, 47, .22); border-radius: 9px; padding: 6px 10px; background: #fffaf2; color: #6f2929; cursor: pointer; }
+button:focus-visible, textarea:focus-visible { outline: 3px solid rgba(145, 1, 1, .28); outline-offset: 2px; }
+#close { border: 0; background: transparent; font-size: 20px; padding: 0 5px; }
+#text { margin: 12px 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
+.actions { flex-wrap: wrap; }
+form { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 10px; }
+form label { grid-column: 1 / -1; font-size: 12px; }
+textarea { width: 100%; resize: none; border: 1px solid rgba(126, 47, 47, .2); border-radius: 9px; padding: 7px; background: #fff; color: #2d2926; }
+footer { justify-content: flex-end; margin-top: 10px; }
+#status { margin: 7px 0 0; color: #746c66; font-size: 12px; }
+@media (prefers-color-scheme: dark) {
+  .overlay-card { background: rgba(33, 29, 27, .97); color: #f4eee8; border-color: rgba(232, 170, 170, .25); }
+  button, textarea { background: #2b2623; color: #f4eee8; border-color: rgba(232, 170, 170, .24); }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }

@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0.0",
+  "id": "document-revision-invalid-order",
+  "document_id": "document-project-001",
+  "revision": 1,
+  "parent_revision": 1,
+  "operation": "ai_patch",
+  "author": "system",
+  "reason": "revision must increase",
+  "base_content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "new_content_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "source_snapshot": {
+    "snapshot_id": "snapshot-invalid-order",
+    "snapshot_hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "source_refs": [
+      {
+        "source_id": "source-text-001",
+        "locator": "char:0-80"
+      }
+    ],
+    "captured_at": "2026-06-29T13:10:00+08:00"
+  },
+  "changed_blocks": [
+    {
+      "operation": "update",
+      "block_id": "block-summary",
+      "block": {
+        "id": "block-summary",
+        "block_type": "paragraph",
+        "origin": "ai",
+        "content": "revision 必须递增。",
+        "source_refs": [
+          {
+            "source_id": "source-text-001",
+            "locator": "char:0-80"
+          }
+        ],
+        "edited_by_user": false,
+        "lock_policy": "source_required"
+      }
+    }
+  ],
+  "conflict": {
+    "status": "none",
+    "conflict_blocks": [],
+    "resolution": null
+  },
+  "created_at": "2026-06-29T13:10:00+08:00"
+}

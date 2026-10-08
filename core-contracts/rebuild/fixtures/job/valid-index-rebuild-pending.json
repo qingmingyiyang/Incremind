@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0.0",
+  "id": "job-index-rebuild-default-20260701",
+  "source_id": "index-ledger-9f89a4a0d2fd1d90",
+  "job_type": "rebuild_index",
+  "idempotency_key": "index-rebuild-9f89a4a0d2fd1d90",
+  "status": "pending",
+  "attempt": 0,
+  "max_attempts": 2,
+  "lease": null,
+  "progress": {
+    "current": 0,
+    "total": 3,
+    "percent": 0,
+    "message": "Index rebuild request is persisted and waiting for an index worker."
+  },
+  "steps": [
+    {
+      "name": "load_rebuild_request",
+      "status": "pending",
+      "attempt": 0,
+      "started_at": null,
+      "completed_at": null,
+      "progress": 0,
+      "input_refs": [
+        "crp://default/recall/index-rebuild-requests/9f89a4a0d2fd1d90"
+      ],
+      "staged_output_refs": [],
+      "log_refs": [],
+      "error": null
+    },
+    {
+      "name": "build_sqlite_fts5_index",
+      "status": "pending",
+      "attempt": 0,
+      "started_at": null,
+      "completed_at": null,
+      "progress": 0,
+      "input_refs": [
+        "crp://default/recall/index-manifests/sqlite_fts5_candidate",
+        "crp://default/sources/source-alpha/revisions/1",
+        "crp://default/sources/source-beta/revisions/2"
+      ],
+      "staged_output_refs": [],
+      "log_refs": [],
+      "error": null
+    },
+    {
+      "name": "verify_index_traceability",
+      "status": "pending",
+      "attempt": 0,
+      "started_at": null,
+      "completed_at": null,
+      "progress": 0,
+      "input_refs": [
+        "crp://default/recall/index-manifests/sqlite_fts5_candidate"
+      ],
+      "staged_output_refs": [],
+      "log_refs": [],
+      "error": null
+    }
+  ],
+  "error": null,
+  "checkpoint": null,
+  "staged_outputs": [],
+  "published_outputs": [],
+  "log_refs": [
+    "crp://default/logs/jobs/job-index-rebuild-default-20260701"
+  ],
+  "created_at": "2026-07-01T01:30:00+08:00",
+  "updated_at": "2026-07-01T01:30:00+08:00"
+}

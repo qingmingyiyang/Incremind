@@ -1,0 +1,516 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/job.schema.json",
+  "title": "Job",
+  "description": "可持久化、可恢复、正式发布前带 staging 边界的内容处理任务。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "source_id",
+    "job_type",
+    "idempotency_key",
+    "status",
+    "attempt",
+    "max_attempts",
+    "lease",
+    "progress",
+    "steps",
+    "error",
+    "checkpoint",
+    "staged_outputs",
+    "published_outputs",
+    "log_refs",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "job_type": {
+      "type": "string",
+      "enum": [
+        "capture",
+        "parse",
+        "extract_memory",
+        "build_document",
+        "update_project_skill",
+        "rebuild_index",
+        "rebuild_memory_projection",
+        "migration_dry_run",
+        "workbench_auto_intake",
+        "media_hands"
+      ]
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 16
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "waiting_user",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max_attempts": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "lease": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/jobLease"
+        }
+      ]
+    },
+    "progress": {
+      "$ref": "#/$defs/jobProgress"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/jobStep"
+      }
+    },
+    "error": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/jobError"
+        }
+      ]
+    },
+    "checkpoint": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/jobCheckpoint"
+        }
+      ]
+    },
+    "staged_outputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/jobOutput"
+      }
+    },
+    "published_outputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/jobOutput"
+      }
+    },
+    "log_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/jobLogRef"
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "events": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/jobEvent"}
+    },
+    "cancel_request": {
+      "$ref": "#/$defs/jobCancelRequest"
+    },
+    "media_hands": {
+      "$ref": "#/$defs/mediaHands"
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"job_type": {"const": "media_hands"}}, "required": ["job_type"]},
+      "then": {"required": ["media_hands"]},
+      "else": {"not": {"required": ["media_hands"]}}
+    }
+  ],
+  "$defs": {
+    "jobEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "at"],
+      "properties": {
+        "type": {"enum": ["claimed", "step_started", "step_completed", "completed", "failed", "cancelled"]},
+        "at": {"type": "string", "format": "date-time"},
+        "step": {"type": ["string", "null"]}
+      }
+    },
+    "jobCancelRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "status", "requested_at", "applied_at"],
+      "properties": {
+        "request_id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["requested", "applied"]},
+        "requested_at": {"type": "string", "format": "date-time"},
+        "applied_at": {"type": ["string", "null"], "format": "date-time"}
+      }
+    },
+    "mediaHands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest", "permission_snapshot", "operation", "policy", "required_lanes", "budget", "admission_state", "consumed", "concurrency"],
+      "properties": {
+        "manifest": {
+          "type": "object", "additionalProperties": false,
+          "required": ["ref", "revision", "source_ref"],
+          "properties": {"ref": {"type": "string", "pattern": "^crp://"}, "revision": {"type": "string", "minLength": 1}, "source_ref": {"type": "string", "pattern": "^crp://"}}
+        },
+        "credential_use_binding": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["provider", "authorization_revision", "secret_generation"],
+              "properties": {
+                "provider": {"const": "xiaohongshu"},
+                "authorization_revision": {"type": "integer", "minimum": 1},
+                "secret_generation": {"type": "integer", "minimum": 1}
+              }
+            }
+          ]
+        },
+        "permission_snapshot": {
+          "type": "object", "additionalProperties": false,
+          "required": ["project_id", "manifest_ref", "manifest_revision", "grant_ref", "grant_revision", "revocation_generation"],
+          "properties": {
+            "project_id": {"type": "string", "minLength": 1},
+            "manifest_ref": {"type": "string", "pattern": "^crp://"},
+            "manifest_revision": {"type": "string", "minLength": 1},
+            "grant_ref": {"type": "string", "pattern": "^crp://"},
+            "grant_revision": {"type": "string", "minLength": 1},
+            "revocation_generation": {"type": "integer", "minimum": 0}
+          }
+        },
+        "operation": {"enum": ["analyze_source", "extract_audio_track", "transcribe_video", "extract_images"]},
+        "policy": {
+          "type": "object", "additionalProperties": false,
+          "required": ["revision", "lane_max_queue", "lane_max_concurrency"],
+          "properties": {"revision": {"type": "string", "minLength": 1}, "lane_max_queue": {"$ref": "#/$defs/mediaLaneBudget"}, "lane_max_concurrency": {"$ref": "#/$defs/mediaLaneBudget"}}
+        },
+        "required_lanes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["download", "asr", "vision", "model", "media_cpu"]}},
+        "budget": {"$ref": "#/$defs/mediaResourceBudget"},
+        "consumed": {"$ref": "#/$defs/mediaResourceBudget"},
+        "admission_state": {"enum": ["queued", "executing", "completed", "failed", "cancelled"]},
+        "concurrency": {"type": "object", "additionalProperties": false, "required": ["state", "acquired_at"], "properties": {"state": {"enum": ["idle", "acquired"]}, "acquired_at": {"type": ["string", "null"], "format": "date-time"}}}
+      }
+    },
+    "mediaLaneBudget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["download", "asr", "vision", "model", "media_cpu"],
+      "properties": {"download": {"type": "integer", "minimum": 0}, "asr": {"type": "integer", "minimum": 0}, "vision": {"type": "integer", "minimum": 0}, "model": {"type": "integer", "minimum": 0}, "media_cpu": {"type": "integer", "minimum": 0}}
+    },
+    "mediaResourceBudget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_download_bytes", "max_media_cpu_ms", "max_asr_audio_ms", "max_vision_frames", "max_model_input_tokens", "max_model_output_tokens", "max_wall_ms"],
+      "properties": {
+        "max_download_bytes": {"type": "integer", "minimum": 0}, "max_media_cpu_ms": {"type": "integer", "minimum": 0},
+        "max_asr_audio_ms": {"type": "integer", "minimum": 0}, "max_vision_frames": {"type": "integer", "minimum": 0},
+        "max_model_input_tokens": {"type": "integer", "minimum": 0}, "max_model_output_tokens": {"type": "integer", "minimum": 0},
+        "max_wall_ms": {"type": "integer", "minimum": 0}
+      }
+    },
+    "jobLease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "worker_id",
+        "lease_token",
+        "acquired_at",
+        "expires_at"
+      ],
+      "properties": {
+        "worker_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lease_token": {
+          "type": "string",
+          "minLength": 16
+        },
+        "acquired_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "jobProgress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "current",
+        "total",
+        "percent",
+        "message"
+      ],
+      "properties": {
+        "current": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "jobStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status",
+        "attempt",
+        "started_at",
+        "completed_at",
+        "progress",
+        "input_refs",
+        "staged_output_refs",
+        "log_refs",
+        "error"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "running",
+            "waiting_user",
+            "completed",
+            "failed",
+            "cancelled",
+            "skipped"
+          ]
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "progress": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "input_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jobObjectRef"
+          }
+        },
+        "staged_output_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jobObjectRef"
+          }
+        },
+        "log_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jobLogRef"
+          }
+        },
+        "error": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/jobError"
+            }
+          ]
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "input_type": {
+          "type": "string"
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "needs_user_confirmation": {
+          "type": "boolean"
+        },
+        "retry_action": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "jobError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "failed_step",
+        "details"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "failed_step": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "jobCheckpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resume_step",
+        "checkpoint_uri",
+        "state_hash",
+        "updated_at"
+      ],
+      "properties": {
+        "resume_step": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checkpoint_uri": {
+          "type": "string",
+          "pattern": "^crp://[a-z0-9][a-z0-9_-]*/jobs/.+"
+        },
+        "state_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "jobOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "uri",
+        "object_id",
+        "published"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "source",
+            "asset",
+            "atom",
+            "scenario",
+            "series_memory",
+            "project_skill",
+            "document",
+            "job_log",
+            "other"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+"
+        },
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "published": {
+          "type": "boolean"
+        }
+      }
+    },
+    "jobObjectRef": {
+      "type": "string",
+      "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+"
+    },
+    "jobLogRef": {
+      "type": "string",
+      "pattern": "^crp://[a-z0-9][a-z0-9_-]*/logs/jobs/.+"
+    }
+  }
+}

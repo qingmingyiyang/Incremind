@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "event_id": "event:projection:unsafe",
+  "occurred_at": "2026-07-19T11:00:00+08:00",
+  "source": "electron_main",
+  "payload": {
+    "state": "ready",
+    "mood": "calm",
+    "revision": 7,
+    "animation_id": "bear.ready",
+    "mouth_level": 0,
+    "affinity_progress": 32,
+    "status_badges": [],
+    "transient_expires_at": null,
+    "path": "C:\\Users\\example\\private.json"
+  }
+}

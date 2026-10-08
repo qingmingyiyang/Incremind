@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0.0",
+  "request_id": "request:chat:001",
+  "occurred_at": "2026-07-19T11:05:00+08:00",
+  "source": "electron_main",
+  "payload": {
+    "route": "companion.chat",
+    "session_id": null,
+    "context_epoch": 1,
+    "text": "今天也请多关照。",
+    "prompt_revision": 1,
+    "profile_revision": 1,
+    "memory_ids": []
+  }
+}

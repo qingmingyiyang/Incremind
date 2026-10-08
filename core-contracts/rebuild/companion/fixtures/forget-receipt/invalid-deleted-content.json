@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0.0",
+  "request_id": "request:forget:unsafe",
+  "occurred_at": "2026-07-19T11:10:00+08:00",
+  "source": "fastapi_sidecar",
+  "payload": {
+    "receipt_id": "receipt:forget:unsafe",
+    "message_id": "message:user:unsafe",
+    "status": "completed",
+    "deleted_counts": {
+      "messages": 1,
+      "context_links": 0,
+      "cache_entries": 0,
+      "fts_entries": 0,
+      "vector_entries": 0,
+      "candidates": 0,
+      "derived_summaries": 0
+    },
+    "withdrawn_memory_ids": [],
+    "failed_steps": [],
+    "context_epoch": 2,
+    "completed_at": "2026-07-19T11:10:00+08:00",
+    "deleted_content": "这段正文不应出现在回执中"
+  }
+}

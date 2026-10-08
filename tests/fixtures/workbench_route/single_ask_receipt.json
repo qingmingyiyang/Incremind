@@ -1,0 +1,139 @@
+{
+  "baseline_commit": "a4fe9184c7",
+  "response": {
+    "thread_id": "thread-<generated-id>",
+    "turn": {
+      "id": "turn-<generated-id>",
+      "thread_id": "thread-<generated-id>",
+      "intent": "ask",
+      "user_text": "alpha?",
+      "created_at": "<generated-time>",
+      "receipt": {
+        "ask": {
+          "answer": "Synthetic answer",
+          "citations": [
+            {
+              "id": "recognition-<generated-id>",
+              "layer": "insight",
+              "locator": {
+                "coordinate_space": "workspace_query_content_v1",
+                "windows": [
+                  {
+                    "end": 16,
+                    "start": 0
+                  }
+                ]
+              },
+              "n": 1,
+              "persona": false,
+              "quote": "alpha beta gamma\n\n来源证据（按原始经验及其修订去重，同源摘要不构成独立证据）：\n发布认识不代表事实已核验；user_asserted 为用户陈述，unverified 为尚未核验，unknown 为未知。模型成果 committed 仅表示已保存，不证明业务目标已实现，outcome_status 表示结果核验状态。occurred_at 是发生时间，不是有效期；recorded_at 是来源记录时间，不代表发生时间或认识修订时间；null 表示未提供。\n[{\"type\":\"experience\",\"id\":\"experience-<generated-id>\",\"revision\":1,\"kind\":\"legacy_unspecified\",\"epistemic_status\":\"unknown\",\"recorded_at\":\"<generated-time>\",\"occurred_at\":null,\"artifact_status\":null,\"outcome_status\":null}]",
+              "title": "已发布认识"
+            }
+          ],
+          "context": {
+            "egress": {
+              "model": "fake",
+              "consent_scope": "global_setting",
+              "settings_revision": {
+                "generation": 2,
+                "mode": 3
+              },
+              "excluded_private": null
+            },
+            "entries": [
+              {
+                "id": "recognition-<generated-id>",
+                "layer": "insight",
+                "persona": false,
+                "title": "已发布认识",
+                "tokens": 270
+              }
+            ],
+            "parts": [
+              {
+                "count": 1,
+                "key": "insight",
+                "tokens": 270
+              },
+              {
+                "count": 0,
+                "key": "persona",
+                "tokens": 0
+              },
+              {
+                "count": 0,
+                "key": "summary",
+                "tokens": 0
+              },
+              {
+                "count": 0,
+                "key": "note",
+                "tokens": 0
+              },
+              {
+                "count": 0,
+                "key": "source",
+                "tokens": 0
+              },
+              {
+                "count": 1,
+                "key": "instruction",
+                "tokens": 106
+              },
+              {
+                "count": 1,
+                "key": "question",
+                "tokens": 2
+              },
+              {
+                "count": 0,
+                "key": "history",
+                "tokens": 0
+              }
+            ],
+            "reserve": null,
+            "window": null
+          },
+          "egress_receipt_id": "ask-<generated-id>",
+          "excluded_sources": [],
+          "layers": {
+            "insight": 1,
+            "note": 0,
+            "persona": 0,
+            "source": 0,
+            "summary": 0
+          },
+          "model_usage": {
+            "total_tokens": 7
+          },
+          "no_match": false,
+          "trace": [
+            {
+              "bookshelf": {
+                "hits": 0,
+                "used": 0
+              },
+              "condense_receipt_ids": [],
+              "condense_status": "skipped",
+              "condense_usage_known": false,
+              "condensed_question": null,
+              "considered": 1,
+              "coverage": 1.0,
+              "history_turn_ids": [],
+              "layer": "insight",
+              "rewrite": {
+                "queries": [],
+                "used": false
+              },
+              "rewrite_receipt_ids": [],
+              "rewrite_status": "skipped",
+              "selected": 1,
+              "skipped_budget": 0,
+              "stopped": true
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/intake_item.schema.json",
+  "x-contract-version": "1.0",
+  "additionalProperties": false,
+  "properties": {
+    "intake_id": {
+      "title": "Intake Id",
+      "type": "string"
+    },
+    "series_id": {
+      "title": "Series Id",
+      "type": "string"
+    },
+    "type": {
+      "default": "manual",
+      "enum": [
+        "quick_note",
+        "asset",
+        "image",
+        "file",
+        "video_summary",
+        "report_candidate",
+        "memory_capture",
+        "manual",
+        "clip",
+        "thought",
+        "action",
+        "question"
+      ],
+      "title": "Type",
+      "type": "string"
+    },
+    "title": {
+      "default": "",
+      "title": "Title",
+      "type": "string"
+    },
+    "raw_text": {
+      "default": "",
+      "title": "Raw Text",
+      "type": "string"
+    },
+    "asset_text": {
+      "default": "",
+      "title": "Asset Text",
+      "type": "string"
+    },
+    "structured_text": {
+      "default": "",
+      "title": "Structured Text",
+      "type": "string"
+    },
+    "summary": {
+      "default": "",
+      "title": "Summary",
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "links": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Links",
+      "type": "array"
+    },
+    "source": {
+      "default": "",
+      "title": "Source",
+      "type": "string"
+    },
+    "asset_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Asset Ids",
+      "type": "array"
+    },
+    "suggested_report_type": {
+      "default": "none",
+      "enum": [
+        "daily",
+        "weekly",
+        "monthly",
+        "yearly",
+        "none"
+      ],
+      "title": "Suggested Report Type",
+      "type": "string"
+    },
+    "suggested_actions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Suggested Actions",
+      "type": "array"
+    },
+    "status": {
+      "default": "pending",
+      "enum": [
+        "pending",
+        "reviewing",
+        "approved",
+        "rejected",
+        "archived",
+        "merged",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "title": "Updated At",
+      "type": "string"
+    },
+    "created_by": {
+      "default": "user",
+      "enum": [
+        "user",
+        "ai",
+        "system"
+      ],
+      "title": "Created By",
+      "type": "string"
+    },
+    "reviewed_at": {
+      "default": "",
+      "title": "Reviewed At",
+      "type": "string"
+    },
+    "knowledge_item_id": {
+      "default": "",
+      "title": "Knowledge Item Id",
+      "type": "string"
+    },
+    "report_id": {
+      "default": "",
+      "title": "Report Id",
+      "type": "string"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "revision": {
+      "default": "",
+      "title": "Revision",
+      "type": "string"
+    }
+  },
+  "required": [
+    "series_id"
+  ],
+  "title": "IntakeItem",
+  "type": "object"
+}

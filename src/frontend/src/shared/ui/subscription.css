@@ -1,0 +1,10 @@
+.ui-subscription { color: var(--ink); width: 100%; min-width: 0; }
+.ui-subscription .ui-row { min-height: 64px; border-top: 1px solid var(--line); border-bottom: 0; }
+.ui-subscription-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.ui-subscription button:not(.ui-switch), .ui-subscription select, .ui-subscription-login { font: 14px var(--sans); color: var(--ink2); border: 1px solid var(--line2); border-radius: var(--r-control); background: transparent; padding: 8px 12px; cursor: pointer; }
+.ui-subscription select { font-family: var(--mono); width: min(240px, 50%); min-width: 0; }
+.ui-subscription a { color: var(--red); }
+.ui-subscription [role="alert"] { padding: 8px 12px; font: 13px var(--sans); color: var(--red); }
+.ui-subscription-login { display: inline-block; margin: 8px 12px; }
+.ui-subscription button:disabled, .ui-subscription select:disabled { opacity: .5; cursor: default; }
+.ui-subscription button:focus-visible, .ui-subscription select:focus-visible, .ui-subscription a:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }

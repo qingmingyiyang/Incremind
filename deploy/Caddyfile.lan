@@ -1,0 +1,8 @@
+# Replace chriptmas.lan with your LAN hostname. Trust Caddy's local CA on clients.
+# Remote access requires the device authorization implemented by T15.3.
+https://chriptmas.lan {
+    tls internal
+    reverse_proxy 127.0.0.1:8001 {
+        flush_interval -1
+    }
+}

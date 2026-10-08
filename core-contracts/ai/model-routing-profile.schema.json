@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/ai/model-routing-profile.schema.json",
+  "title": "Model Routing Profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "revision", "rules_version", "text_default_tier", "tier_routes", "authority_binding"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "revision": {"type": "integer", "minimum": 1},
+    "rules_version": {"type": "integer", "minimum": 1},
+    "text_default_tier": {"enum": ["fast", "standard", "deep"]},
+    "authority_binding": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["registry_revision", "runtime_revision", "activation_fingerprint"],
+          "properties": {
+            "registry_revision": {"type": "integer", "minimum": 1},
+            "runtime_revision": {"type": "integer", "minimum": 1},
+            "activation_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+          }
+        }
+      ]
+    },
+    "tier_routes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fast", "standard", "deep", "vision", "image_generation"],
+      "properties": {
+        "fast": {"$ref": "#/$defs/route"},
+        "standard": {"$ref": "#/$defs/route"},
+        "deep": {"$ref": "#/$defs/route"},
+        "vision": {"$ref": "#/$defs/route"},
+        "image_generation": {"$ref": "#/$defs/route"}
+      }
+    }
+  },
+  "$defs": {
+    "route": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z][a-z0-9_.-]{2,79}$"
+    }
+  }
+}

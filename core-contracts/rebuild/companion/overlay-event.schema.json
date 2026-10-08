@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/rebuild/companion/overlay-event.schema.json",
+  "title": "Companion Overlay Event",
+  "description": "Electron main 投影给 Overlay renderer 的有界文本与动作事件。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "occurred_at", "source", "payload"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0.0"},
+    "event_id": {"$ref": "#/$defs/id"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "source": {"type": "string", "enum": ["electron_main"]},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "priority", "text", "actions", "requires_ack", "expires_at", "revision"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["bubble", "reminder", "choice", "status"]},
+        "priority": {"type": "string", "enum": ["critical", "interactive", "ambient", "cosmetic"]},
+        "text": {"type": "string", "minLength": 1, "maxLength": 400},
+        "actions": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {"$ref": "#/$defs/action"}
+        },
+        "requires_ack": {"type": "boolean"},
+        "expires_at": {
+          "oneOf": [
+            {"type": "string", "format": "date-time"},
+            {"type": "null"}
+          ]
+        },
+        "revision": {"type": "integer", "minimum": 1}
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9:_-]{0,127}$"},
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_id", "label", "style"],
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "enum": [
+            "companion.open_panel",
+            "companion.event.perform",
+            "companion.reminder.acknowledge",
+            "companion.overlay.dismiss",
+            "companion.chat.retry"
+          ]
+        },
+        "label": {"type": "string", "minLength": 1, "maxLength": 40},
+        "style": {"type": "string", "enum": ["primary", "secondary", "danger"]}
+      }
+    }
+  }
+}

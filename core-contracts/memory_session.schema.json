@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/memory_session.schema.json",
+  "x-contract-version": "1.0",
+  "$defs": {
+    "MemoryMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "message_id": {
+          "title": "Message Id",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "tool_calls": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Tool Calls",
+          "type": "array"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/MemoryReference"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "content"
+      ],
+      "title": "MemoryMessage",
+      "type": "object"
+    },
+    "MemoryReference": {
+      "additionalProperties": false,
+      "properties": {
+        "series_id": {
+          "default": "default",
+          "title": "Series Id",
+          "type": "string"
+        },
+        "source_type": {
+          "title": "Source Type",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "report_id": {
+          "default": "",
+          "title": "Report Id",
+          "type": "string"
+        },
+        "item_id": {
+          "default": "",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "default": "",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "video_id": {
+          "default": "",
+          "title": "Video Id",
+          "type": "string"
+        },
+        "bvid": {
+          "default": "",
+          "title": "Bvid",
+          "type": "string"
+        },
+        "chunk_id": {
+          "default": "",
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "default": "",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "frame_id": {
+          "default": "",
+          "title": "Frame Id",
+          "type": "string"
+        },
+        "quote": {
+          "default": "",
+          "title": "Quote",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_type"
+      ],
+      "title": "MemoryReference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "series_id": {
+      "title": "Series Id",
+      "type": "string"
+    },
+    "messages": {
+      "items": {
+        "$ref": "#/$defs/MemoryMessage"
+      },
+      "title": "Messages",
+      "type": "array"
+    },
+    "updated_at": {
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "series_id"
+  ],
+  "title": "MemorySession",
+  "type": "object"
+}

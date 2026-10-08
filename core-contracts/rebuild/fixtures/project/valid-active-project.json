@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0.0",
+  "id": "project-alpha",
+  "name": "Alpha 项目",
+  "purpose": "沉淀 Alpha 项目的资料、记忆和连续输出结构。",
+  "status": "active",
+  "series_ids": ["series-alpha"],
+  "skill_id": "skill-project-alpha",
+  "document_ids": ["document-project-001"],
+  "default_scope": "project_only",
+  "cross_project_policy": {
+    "mode": "disabled",
+    "grant_ids": []
+  },
+  "revision": 2,
+  "created_at": "2026-06-29T14:00:00+08:00",
+  "updated_at": "2026-06-29T14:20:00+08:00"
+}

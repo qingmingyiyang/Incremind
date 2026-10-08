@@ -1,0 +1,7 @@
+.ui-cited-answer{font:400 18px/1.8 var(--serif);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.ui-cited-answer sup{font:11px var(--mono);color:var(--red);vertical-align:super}
+.ui-cited-answer sup button,.ui-cited-answer sup a{display:inline-flex;align-items:center;gap:2px;white-space:nowrap;border:0;background:transparent;color:inherit;font:inherit;padding:0 4px;cursor:pointer;text-decoration:none}
+.ui-cited-answer sup svg{display:inline-block;flex-shrink:0}
+.ui-cited-answer .ui-citation-temporal{color:var(--muted)}
+.ui-cited-answer sup.ui-citation-external a{display:inline;white-space:normal}
+.ui-cited-answer .ui-citation-domain{font:11px var(--mono);color:var(--muted);overflow-wrap:anywhere}

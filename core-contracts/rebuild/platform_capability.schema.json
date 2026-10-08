@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/platform_capability.schema.json",
+  "title": "Platform Capability",
+  "description": "平台能力探测结果。核心模块只读取平台中立能力、权限和降级错误，不读取 OS 绝对路径或桌面壳细节。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "name",
+    "platform",
+    "adapter_id",
+    "available",
+    "permission_required",
+    "permission",
+    "provided_uri",
+    "error",
+    "checked_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "name": {
+      "type": "string",
+      "enum": [
+        "app_data_dir",
+        "documents_dir",
+        "open_path",
+        "reveal_path",
+        "file_picker",
+        "shortcut",
+        "notification",
+        "credential_store",
+        "worker_lifecycle",
+        "system_info",
+        "update",
+        "backup_destination"
+      ]
+    },
+    "platform": {
+      "type": "string",
+      "enum": [
+        "windows",
+        "macos",
+        "linux",
+        "unknown"
+      ]
+    },
+    "adapter_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$"
+    },
+    "available": {
+      "type": "boolean"
+    },
+    "permission_required": {
+      "type": "boolean"
+    },
+    "permission": {
+      "type": "string",
+      "enum": [
+        "granted",
+        "denied",
+        "prompt_required",
+        "not_applicable",
+        "unknown"
+      ]
+    },
+    "provided_uri": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^platform-(app-data|documents|backup)://[a-z0-9][a-z0-9_-]*(/.*)?$"
+        }
+      ]
+    },
+    "error": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/platformError"
+        }
+      ]
+    },
+    "checked_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "platformError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "degradation"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "unsupported_platform",
+            "permission_denied",
+            "permission_prompt_required",
+            "not_configured",
+            "adapter_unavailable",
+            "worker_unavailable",
+            "timeout",
+            "unknown"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "degradation": {
+          "type": "string",
+          "enum": [
+            "none",
+            "read_only",
+            "manual_select",
+            "local_only",
+            "disabled"
+          ]
+        }
+      }
+    }
+  }
+}

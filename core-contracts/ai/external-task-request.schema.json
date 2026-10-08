@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Frozen external task binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["binding_ref"],
+  "properties": {
+    "binding_ref": {"type": "string", "pattern": "^crp://session/[A-Za-z0-9._~-]+/external-task-run-v1$"}
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0.0",
+  "id": "model-result-timeout-001",
+  "request_id": "model-request-remote-redacted-001",
+  "status": "timeout",
+  "provider": {
+    "provider_id": "remote-provider",
+    "mode": "remote",
+    "remote": true,
+    "config_version": 3
+  },
+  "model": {
+    "name": "remote-text-small",
+    "version": "2026-06-29",
+    "capability": "text_generation"
+  },
+  "output": {
+    "kind": "none",
+    "content": null,
+    "structured": null,
+    "output_refs": []
+  },
+  "usage": {
+    "input_tokens": 1200,
+    "output_tokens": 0,
+    "total_tokens": 1200,
+    "cost_usd": 0.01,
+    "currency": "USD"
+  },
+  "latency": {
+    "started_at": "2026-06-29T16:05:00+08:00",
+    "completed_at": null,
+    "elapsed_ms": 45000,
+    "timed_out": true
+  },
+  "error": {
+    "code": "timeout",
+    "message": "模型请求超时。",
+    "retryable": true
+  },
+  "safety": {
+    "blocked": false,
+    "categories": [],
+    "redaction_applied": true,
+    "output_truncated": false
+  },
+  "created_at": "2026-06-29T16:05:45+08:00"
+}

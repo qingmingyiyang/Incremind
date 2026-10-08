@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0.0",
+  "id": "job-invalid-failed-no-error",
+  "source_id": "source-text-001",
+  "job_type": "parse",
+  "idempotency_key": "invalid-failed-no-error",
+  "status": "failed",
+  "attempt": 1,
+  "max_attempts": 3,
+  "lease": null,
+  "progress": {
+    "current": 1,
+    "total": 4,
+    "percent": 25,
+    "message": "failed"
+  },
+  "steps": [
+    {
+      "name": "parse_text",
+      "status": "failed",
+      "attempt": 1,
+      "started_at": "2026-06-29T09:00:00+08:00",
+      "completed_at": "2026-06-29T09:00:05+08:00",
+      "progress": 25,
+      "input_refs": [
+        "crp://default/sources/source-text-001"
+      ],
+      "staged_output_refs": [],
+      "log_refs": [],
+      "error": null
+    }
+  ],
+  "error": null,
+  "checkpoint": null,
+  "staged_outputs": [],
+  "published_outputs": [],
+  "log_refs": [],
+  "created_at": "2026-06-29T09:00:00+08:00",
+  "updated_at": "2026-06-29T09:00:05+08:00"
+}

@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/progressive_memory_retrieval_plan.schema.json",
+  "title": "ProgressiveMemoryRetrievalPlan",
+  "description": "只读渐进召回计划。它规定读取顺序、直接上下文通道、预算和下钻条件，不拥有 Source、Memory、Project Skill 或 Team Memory 的写入权威。",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "stageName": {
+      "type": "string",
+      "enum": [
+        "r0_series_router",
+        "r1_series_digest",
+        "r2_structured_content",
+        "r3_source_evidence"
+      ]
+    },
+    "contextLane": {
+      "type": "string",
+      "enum": [
+        "k_global_profile",
+        "k_atom_exact",
+        "k_project_skill"
+      ]
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "purpose",
+        "max_items",
+        "max_chars",
+        "timeout_ms",
+        "on_timeout",
+        "initial",
+        "stop_when",
+        "escalate_when"
+      ],
+      "properties": {
+        "stage": {
+          "$ref": "#/$defs/stageName"
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "route_relevant_series",
+            "supply_series_context",
+            "supply_structured_detail",
+            "verify_against_authorized_source"
+          ]
+        },
+        "max_items": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "max_chars": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12000
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5000
+        },
+        "on_timeout": {
+          "const": "partial"
+        },
+        "initial": {
+          "type": "boolean"
+        },
+        "stop_when": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "escalate_when": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "plan_version",
+    "query_fingerprint",
+    "intent",
+    "read_order",
+    "context_lanes",
+    "stages",
+    "budget",
+    "requires_source_body",
+    "allow_cross_series_fallback",
+    "rationale_codes",
+    "safety"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "plan_version": {
+      "type": "string",
+      "const": "progressive-memory-retrieval-v1"
+    },
+    "query_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "overview",
+        "standard",
+        "fact_lookup",
+        "deep_synthesis",
+        "source_verification",
+        "skill_execution"
+      ]
+    },
+    "read_order": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "const": "r0_series_router"
+        },
+        {
+          "const": "r1_series_digest"
+        },
+        {
+          "const": "r2_structured_content"
+        },
+        {
+          "const": "r3_source_evidence"
+        }
+      ],
+      "items": false,
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "context_lanes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/contextLane"
+      }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "$ref": "#/$defs/stage"
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_items",
+        "max_chars",
+        "timeout_ms",
+        "on_timeout"
+      ],
+      "properties": {
+        "max_items": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "max_chars": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12000
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5000
+        },
+        "on_timeout": {
+          "const": "partial"
+        }
+      }
+    },
+    "requires_source_body": {
+      "type": "boolean"
+    },
+    "allow_cross_series_fallback": {
+      "type": "boolean"
+    },
+    "rationale_codes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "read_only",
+        "business_writes_allowed",
+        "memory_publication_allowed",
+        "team_memory_body_allowed",
+        "requires_user_confirmation_for_writes"
+      ],
+      "properties": {
+        "read_only": {
+          "const": true
+        },
+        "business_writes_allowed": {
+          "const": false
+        },
+        "memory_publication_allowed": {
+          "const": false
+        },
+        "team_memory_body_allowed": {
+          "const": false
+        },
+        "requires_user_confirmation_for_writes": {
+          "const": true
+        }
+      }
+    }
+  }
+}

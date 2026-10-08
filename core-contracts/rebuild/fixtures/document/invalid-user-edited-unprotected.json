@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0.0",
+  "id": "document-invalid-user-lock",
+  "title": "用户编辑未保护",
+  "type": "note",
+  "project_id": null,
+  "markdown_uri": "crp://default/documents/notes/document-invalid-user-lock.md",
+  "content_hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "source_refs": [
+    {
+      "source_id": "source-text-001",
+      "locator": "char:0-10"
+    }
+  ],
+  "source_snapshot": {
+    "snapshot_id": "snapshot-invalid-user-lock",
+    "snapshot_hash": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "source_refs": [
+      {
+        "source_id": "source-text-001",
+        "locator": "char:0-10"
+      }
+    ],
+    "captured_at": "2026-06-29T13:00:00+08:00"
+  },
+  "blocks": [
+    {
+      "id": "block-user",
+      "block_type": "paragraph",
+      "origin": "user",
+      "content": "用户编辑必须受保护。",
+      "source_refs": [],
+      "edited_by_user": true,
+      "lock_policy": "none"
+    }
+  ],
+  "revision": 1,
+  "status": "draft",
+  "created_at": "2026-06-29T13:00:00+08:00",
+  "updated_at": "2026-06-29T13:00:00+08:00"
+}

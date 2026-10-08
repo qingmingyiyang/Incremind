@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/recall_request.schema.json",
+  "title": "RecallRequest",
+  "description": "项目问答和资料召回的请求合约，固定项目默认隔离、L4 到 L0 分层召回、信任过滤和上下文预算。",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "recallLayer": {
+      "type": "string",
+      "enum": [
+        "l4_persona",
+        "l3_project_skill",
+        "l3_persona",
+        "l3_series_memory",
+        "l2_scenario",
+        "l1_atom",
+        "l0_source"
+      ]
+    },
+    "trustStatus": {
+      "type": "string",
+      "enum": [
+        "trusted",
+        "user_confirmed",
+        "system_generated",
+        "imported_unverified"
+      ]
+    },
+    "contextRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context_id", "kind", "object_id", "uri", "reason"],
+      "properties": {
+        "context_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["project_skill", "persona", "series_memory", "scenario", "atom", "source", "document"]
+        },
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uri": {
+          "type": "string",
+          "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "query",
+    "project_id",
+    "scope",
+    "layers",
+    "trust_filter",
+    "budget",
+    "cross_project",
+    "required_context_refs",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope": {
+      "type": "string",
+      "enum": ["project", "cross_project"]
+    },
+    "layers": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/recallLayer"
+      }
+    },
+    "trust_filter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["include", "minimum_confidence", "allow_imported_unverified"],
+      "properties": {
+        "include": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/trustStatus"
+          }
+        },
+        "minimum_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "allow_imported_unverified": {
+          "type": "boolean"
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_hits", "max_tokens", "per_layer_limits"],
+      "properties": {
+        "max_hits": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12000
+        },
+        "per_layer_limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "l3_project_skill",
+            "l3_series_memory",
+            "l2_scenario",
+            "l1_atom",
+            "l0_source"
+          ],
+          "properties": {
+            "l4_persona": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 12
+            },
+            "l3_project_skill": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 12
+            },
+            "l3_persona": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 12
+            },
+            "l3_series_memory": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 12
+            },
+            "l2_scenario": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 12
+            },
+            "l1_atom": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 12
+            },
+            "l0_source": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 12
+            }
+          }
+        }
+      }
+    },
+    "cross_project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "grant_id", "project_ids"],
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "grant_id": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "project_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "required_context_refs": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "$ref": "#/$defs/contextRef"
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

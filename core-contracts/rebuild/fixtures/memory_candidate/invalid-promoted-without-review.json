@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0.0",
+  "id": "memory-candidate-invalid-promoted",
+  "project_id": "project-alpha",
+  "target_layer": "atom",
+  "candidate_type": "answer_fact",
+  "status": "promoted",
+  "proposed_content": "未经审核的内容不能晋级。",
+  "source_refs": [
+    {
+      "source_id": "source-alpha",
+      "locator": "char:0-20"
+    }
+  ],
+  "provenance": {
+    "model_result_id": "model-result-alpha",
+    "model_request_id": "model-request-alpha",
+    "recall_result_id": "recall-result-alpha",
+    "document_id": null,
+    "document_revision": null,
+    "input_refs": [
+      {
+        "kind": "recall_result",
+        "object_id": "recall-result-alpha",
+        "uri": "crp://default/recall-results/recall-result-alpha.json"
+      },
+      {
+        "kind": "model_result",
+        "object_id": "model-result-alpha",
+        "uri": "crp://default/model-results/model-result-alpha.json"
+      }
+    ]
+  },
+  "review": {
+    "requires_user_confirmation": true,
+    "auto_promote_allowed": false,
+    "reason": "缺少审核人。",
+    "reviewed_by": null,
+    "reviewed_at": null
+  },
+  "created_at": "2026-06-30T16:00:00+08:00",
+  "updated_at": "2026-06-30T16:00:00+08:00"
+}

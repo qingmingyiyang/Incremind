@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "action_id": "action-11111111111111111111111111111111",
+  "turn_id": "turn-0123456789abcdef0123456789abcdef",
+  "type": "approve",
+  "target_event_id": "event-abcdef0123456789abcdef0123456789",
+  "reason": "允许创建待审文档草稿。",
+  "actor": "user",
+  "expected_sequence": 5,
+  "idempotency_key": "approve-document-draft-0001",
+  "created_at": "2026-08-23T04:00:02Z"
+}

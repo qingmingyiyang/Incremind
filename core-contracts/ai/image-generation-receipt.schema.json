@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://christmas-os.local/contracts/ai/image-generation-receipt.schema.json",
+  "title": "Image Generation Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "operation_id", "invocation_id", "turn_id", "project_id", "status", "asset_ref", "asset_sha256", "byte_count", "media_type", "provider_id", "provider_revision", "model_id", "route_snapshot_ref", "route_snapshot_revision"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "kind": {"const": "image-generation-receipt"},
+    "operation_id": {"$ref": "#/$defs/id"},
+    "invocation_id": {"$ref": "#/$defs/id"},
+    "turn_id": {"$ref": "#/$defs/id"},
+    "project_id": {"$ref": "#/$defs/id"},
+    "status": {"const": "completed"},
+    "asset_ref": {"type": "string", "minLength": 1},
+    "asset_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "byte_count": {"type": "integer", "minimum": 1},
+    "media_type": {"enum": ["image/png", "image/jpeg", "image/webp"]},
+    "provider_id": {"$ref": "#/$defs/id"},
+    "provider_revision": {"type": "string", "minLength": 1},
+    "model_id": {"$ref": "#/$defs/id"},
+    "route_snapshot_ref": {"type": "string", "pattern": "^crp://"},
+    "route_snapshot_revision": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "$defs": {"id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"}}
+}

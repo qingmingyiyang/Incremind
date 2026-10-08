@@ -1,0 +1,429 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/report.schema.json",
+  "x-contract-version": "1.0",
+  "$defs": {
+    "DateRange": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "title": "Start",
+          "type": "string"
+        },
+        "end": {
+          "title": "End",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "DateRange",
+      "type": "object"
+    },
+    "ReportEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "source_type": {
+          "enum": [
+            "video",
+            "note",
+            "clip",
+            "thought",
+            "action",
+            "question",
+            "report"
+          ],
+          "title": "Source Type",
+          "type": "string"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "video_id": {
+          "default": "",
+          "title": "Video Id",
+          "type": "string"
+        },
+        "bvid": {
+          "default": "",
+          "title": "Bvid",
+          "type": "string"
+        },
+        "timestamp": {
+          "default": "",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "chunk_id": {
+          "default": "",
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "frame_id": {
+          "default": "",
+          "title": "Frame Id",
+          "type": "string"
+        },
+        "quote": {
+          "default": "",
+          "title": "Quote",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_type",
+        "source_id"
+      ],
+      "title": "ReportEvidence",
+      "type": "object"
+    },
+    "ReportIndex": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "default": true,
+          "title": "Available",
+          "type": "boolean"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords",
+          "type": "array"
+        },
+        "linked_item_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Linked Item Ids",
+          "type": "array"
+        },
+        "linked_report_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Linked Report Ids",
+          "type": "array"
+        }
+      },
+      "title": "ReportIndex",
+      "type": "object"
+    },
+    "ReportPersonalKnowledge": {
+      "additionalProperties": false,
+      "properties": {
+        "item_id": {
+          "title": "Item Id",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "item_id",
+        "type",
+        "title"
+      ],
+      "title": "ReportPersonalKnowledge",
+      "type": "object"
+    },
+    "ReportReview": {
+      "additionalProperties": false,
+      "properties": {
+        "what_i_learned": {
+          "items": {
+            "type": "string"
+          },
+          "title": "What I Learned",
+          "type": "array"
+        },
+        "what_i_should_revisit": {
+          "items": {
+            "type": "string"
+          },
+          "title": "What I Should Revisit",
+          "type": "array"
+        },
+        "open_questions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Open Questions",
+          "type": "array"
+        },
+        "next_actions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Next Actions",
+          "type": "array"
+        },
+        "long_term_patterns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Long Term Patterns",
+          "type": "array"
+        }
+      },
+      "title": "ReportReview",
+      "type": "object"
+    },
+    "ReportSources": {
+      "additionalProperties": false,
+      "properties": {
+        "videos": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Videos",
+          "type": "array"
+        },
+        "notes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Notes",
+          "type": "array"
+        },
+        "clips": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Clips",
+          "type": "array"
+        },
+        "thoughts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Thoughts",
+          "type": "array"
+        },
+        "actions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "questions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Questions",
+          "type": "array"
+        },
+        "previous_reports": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Previous Reports",
+          "type": "array"
+        }
+      },
+      "title": "ReportSources",
+      "type": "object"
+    },
+    "ReportSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "one_sentence": {
+          "default": "",
+          "title": "One Sentence",
+          "type": "string"
+        },
+        "main_topics": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Main Topics",
+          "type": "array"
+        },
+        "key_takeaways": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Key Takeaways",
+          "type": "array"
+        },
+        "important_questions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Important Questions",
+          "type": "array"
+        },
+        "action_items": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Action Items",
+          "type": "array"
+        },
+        "review_suggestions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Review Suggestions",
+          "type": "array"
+        }
+      },
+      "title": "ReportSummary",
+      "type": "object"
+    },
+    "ReportVideoKnowledge": {
+      "additionalProperties": false,
+      "properties": {
+        "video_id": {
+          "title": "Video Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "bvid": {
+          "default": "",
+          "title": "Bvid",
+          "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "important_timestamps": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Important Timestamps",
+          "type": "array"
+        },
+        "visual_frame_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Visual Frame Ids",
+          "type": "array"
+        },
+        "linked_markdown": {
+          "default": "",
+          "title": "Linked Markdown",
+          "type": "string"
+        }
+      },
+      "required": [
+        "video_id",
+        "title"
+      ],
+      "title": "ReportVideoKnowledge",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "report_id": {
+      "title": "Report Id",
+      "type": "string"
+    },
+    "series_id": {
+      "default": "default",
+      "title": "Series Id",
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "daily",
+        "weekly",
+        "monthly",
+        "yearly"
+      ],
+      "title": "Type",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "date_range": {
+      "$ref": "#/$defs/DateRange"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "title": "Updated At",
+      "type": "string"
+    },
+    "sources": {
+      "$ref": "#/$defs/ReportSources"
+    },
+    "summary": {
+      "$ref": "#/$defs/ReportSummary"
+    },
+    "video_knowledge": {
+      "items": {
+        "$ref": "#/$defs/ReportVideoKnowledge"
+      },
+      "title": "Video Knowledge",
+      "type": "array"
+    },
+    "personal_knowledge": {
+      "items": {
+        "$ref": "#/$defs/ReportPersonalKnowledge"
+      },
+      "title": "Personal Knowledge",
+      "type": "array"
+    },
+    "review": {
+      "$ref": "#/$defs/ReportReview"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/ReportEvidence"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "index": {
+      "$ref": "#/$defs/ReportIndex"
+    }
+  },
+  "required": [
+    "type",
+    "title",
+    "date_range"
+  ],
+  "title": "Report",
+  "type": "object"
+}

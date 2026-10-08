@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0.0",
+  "id": "memory-transition-invalid-imported",
+  "object_type": "series_memory",
+  "object_id": "series-memory-default-001",
+  "transition_type": "promote",
+  "from_trust_status": "imported_unverified",
+  "to_trust_status": "user_confirmed",
+  "from_revision": 1,
+  "to_revision": 2,
+  "actor": "system",
+  "reason": "automatic import promotion is not allowed",
+  "evidence_refs": [
+    {
+      "object_type": "source",
+      "object_id": "source-legacy-001",
+      "source_refs": [
+        {
+          "source_id": "source-legacy-001",
+          "locator": "legacy:note"
+        }
+      ]
+    }
+  ],
+  "created_at": "2026-06-29T12:40:00+08:00"
+}

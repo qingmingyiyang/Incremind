@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/series_memory.schema.json",
+  "title": "Series Memory",
+  "description": "L3 跨时间延续的主题、系列或长期工作总览。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "series_id",
+    "scope",
+    "overview",
+    "scenario_ids",
+    "source_refs",
+    "project_ids",
+    "stale",
+    "stale_reason",
+    "revision",
+    "created_at",
+    "updated_at",
+    "trust_status"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "series_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "series",
+        "project",
+        "cross_project"
+      ]
+    },
+    "overview": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scenario_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sourceRef"
+      }
+    },
+    "project_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "stale": {
+      "type": "boolean"
+    },
+    "stale_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trust_status": {
+      "$ref": "#/$defs/trustStatus"
+    }
+  },
+  "anyOf": [
+    {
+      "properties": {
+        "scenario_ids": {
+          "minItems": 1
+        }
+      }
+    },
+    {
+      "properties": {
+        "source_refs": {
+          "minItems": 1
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "trustStatus": {
+      "type": "string",
+      "enum": [
+        "trusted",
+        "imported_unverified",
+        "user_confirmed",
+        "system_generated",
+        "failed"
+      ]
+    },
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "locator"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

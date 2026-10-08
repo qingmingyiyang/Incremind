@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://default/contracts/recognition-task-request.schema.json",
+  "title": "RecognitionTaskArguments",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "context_packet_id"],
+  "properties": {
+    "task_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "context_packet_id": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

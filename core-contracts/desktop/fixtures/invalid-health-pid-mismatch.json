@@ -1,0 +1,14 @@
+{
+  "kind": "desktop_loopback_health",
+  "schema_version": "1.0.0",
+  "protocol_version": "desktop-loopback/1",
+  "instance_id": "deskinst_AQ9h6rwYqL3X5nP8cD2vK7",
+  "nonce": "A3v_Y8kN5mP2qR7sT4wX9zB6cD1eF0gHjK4lM8nQ2rS",
+  "child_pid": 90001,
+  "status": "ready",
+  "auth_required": true,
+  "renderer_secret_access": false,
+  "session_fingerprint": "D3p_H7yK1mN8qR5sT2vW9xB6cE4fG0hJjL7kM3nQ8rS",
+  "observed_at": "2026-07-10T10:00:02+08:00",
+  "session_expires_at": "2026-07-10T18:00:00+08:00"
+}

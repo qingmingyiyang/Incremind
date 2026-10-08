@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/ai/turn-action.schema.json",
+  "title": "AITurnAction",
+  "description": "对运行中 Turn 的唯一控制面。批准、拒绝、取消和恢复均使用 expected_sequence 与幂等键。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "action_id", "turn_id", "type", "target_event_id", "reason", "actor", "expected_sequence", "idempotency_key", "created_at"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "action_id": {"type": "string", "pattern": "^action-[0-9a-f]{32}$"},
+    "turn_id": {"type": "string", "pattern": "^turn-[0-9a-f]{32}$"},
+    "type": {"enum": ["approve", "reject", "cancel", "resume"]},
+    "target_event_id": {"type": ["string", "null"], "pattern": "^event-[0-9a-f]{32}$"},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "actor": {"const": "user"},
+    "expected_sequence": {"type": "integer", "minimum": 1},
+    "idempotency_key": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{15,127}$"},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "kind": "desktop_loopback_error",
+  "schema_version": "1.0.0",
+  "protocol_version": "desktop-loopback/1",
+  "code": "desktop_session_health_mismatch",
+  "retryable": false,
+  "message": "Local backend identity verification failed."
+}

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/rebuild/companion/chat-request.schema.json",
+  "title": "Companion Chat Request",
+  "description": "Electron main 发送给 Companion sidecar 的幂等聊天请求，只传用户文本和版本引用。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "occurred_at", "source", "payload"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0.0"},
+    "request_id": {"$ref": "#/$defs/id"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "source": {"type": "string", "enum": ["electron_main"]},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "route",
+        "session_id",
+        "context_epoch",
+        "text",
+        "prompt_revision",
+        "profile_revision",
+        "memory_ids"
+      ],
+      "properties": {
+        "route": {"type": "string", "const": "companion.chat"},
+        "session_id": {
+          "oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]
+        },
+        "context_epoch": {"type": "integer", "minimum": 1},
+        "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "prompt_revision": {"type": "integer", "minimum": 1},
+        "profile_revision": {"type": "integer", "minimum": 1},
+        "memory_ids": {
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/id"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9:_-]{0,127}$"}
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://schemas/ai/codex-hook-invocation-receipt-v1",
+  "title": "Codex Hook Invocation Receipt",
+  "description": "Safe, append-only evidence for a local Hook Runtime invocation. It records normalized event-specific effects, never raw hook stdout/stderr, original payloads, secrets, commands, or local paths.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "invocation_id", "turn_id", "project_id", "event", "upstream_revision", "policy_snapshot_ref", "policy_snapshot_revision", "handler_runs", "normalized_outcome", "duration_ms", "audit_delivery"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "kind": {"const": "codex-hook-invocation-receipt"},
+    "invocation_id": {"$ref": "#/$defs/id"},
+    "turn_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+    "project_id": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+    "event": {"$ref": "#/$defs/event"},
+    "upstream_revision": {"const": "0fe877b4dedc86a29c8bebb3edbd3efcc3580c7d"},
+    "policy_snapshot_ref": {"type": "string", "pattern": "^crp://[A-Za-z0-9._~:/-]+$"},
+    "policy_snapshot_revision": {"$ref": "#/$defs/revision"},
+    "handler_runs": {"type": "array", "items": {"$ref": "#/$defs/handler_run"}},
+    "normalized_outcome": {"$ref": "#/$defs/outcome"},
+    "duration_ms": {"type": "integer", "minimum": 0},
+    "audit_delivery": {"const": "async_best_effort"}
+  },
+  "allOf": [{
+    "oneOf": [
+      {"properties": {"event": {"const": "PreToolUse"}, "normalized_outcome": {"properties": {"event": {"const": "PreToolUse"}}, "required": ["event"]}}},
+      {"properties": {"event": {"const": "PermissionRequest"}, "normalized_outcome": {"properties": {"event": {"const": "PermissionRequest"}}, "required": ["event"]}}},
+      {"properties": {"event": {"const": "PostToolUse"}, "normalized_outcome": {"properties": {"event": {"const": "PostToolUse"}}, "required": ["event"]}}},
+      {"properties": {"event": {"const": "PreCompact"}, "normalized_outcome": {"properties": {"event": {"const": "PreCompact"}}, "required": ["event"]}}},
+      {"properties": {"event": {"const": "PostCompact"}, "normalized_outcome": {"properties": {"event": {"const": "PostCompact"}}, "required": ["event"]}}},
+      {"properties": {"event": {"const": "SessionStart"}, "normalized_outcome": {"properties": {"event": {"const": "SessionStart"}}, "required": ["event"]}}},
+      {"properties": {"event": {"const": "SessionEnd"}, "normalized_outcome": {"properties": {"event": {"const": "SessionEnd"}}, "required": ["event"]}}},
+      {"properties": {"event": {"const": "UserPromptSubmit"}, "normalized_outcome": {"properties": {"event": {"const": "UserPromptSubmit"}}, "required": ["event"]}}},
+      {"properties": {"event": {"const": "SubagentStart"}, "normalized_outcome": {"properties": {"event": {"const": "SubagentStart"}}, "required": ["event"]}}},
+      {"properties": {"event": {"const": "SubagentStop"}, "normalized_outcome": {"properties": {"event": {"const": "SubagentStop"}}, "required": ["event"]}}},
+      {"properties": {"event": {"const": "Stop"}, "normalized_outcome": {"properties": {"event": {"const": "Stop"}}, "required": ["event"]}}}
+    ]
+  }],
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"},
+    "revision": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"},
+    "event": {"enum": ["PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact", "PostCompact", "SessionStart", "SessionEnd", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop"]},
+    "reason": {"type": ["string", "null"], "maxLength": 1024},
+    "handler_run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["handler_id", "handler_revision", "order", "sync", "status", "control_ignored", "reason", "duration_ms"],
+      "properties": {
+        "handler_id": {"$ref": "#/$defs/id"},
+        "handler_revision": {"$ref": "#/$defs/revision"},
+        "order": {"type": "integer", "minimum": 0},
+        "sync": {"type": "boolean"},
+        "status": {"enum": ["completed", "failed", "blocked", "stopped"]},
+        "control_ignored": {"type": "boolean"},
+        "reason": {"$ref": "#/$defs/reason"},
+        "duration_ms": {"type": "integer", "minimum": 0}
+      }
+    },
+    "outcome": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["event", "dispatch_blocked", "reason", "input_rewrite_applied"], "properties": {"event": {"const": "PreToolUse"}, "dispatch_blocked": {"type": "boolean"}, "reason": {"$ref": "#/$defs/reason"}, "input_rewrite_applied": {"type": "boolean"}}},
+        {"type": "object", "additionalProperties": false, "required": ["event", "permission", "reason"], "properties": {"event": {"const": "PermissionRequest"}, "permission": {"enum": ["allowed", "denied", "no_decision"]}, "reason": {"$ref": "#/$defs/reason"}}},
+        {"type": "object", "additionalProperties": false, "required": ["event", "follow_up_blocked", "turn_stopped", "reason"], "properties": {"event": {"const": "PostToolUse"}, "follow_up_blocked": {"type": "boolean"}, "turn_stopped": {"type": "boolean"}, "reason": {"$ref": "#/$defs/reason"}}},
+        {"type": "object", "additionalProperties": false, "required": ["event", "turn_stopped", "reason", "additional_context_count"], "properties": {"event": {"enum": ["PreCompact", "PostCompact", "SessionStart", "UserPromptSubmit"]}, "turn_stopped": {"type": "boolean"}, "reason": {"$ref": "#/$defs/reason"}, "additional_context_count": {"type": "integer", "minimum": 0}}},
+        {"type": "object", "additionalProperties": false, "required": ["event", "stop_allowed", "reason"], "properties": {"event": {"enum": ["Stop", "SubagentStop"]}, "stop_allowed": {"type": "boolean"}, "reason": {"$ref": "#/$defs/reason"}}},
+        {"type": "object", "additionalProperties": false, "required": ["event", "additional_context_count"], "properties": {"event": {"const": "SubagentStart"}, "additional_context_count": {"type": "integer", "minimum": 0}}},
+        {"type": "object", "additionalProperties": false, "required": ["event", "observed"], "properties": {"event": {"const": "SessionEnd"}, "observed": {"const": true}}}
+      ]
+    }
+  }
+}

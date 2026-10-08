@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0.0",
+  "id": "job-invalid-output-flag",
+  "source_id": "source-text-001",
+  "job_type": "extract_memory",
+  "idempotency_key": "invalid-output-flag",
+  "status": "running",
+  "attempt": 1,
+  "max_attempts": 3,
+  "lease": {
+    "worker_id": "worker-local-001",
+    "lease_token": "lease-token-0003",
+    "acquired_at": "2026-06-29T09:05:00+08:00",
+    "expires_at": "2026-06-29T09:10:00+08:00"
+  },
+  "progress": {
+    "current": 1,
+    "total": 4,
+    "percent": 25,
+    "message": "running"
+  },
+  "steps": [
+    {
+      "name": "extract_atom_candidates",
+      "status": "running",
+      "attempt": 1,
+      "started_at": "2026-06-29T09:00:00+08:00",
+      "completed_at": null,
+      "progress": 25,
+      "input_refs": [
+        "crp://default/sources/source-text-001"
+      ],
+      "staged_output_refs": [
+        "crp://default/staging/jobs/job-invalid-output-flag/atoms/atom-candidate-001"
+      ],
+      "log_refs": [],
+      "error": null
+    }
+  ],
+  "error": null,
+  "checkpoint": null,
+  "staged_outputs": [
+    {
+      "kind": "atom",
+      "uri": "crp://default/staging/jobs/job-invalid-output-flag/atoms/atom-candidate-001",
+      "object_id": "atom-candidate-001",
+      "published": true
+    }
+  ],
+  "published_outputs": [],
+  "log_refs": [],
+  "created_at": "2026-06-29T09:00:00+08:00",
+  "updated_at": "2026-06-29T09:05:00+08:00"
+}

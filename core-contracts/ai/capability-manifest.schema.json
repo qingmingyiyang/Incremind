@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/ai/capability-manifest.schema.json",
+  "title": "AICapabilityManifest",
+  "description": "AI Kernel 能力插件合同。Definition、Provider 与 Consumer 角色显式，注册必须可撤销。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "capability_id", "version", "name", "description", "mode", "input_schema_uri", "output_schema_uri", "service_definition", "provider", "consumer", "tool_exposed", "requires_approval", "privacy_categories", "operation_semantics", "event_types", "enabled"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "capability_id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$"},
+    "version": {"type": "integer", "minimum": 1},
+    "name": {"type": "string", "minLength": 1, "maxLength": 128},
+    "description": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "mode": {"enum": ["read", "write", "external", "platform"]},
+    "input_schema_uri": {"type": "string", "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+[.]schema[.]json$"},
+    "output_schema_uri": {"type": "string", "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+[.]schema[.]json$"},
+    "service_definition": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*)+$", "maxLength": 256},
+    "provider": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*)+$", "maxLength": 256},
+    "consumer": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*)+$", "maxLength": 256},
+    "tool_exposed": {"type": "boolean"},
+    "requires_approval": {"type": "boolean"},
+    "privacy_categories": {"type": "array", "uniqueItems": true, "maxItems": 16, "items": {"enum": ["instructions", "source_excerpt", "personal_memory", "local_metadata", "media", "external_query"]}},
+    "operation_semantics": {"enum": ["none", "read_only", "receipt_required"]},
+    "event_types": {"type": "array", "uniqueItems": true, "minItems": 1, "maxItems": 32, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$"}},
+    "enabled": {"type": "boolean"}
+  }
+}

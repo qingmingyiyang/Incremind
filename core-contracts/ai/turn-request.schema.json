@@ -1,0 +1,946 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/ai/turn-request.schema.json",
+  "title": "AITurnRequest",
+  "description": "Chriptmas OS 唯一智能入口的请求合同。领域能力通过 capability policy 暴露，不在请求中携带 Provider 或本地路径。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "turn_id", "session_id", "operation_id", "idempotency_key", "scope", "input", "desired_outcome", "privacy", "capability_policy", "context_policy", "approval_policy", "created_at"],
+  "allOf": [
+    {
+      "if": {"properties": {"input": {"required": ["situation"]}}, "required": ["input"]},
+      "then": {"properties": {"desired_outcome": {"enum": ["project.answer", "project.task"]}}}
+    },
+    {
+      "if": {
+        "not": {
+          "required": [
+            "execution_policy"
+          ]
+        }
+      },
+      "then": {
+        "properties": {
+          "capability_policy": {
+            "properties": {
+              "allowed": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "execution_policy"
+        ]
+      },
+      "then": {
+        "oneOf": [
+          {
+            "properties": {
+              "desired_outcome": {"const": "memory.skill_export"},
+              "execution_policy": {"properties": {
+                "template_version": {"const": 1}, "purpose": {"const": "aux"},
+                "budget": {"properties": {"max_steps": {"maximum": 4}, "planner_timeout_ms": {"maximum": 120000}}}
+              }},
+              "capability_policy": {"properties": {"allowed": {"maxItems": 0}}},
+              "context_policy": {"properties": {
+                "include_project_skill": {"const": false}, "include_memory": {"const": false},
+                "include_session_history": {"const": false}
+              }}
+            }
+          },
+          {
+            "properties": {
+              "desired_outcome": {"const": "web.search"},
+              "execution_policy": {"properties": {
+                "purpose": {"const": "aux"}, "template_version": {"const": 1},
+                "budget": {"properties": {"max_steps": {"maximum": 1}, "planner_timeout_ms": {"maximum": 120000}}}
+              }},
+              "capability_policy": {"properties": {"allowed": {"maxItems": 0}}},
+              "context_policy": {"properties": {
+                "max_context_bytes": {"maximum": 262144},
+                "include_project_skill": {"const": false}, "include_memory": {"const": false},
+                "include_session_history": {"const": false}
+              }}
+            }
+          },
+          {
+            "required": ["capability_request", "policy_versions"],
+            "properties": {
+              "desired_outcome": {"const": "project.task"},
+              "execution_policy": {"properties": {
+                "template_version": {"const": 2}, "purpose": {"const": "primary"},
+                "budget": {"properties": {"max_steps": {"maximum": 1}, "planner_timeout_ms": {"maximum": 1230000}}}
+              }},
+              "capability_policy": {"properties": {
+                "allowed": {"const": ["external.task.execute"]},
+                "denied": {"maxItems": 0}, "require_approval": {"maxItems": 0}
+              }},
+              "capability_request": {"properties": {
+                "mode": {"const": "execute_exact_v1"}, "capability_id": {"const": "external.task.execute"},
+                "arguments": {"type": "object", "additionalProperties": false, "required": ["binding_ref"],
+                  "properties": {"binding_ref": {"type": "string", "pattern": "^crp://session/turn-[0-9a-f]{32}/external-task-run-v1$"}}}
+              }},
+              "context_policy": {"properties": {
+                "include_project_skill": {"const": false}, "include_memory": {"const": false}, "include_session_history": {"const": false}
+              }}
+            }
+          },
+          {
+            "required": ["capability_request", "policy_versions"],
+            "properties": {
+              "desired_outcome": {"const": "external.context"},
+              "execution_policy": {"properties": {"template_version": {"const": 1}, "purpose": {"const": "aux"},
+                "budget": {"properties": {"max_steps": {"maximum": 1}, "planner_timeout_ms": {"maximum": 120000}}}}},
+              "capability_policy": {"properties": {"allowed": {"const": ["external.context.execute"]}, "denied": {"maxItems": 0}, "require_approval": {"maxItems": 0}}},
+              "capability_request": {"properties": {"mode": {"const": "execute_exact_v1"}, "capability_id": {"const": "external.context.execute"},
+                "arguments": {"type": "object", "additionalProperties": false, "required": ["client", "tool", "query", "scope", "budget"],
+                  "properties": {"client": {"enum": ["claude", "codex"]}, "tool": {"enum": ["projects", "recall", "methods", "read"]},
+                    "query": {"type": "string", "not": {"pattern": "\u0000"}}, "budget": {"type": "integer", "minimum": 1, "maximum": 12000},
+                    "scope": {"type": "object", "additionalProperties": false, "required": ["user_id", "project_id"],
+                      "properties": {"user_id": {"type": "string", "minLength": 1}, "project_id": {"type": "string", "minLength": 1}}}}}}},
+              "context_policy": {"properties": {"include_project_skill": {"const": false}, "include_memory": {"const": false}, "include_session_history": {"const": false}}}
+            }
+          },
+          {
+            "properties": {
+              "desired_outcome": {"const": "media.image_read"},
+              "execution_policy": {"properties": {
+                "purpose": {"const": "aux"}, "template_version": {"const": 1},
+                "budget": {"properties": {"max_steps": {"maximum": 2}, "planner_timeout_ms": {"maximum": 120000}}}
+              }},
+              "capability_policy": {"properties": {"allowed": {"maxItems": 0}}},
+              "context_policy": {"properties": {"max_context_bytes": {"maximum": 262144},
+                "include_project_skill": {"const": false}, "include_memory": {"const": false},
+                "include_session_history": {"const": false}}}
+            }
+          },
+          {
+            "properties": {
+              "desired_outcome": {
+                "const": "workbench.route"
+              },
+              "execution_policy": {
+                "properties": {
+                  "purpose": {
+                    "const": "aux"
+                  },
+                  "budget": {
+                    "properties": {
+                      "max_steps": {
+                        "maximum": 1
+                      },
+                      "planner_timeout_ms": {
+                        "maximum": 4000
+                      }
+                    }
+                  }
+                }
+              },
+              "capability_policy": {
+                "properties": {
+                  "allowed": {
+                    "maxItems": 0
+                  }
+                }
+              },
+              "context_policy": {
+                "properties": {
+                  "max_context_bytes": {
+                    "maximum": 262144
+                  },
+                  "include_project_skill": {
+                    "const": false
+                  },
+                  "include_memory": {
+                    "const": false
+                  },
+                  "include_session_history": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "desired_outcome": {
+                "const": "memory.organize"
+              },
+              "execution_policy": {
+                "properties": {
+                  "purpose": {
+                    "const": "aux"
+                  },
+                  "budget": {
+                    "properties": {
+                      "max_steps": {
+                        "maximum": 4
+                      },
+                      "planner_timeout_ms": {
+                        "maximum": 120000
+                      }
+                    }
+                  },
+                  "template_version": {
+                    "const": 1
+                  }
+                }
+              },
+              "capability_policy": {
+                "properties": {
+                  "allowed": {
+                    "items": {
+                      "enum": [
+                        "source.evidence.read"
+                      ]
+                    }
+                  }
+                }
+              },
+              "context_policy": {
+                "properties": {
+                  "max_context_bytes": {
+                    "maximum": 262144
+                  },
+                  "include_project_skill": {
+                    "const": false
+                  },
+                  "include_memory": {
+                    "const": false
+                  },
+                  "include_session_history": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "desired_outcome": {
+                "const": "memory.propose_insights"
+              },
+              "execution_policy": {
+                "properties": {
+                  "purpose": {
+                    "const": "aux"
+                  },
+                  "budget": {
+                    "properties": {
+                      "max_steps": {
+                        "maximum": 4
+                      },
+                      "planner_timeout_ms": {
+                        "maximum": 120000
+                      }
+                    }
+                  },
+                  "template_version": {
+                    "const": 1
+                  }
+                }
+              },
+              "capability_policy": {
+                "properties": {
+                  "allowed": {
+                    "items": {
+                      "enum": [
+                        "source.evidence.read"
+                      ]
+                    }
+                  }
+                }
+              },
+              "context_policy": {
+                "properties": {
+                  "max_context_bytes": {
+                    "maximum": 262144
+                  },
+                  "include_project_skill": {
+                    "const": false
+                  },
+                  "include_memory": {
+                    "const": false
+                  },
+                  "include_session_history": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "desired_outcome": {
+                "const": "memory.consolidate"
+              },
+              "execution_policy": {
+                "properties": {
+                  "purpose": {
+                    "const": "aux"
+                  },
+                  "budget": {
+                    "properties": {
+                      "max_steps": {
+                        "maximum": 4
+                      },
+                      "planner_timeout_ms": {
+                        "maximum": 120000
+                      }
+                    }
+                  },
+                  "template_version": {
+                    "const": 1
+                  }
+                }
+              },
+              "capability_policy": {
+                "properties": {
+                  "allowed": {
+                    "items": {
+                      "enum": [
+                        "memory.candidate.evidence.read",
+                        "memory.recall"
+                      ]
+                    }
+                  }
+                }
+              },
+              "context_policy": {
+                "properties": {
+                  "max_context_bytes": {
+                    "maximum": 262144
+                  },
+                  "include_project_skill": {
+                    "const": false
+                  },
+                  "include_memory": {
+                    "const": false
+                  },
+                  "include_session_history": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "desired_outcome": {
+                "const": "memory.overview"
+              },
+              "execution_policy": {
+                "properties": {
+                  "purpose": {
+                    "const": "aux"
+                  },
+                  "budget": {
+                    "properties": {
+                      "max_steps": {
+                        "maximum": 4
+                      },
+                      "planner_timeout_ms": {
+                        "maximum": 120000
+                      }
+                    }
+                  },
+                  "template_version": {
+                    "const": 1
+                  }
+                }
+              },
+              "capability_policy": {
+                "properties": {
+                  "allowed": {
+                    "maxItems": 0
+                  }
+                }
+              },
+              "context_policy": {
+                "properties": {
+                  "max_context_bytes": {
+                    "maximum": 262144
+                  },
+                  "include_project_skill": {
+                    "const": false
+                  },
+                  "include_memory": {
+                    "const": false
+                  },
+                  "include_session_history": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "desired_outcome": {
+                "const": "memory.link_suggest"
+              },
+              "execution_policy": {
+                "properties": {
+                  "purpose": {
+                    "const": "aux"
+                  },
+                  "budget": {
+                    "properties": {
+                      "max_steps": {
+                        "maximum": 4
+                      },
+                      "planner_timeout_ms": {
+                        "maximum": 120000
+                      }
+                    }
+                  },
+                  "template_version": {
+                    "const": 1
+                  }
+                }
+              },
+              "capability_policy": {
+                "properties": {
+                  "allowed": {
+                    "items": {
+                      "enum": [
+                        "memory.recall"
+                      ]
+                    }
+                  }
+                }
+              },
+              "context_policy": {
+                "properties": {
+                  "max_context_bytes": {
+                    "maximum": 262144
+                  },
+                  "include_project_skill": {
+                    "const": false
+                  },
+                  "include_memory": {
+                    "const": false
+                  },
+                  "include_session_history": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "desired_outcome": {
+                "const": "project.answer"
+              },
+              "execution_policy": {
+                "properties": {
+                  "purpose": {
+                    "const": "primary"
+                  },
+                  "budget": {
+                    "properties": {
+                      "max_steps": {
+                        "maximum": 2
+                      },
+                      "planner_timeout_ms": {
+                        "maximum": 120000
+                      }
+                    }
+                  },
+                  "template_version": {
+                    "const": 1
+                  }
+                }
+              },
+              "capability_policy": {
+                "properties": {
+                  "allowed": {
+                    "items": {
+                      "enum": [
+                        "memory.recall",
+                        "source.evidence.read"
+                      ]
+                    }
+                  }
+                }
+              },
+              "context_policy": {
+                "properties": {
+                  "max_context_bytes": {
+                    "maximum": 262144
+                  },
+                  "include_project_skill": {
+                    "const": false
+                  },
+                  "include_session_history": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "desired_outcome": {
+                "const": "project.task"
+              },
+              "execution_policy": {
+                "properties": {
+                  "purpose": {
+                    "const": "primary"
+                  },
+                  "budget": {
+                    "properties": {
+                      "max_steps": {
+                        "maximum": 64
+                      },
+                      "planner_timeout_ms": {
+                        "maximum": 600000
+                      }
+                    }
+                  },
+                  "template_version": {
+                    "const": 1
+                  }
+                }
+              },
+              "capability_policy": {
+                "properties": {
+                  "allowed": {
+                    "items": {
+                      "enum": [
+                        "agent.fan_in",
+                        "agent.interrupt",
+                        "agent.list",
+                        "agent.message",
+                        "agent.plan",
+                        "agent.spawn",
+                        "agent.wait",
+                        "analyze_source",
+                        "companion.chat.context.read",
+                        "companion.chat.message.write",
+                        "companion.vision.analyze.write",
+                        "companion.vision.context.read",
+                        "document.draft.propose",
+                        "image.generate",
+                        "memory.candidate.evidence.read",
+                        "memory.candidate.propose.write",
+                        "memory.recall",
+                        "presentation.pptx.fixed",
+                        "project_skill.draft.propose",
+                        "project_skill.evidence.read",
+                        "series.intake.organize.commit",
+                        "source.evidence.read",
+                        "workbench.input.classification.context.read",
+                        "workbench.input.classification.enhance.write",
+                        "workbench.question.answer"
+                      ]
+                    }
+                  }
+                }
+              },
+              "context_policy": {
+                "properties": {
+                  "max_context_bytes": {
+                    "maximum": 262144
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "desired_outcome": {
+                "const": "project.answer"
+              },
+              "execution_policy": {
+                "properties": {
+                  "purpose": {
+                    "const": "primary"
+                  },
+                  "budget": {
+                    "properties": {
+                      "max_steps": {
+                        "maximum": 2
+                      },
+                      "planner_timeout_ms": {
+                        "maximum": 120000
+                      }
+                    }
+                  },
+                  "template_version": {
+                    "const": 2
+                  }
+                }
+              },
+              "capability_policy": {
+                "properties": {
+                  "allowed": {
+                    "items": {
+                      "enum": [
+                        "memory.recall",
+                        "source.evidence.read",
+                        "workbench.answer.execute"
+                      ]
+                    }
+                  }
+                }
+              },
+              "context_policy": {
+                "properties": {
+                  "max_context_bytes": {
+                    "maximum": 262144
+                  },
+                  "include_project_skill": {
+                    "const": false
+                  },
+                  "include_session_history": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {"if": {"anyOf": [
+       {"properties": {"capability_policy": {"properties": {"allowed": {"contains": {"const": "external.task.execute"}}}}}},
+       {"required": ["capability_request"], "properties": {"capability_request": {"properties": {"capability_id": {"const": "external.task.execute"}}}}}
+     ]}, "then": {"required": ["execution_policy"], "properties": {
+       "desired_outcome": {"const": "project.task"}, "execution_policy": {"properties": {"template_version": {"const": 2}}}
+     }}},
+    {"if": {"properties": {"desired_outcome": {"const": "external.context"}}},
+     "then": {"required": ["execution_policy", "capability_request", "policy_versions"]}}
+  ],
+  "properties": {
+    "policy_versions": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "enum": ["organize", "place", "extract", "route", "steer", "scope", "retrieve", "rank", "strength", "forget", "enough", "compose", "trigger", "consolidate", "search", "nudge", "handoff", "image_read", "retry", "skill_export", "skill_author"]
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^@[1-9][0-9]*$",
+        "not": {"pattern": "[^@0-9]"}
+      }
+    },
+    "execution_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "template_version",
+        "purpose",
+        "budget"
+      ],
+      "properties": {
+        "template_version": {
+          "enum": [1, 2]
+        },
+        "purpose": {
+          "enum": [
+            "primary",
+            "aux"
+          ]
+        },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "max_steps",
+            "planner_timeout_ms"
+          ],
+          "properties": {
+            "max_steps": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
+            },
+            "planner_timeout_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1230000
+            }
+          }
+        }
+      }
+    },
+    "schema_version": {"const": "1.0.0"},
+    "turn_id": {"type": "string", "pattern": "^turn-[0-9a-f]{32}$"},
+    "session_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "operation_id": {"type": "string", "pattern": "^op-[A-Za-z0-9._~-]{8,125}$"},
+    "idempotency_key": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{15,127}$"},
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "project_id", "series_id"],
+      "properties": {
+        "kind": {"enum": ["global", "project", "series"]},
+        "project_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+        "series_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+        "authority": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["kind", "object_id", "payload_revision", "storage_revision", "authority_identity", "authority_ref"],
+          "properties": {
+            "kind": {"const": "project_series_scope_v1"},
+            "object_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+            "payload_revision": {"type": "integer", "minimum": 1},
+            "storage_revision": {"type": "integer", "minimum": 1},
+            "authority_identity": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$"},
+            "authority_ref": {"type": "string", "pattern": "^crp://[A-Za-z0-9][A-Za-z0-9._~-]{0,127}/memory/series/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"}
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "series"}}, "required": ["kind"]},
+          "then": {
+            "required": ["authority"],
+            "properties": {
+              "project_id": {"type": "string"},
+              "series_id": {"type": "string"},
+              "authority": {"type": "object"}
+            }
+          },
+          "else": {"properties": {"authority": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "global"}}, "required": ["kind"]},
+          "then": {"properties": {"project_id": {"type": "null"}, "series_id": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "project"}}, "required": ["kind"]},
+          "then": {"properties": {"project_id": {"type": "string"}, "series_id": {"type": "null"}}}
+        }
+      ]
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "text", "refs"],
+      "properties": {
+        "kind": {"enum": ["text", "references", "action"]},
+        "text": {"type": ["string", "null"], "minLength": 1, "maxLength": 100000},
+        "situation": {"type": "string", "maxLength": 60},
+        "refs": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "object_id", "uri"],
+            "properties": {
+              "kind": {"enum": ["source", "asset", "document", "atom", "scenario", "series_memory", "persona", "project_skill", "recall_result", "session_event"]},
+              "object_id": {"type": "string", "minLength": 1, "maxLength": 256},
+              "uri": {"type": "string", "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"}
+            }
+          }
+        }
+      }
+    },
+    "desired_outcome": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$"},
+    "privacy": {
+      "dependentRequired": {"privacy_revision": ["excluded_refs", "source_snapshots", "material_refs"], "excluded_refs": ["privacy_revision", "source_snapshots", "material_refs"], "source_snapshots": ["privacy_revision", "excluded_refs", "material_refs"], "material_refs": ["privacy_revision", "excluded_refs", "source_snapshots"]},
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "allow_remote", "pii", "consent_refs", "retention"],
+      "properties": {
+        "material_refs": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["type", "id", "revision", "project_id"], "properties": {"type": {"enum": ["original_item", "original_source", "document", "recognition", "experience"]}, "id": {"type": "string", "minLength": 1}, "revision": {"type": "integer", "minimum": 1}, "project_id": {"type": "string", "minLength": 1}}}},
+        "privacy_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "excluded_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "object_id",
+              "project_id"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "object_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "project_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "source_snapshots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema_version",
+              "scope",
+              "privacy_revision",
+              "roots",
+              "nodes"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": 1
+              },
+              "scope": {
+                "type": "object"
+              },
+              "privacy_revision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "roots": {
+                "type": "array"
+              },
+              "nodes": {
+                "type": "array"
+              }
+            }
+          }
+        },
+        "mode": {"enum": ["local_only", "local_first", "remote_allowed"]},
+        "allow_remote": {"type": "boolean"},
+        "pii": {"enum": ["none", "possible", "present"]},
+        "consent_refs": {"type": "array", "uniqueItems": true, "maxItems": 32, "items": {"type": "string", "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"}},
+        "retention": {"enum": ["none", "session", "local_durable"]}
+      }
+    },
+    "capability_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "denied", "require_approval"],
+      "properties": {
+        "allowed": {"type": "array", "uniqueItems": true, "minItems": 0, "maxItems": 128, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$"}},
+        "denied": {"type": "array", "uniqueItems": true, "maxItems": 128, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$"}},
+        "require_approval": {"type": "array", "uniqueItems": true, "maxItems": 128, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$"}}
+      }
+    },
+    "context_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["include_project_skill", "include_memory", "include_session_history", "max_context_bytes"],
+      "properties": {
+        "include_project_skill": {"type": "boolean"},
+        "include_memory": {"type": "boolean"},
+        "include_session_history": {"type": "boolean"},
+        "max_context_bytes": {"type": "integer", "minimum": 1024, "maximum": 1048576}
+      }
+    },
+    "approval_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "auto_approve_read_only"],
+      "properties": {
+        "mode": {"enum": ["never", "risk_based", "always"]},
+        "auto_approve_read_only": {"type": "boolean"}
+      }
+    },
+    "capability_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "capability_id", "arguments"],
+      "properties": {
+        "mode": {"const": "execute_exact_v1"},
+        "capability_id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$"},
+        "arguments": {"type": "object"}
+      }
+    },
+    "expert_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expert_id", "task_intents", "budget"],
+      "properties": {
+        "expert_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+        "task_intents": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$"}
+        },
+        "budget": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+        "skill_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"}
+        }
+      }
+    },
+    "agent_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "kind", "run_id", "role", "profile_id", "profile_revision", "model_tier", "depth", "cancel_epoch", "budget_snapshot_ref"],
+      "properties": {
+        "schema_version": {"const": "1.0.0"},
+        "kind": {"const": "internal_agent_run_v1"},
+        "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+        "role": {"enum": ["main", "subagent"]},
+        "profile_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+        "profile_revision": {"type": "integer", "minimum": 1},
+        "model_tier": {"enum": ["fast", "standard", "deep"]},
+        "parent_run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+        "link_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+        "reservation_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+        "spawn_operation_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+        "depth": {"type": "integer", "minimum": 0, "maximum": 4},
+        "cancel_epoch": {"type": "integer", "minimum": 0},
+        "budget_snapshot_ref": {"type": "string", "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"role": {"const": "main"}}, "required": ["role"]},
+          "then": {
+            "properties": {
+              "profile_id": {"const": "main.orchestrator"},
+              "depth": {"const": 0}
+            },
+            "not": {"anyOf": [
+              {"required": ["parent_run_id"]},
+              {"required": ["link_id"]},
+              {"required": ["reservation_id"]},
+              {"required": ["spawn_operation_id"]}
+            ]}
+          }
+        },
+        {
+          "if": {"properties": {"role": {"const": "subagent"}}, "required": ["role"]},
+          "then": {
+            "required": ["parent_run_id", "link_id", "reservation_id", "spawn_operation_id"],
+            "properties": {"depth": {"minimum": 1}}
+          }
+        }
+      ]
+    },
+    "agent_policy_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "revision", "snapshot_ref"],
+      "properties": {
+        "policy_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+        "revision": {"type": "integer", "minimum": 1},
+        "snapshot_ref": {"type": "string", "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"}
+      }
+    },
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://christmas-os.local/contracts/ai/image-generation-result.schema.json",
+  "title": "Image Generation Result Projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "operation_id", "invocation_id", "asset_ref", "media_type", "dimensions", "replayed"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "operation_id": {"$ref": "#/$defs/id"},
+    "invocation_id": {"$ref": "#/$defs/id"},
+    "asset_ref": {"type": "string", "pattern": "^crp-ref-[A-Za-z0-9._-]+-assets-generated-generated-[a-f0-9]{32}$"},
+    "media_type": {"enum": ["image/png", "image/jpeg", "image/webp"]},
+    "dimensions": {"$ref": "#/$defs/dimensions"},
+    "replayed": {"type": "boolean"}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"},
+    "dimensions": {"type": "object", "additionalProperties": false, "required": ["width", "height"], "properties": {"width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1}}}
+  }
+}

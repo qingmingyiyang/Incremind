@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0.0",
+  "id": "persona-project-001",
+  "scope": "project",
+  "statements": [
+    {
+      "id": "stmt-002",
+      "content": "项目内输出默认使用中文。",
+      "category": "workflow",
+      "confidence": 0.8
+    }
+  ],
+  "evidence_refs": [
+    {
+      "object_type": "scenario",
+      "object_id": "scenario-001",
+      "source_refs": [
+        {
+          "source_id": "source-text-001",
+          "locator": "char:0-30"
+        }
+      ]
+    }
+  ],
+  "confirmation": {
+    "required": false,
+    "status": "rule_allowed",
+    "actor": "system",
+    "reason": "low risk project language rule"
+  },
+  "revision": 1,
+  "created_at": "2026-06-29T12:21:00+08:00",
+  "updated_at": "2026-06-29T12:21:00+08:00",
+  "trust_status": "system_generated"
+}

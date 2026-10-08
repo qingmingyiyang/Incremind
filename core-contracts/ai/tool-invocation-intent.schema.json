@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://schemas/ai/tool-invocation-intent-v1",
+  "title": "AI Tool Invocation Intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "invocation_id", "turn_id", "step_id", "capability_id", "capability_version", "operation_id", "idempotency_key", "execution_mode", "resource_locks", "idempotency", "max_attempts", "retry_backoff_ms", "retryable_error_codes", "timeout_ms", "arguments"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "invocation_id": {"type": "string", "pattern": "^tool-call-[0-9a-f]{32}$"},
+    "turn_id": {"type": "string", "minLength": 1},
+    "step_id": {"type": "string", "pattern": "^step-[0-9a-f]{32}$"},
+    "capability_id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$"},
+    "capability_version": {"type": "integer", "minimum": 1},
+    "operation_id": {"type": "string", "minLength": 1},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 320},
+    "execution_mode": {"enum": ["parallel", "exclusive"]},
+    "resource_locks": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "idempotency": {"enum": ["idempotent", "verify_before_retry", "never_retry"]},
+    "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+    "retry_backoff_ms": {"type": "integer", "minimum": 0, "maximum": 300000},
+    "retryable_error_codes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 3600000},
+    "tool_contract": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["tool_id", "version", "effect", "source", "owner_id", "destination", "operation_semantics", "receipt_schema_uri", "input_schema_uri", "output_schema_uri", "data_classes", "mutability", "egress_class", "network_scope", "data_egress_scope", "required_scopes", "boundary_requirements", "verification_tool_id", "compensation_tool_id", "available", "execution_mode", "resource_locks", "idempotency", "retry_policy", "timeout_ms", "nested_model_handle_budget"],
+      "properties": {
+        "tool_id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$"},
+        "version": {"type": "integer", "minimum": 1},
+        "effect": {"enum": ["read", "write", "external", "platform", "delete"]},
+        "source": {"enum": ["core", "platform", "plugin", "mcp", "workflow"]},
+        "owner_id": {"type": "string", "minLength": 1},
+        "destination": {"enum": ["local", "provider", "mcp", "platform"]},
+        "operation_semantics": {"enum": ["none", "read_only", "receipt_required"]},
+        "receipt_schema_uri": {"type": ["string", "null"], "minLength": 1},
+        "input_schema_uri": {"type": "string", "minLength": 1},
+        "output_schema_uri": {"type": "string", "minLength": 1},
+        "data_classes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "mutability": {"enum": ["read_only", "reversible", "irreversible"]},
+        "egress_class": {"enum": ["none", "local", "remote"]},
+        "network_scope": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "data_egress_scope": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "required_scopes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "boundary_requirements": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "verification_tool_id": {"type": ["string", "null"], "minLength": 1},
+        "compensation_tool_id": {"type": ["string", "null"], "minLength": 1},
+        "available": {"type": "boolean"},
+        "execution_mode": {"enum": ["parallel", "exclusive"]},
+        "resource_locks": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "idempotency": {"enum": ["idempotent", "verify_before_retry", "never_retry"]},
+        "retry_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_attempts", "backoff_ms", "retryable_error_codes"],
+          "properties": {
+            "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+            "backoff_ms": {"type": "integer", "minimum": 0, "maximum": 300000},
+            "retryable_error_codes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+          }
+        },
+        "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 3600000},
+        "nested_model_handle_budget": {"type": "integer", "minimum": 1, "maximum": 16},
+        "connection_identity": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["protocol", "server_id", "protocol_version", "manifest_revision", "endpoint_identity", "credential_subject_id", "transport_generation", "catalog_revision", "tool_schema_revision"],
+          "properties": {
+            "protocol": {"const": "mcp"},
+            "server_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+            "protocol_version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+            "manifest_revision": {"type": "integer", "minimum": 1},
+            "endpoint_identity": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+            "credential_subject_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+            "transport_generation": {"type": "integer", "minimum": 1},
+            "catalog_revision": {"type": "integer", "minimum": 1},
+            "tool_schema_revision": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    },
+    "requires_approval": {"type": ["boolean", "null"]},
+    "authorization_facts_ref": {"type": "string", "pattern": "^crp://session/[A-Za-z0-9._~:/-]+$"},
+    "authorization_facts_revision": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"},
+    "approval_fact_ref": {"type": "string", "pattern": "^crp://session/[A-Za-z0-9._~:/-]+$"},
+    "arguments": {"type": "object"}
+  },
+  "allOf": [
+    {
+      "if": {"required": ["authorization_facts_ref"]},
+      "then": {"required": ["authorization_facts_revision"]}
+    },
+    {
+      "if": {"required": ["authorization_facts_revision"]},
+      "then": {"required": ["authorization_facts_ref"]}
+    },
+    {
+      "if": {"properties": {"idempotency": {"const": "never_retry"}}},
+      "then": {"properties": {"max_attempts": {"const": 1}}}
+    },
+    {
+      "if": {"properties": {"max_attempts": {"const": 1}}},
+      "then": {"properties": {"retryable_error_codes": {"maxItems": 0}}}
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0.0",
+  "status": "answered",
+  "answer": {"status": "insufficient_evidence", "text": "本地资料不足，无法给出带引用的结论。"},
+  "evidence_items": [],
+  "source_links": [],
+  "error": null,
+  "privacy": {"mode": "local_only", "source_path_exposed": false, "provider_call_performed": false}
+}

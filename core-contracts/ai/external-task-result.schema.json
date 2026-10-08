@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Completed external task operation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "payload_ref", "receipt_ref", "evidence_refs"],
+  "properties": {
+    "summary": {"type": "string", "minLength": 1},
+    "payload_ref": {"type": "string", "pattern": "^crp://session/[A-Za-z0-9._~-]+/external-task-result-v1$"},
+    "receipt_ref": {"type": "string", "pattern": "^crp://session/[A-Za-z0-9._~-]+/external-task-receipt-v1$"},
+    "evidence_refs": {"type": "array", "maxItems": 0}
+  }
+}

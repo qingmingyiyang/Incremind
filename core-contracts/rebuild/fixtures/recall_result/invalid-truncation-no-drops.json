@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0.0",
+  "id": "recall-result-truncation-invalid",
+  "request_id": "recall-request-project-alpha-006",
+  "project_id": "project-alpha",
+  "status": "evidence_found",
+  "hits": [
+    {
+      "hit_id": "hit-skill-alpha",
+      "layer": "l3_project_skill",
+      "object_id": "skill-project-alpha",
+      "project_id": "project-alpha",
+      "source_project_label": null,
+      "trust_status": "user_confirmed",
+      "score": 0.9,
+      "token_estimate": 500,
+      "source_refs": [{"source_id": "source-text-001", "locator": "char:0-80"}],
+      "snippet": "项目 Skill 证据。",
+      "explanation": "用于触发截断语义门禁。"
+    }
+  ],
+  "coverage": {
+    "status": "sufficient",
+    "requested_layers": ["l3_project_skill"],
+    "covered_layers": ["l3_project_skill"],
+    "missing_layers": [],
+    "low_trust": false,
+    "source_ref_count": 1
+  },
+  "truncation": {
+    "applied": true,
+    "reason": "none",
+    "dropped_hit_ids": [],
+    "final_hit_count": 1,
+    "final_token_estimate": 500
+  },
+  "explanation": {
+    "summary": "错误示例。",
+    "layer_order": ["l3_project_skill"],
+    "warnings": []
+  },
+  "cross_project": {
+    "used": false,
+    "grant_id": null,
+    "project_ids": []
+  },
+  "errors": [],
+  "created_at": "2026-06-29T15:50:00+08:00"
+}

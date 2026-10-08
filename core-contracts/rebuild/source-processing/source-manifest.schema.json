@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/source-processing/source-manifest.schema.json",
+  "title": "SourceManifest",
+  "description": "Syntax contract. Mandatory cross-field invariants and the semantic validator are declared in manifest.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source_id", "source_ref", "platform", "input_identity", "resolver_revision", "normalizer_revision", "content_kind", "body", "metadata", "permission", "provenance_refs", "assets"],
+  "properties": {
+    "schema_version": {"enum": ["1.0.0", "1.1.0"]},
+    "source_id": {"type": "string", "minLength": 1},
+    "source_ref": {"$ref": "#/$defs/ref"},
+    "platform": {"type": "string", "minLength": 1},
+    "input_identity": {"type": "string", "minLength": 1},
+    "resolver_revision": {"type": "string", "minLength": 1},
+    "normalizer_revision": {"type": "string", "minLength": 1},
+    "content_kind": {"enum": ["image_set", "video", "mixed", "text", "unknown"]},
+    "body": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/body"}]},
+    "metadata": {"type": "object"},
+    "permission": {"$ref": "#/$defs/permission"},
+    "provenance_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/ref"}},
+    "credential_binding": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/controlledCredentialBinding"}]},
+    "assets": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/asset"}}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"schema_version": {"const": "1.0.0"}}},
+      "then": {"not": {"required": ["credential_binding"]}}
+    },
+    {
+      "if": {"properties": {"schema_version": {"const": "1.1.0"}}},
+      "then": {"required": ["credential_binding"]}
+    },
+    {
+      "if": {
+        "required": ["credential_binding"],
+        "properties": {"credential_binding": {"type": "object"}}
+      },
+      "then": {"properties": {"platform": {"const": "xiaohongshu"}}}
+    }
+  ],
+  "$defs": {
+    "ref": {"type": "string", "pattern": "^crp://[A-Za-z0-9][A-Za-z0-9._~/-]*$"},
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "controlledCredentialBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "provider", "credential_subject_id", "authorization_ref", "authorization_revision", "secret_generation", "boundary_profile_id", "boundary_profile_revision"],
+      "properties": {
+        "mode": {"const": "controlled_credential"},
+        "provider": {"const": "xiaohongshu"},
+        "credential_subject_id": {"$ref": "#/$defs/identifier"},
+        "authorization_ref": {"$ref": "#/$defs/ref"},
+        "authorization_revision": {"type": "integer", "minimum": 1},
+        "secret_generation": {"type": "integer", "minimum": 1},
+        "boundary_profile_id": {"$ref": "#/$defs/identifier"},
+        "boundary_profile_revision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "body": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "text", "source_ref"],
+      "properties": {"kind": {"enum": ["text", "ref"]}, "text": {"type": ["string", "null"]}, "source_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/ref"}]}},
+      "oneOf": [
+        {"properties": {"kind": {"const": "text"}, "text": {"type": "string", "minLength": 1}, "source_ref": {"type": "null"}}},
+        {"properties": {"kind": {"const": "ref"}, "text": {"type": "null"}, "source_ref": {"$ref": "#/$defs/ref"}}}
+      ]
+    },
+    "permission": {
+      "type": "object", "additionalProperties": false,
+      "required": ["decision", "evidence_refs"],
+      "properties": {"decision": {"enum": ["granted", "denied", "unknown"]}, "evidence_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/ref"}}}
+    },
+    "asset": {
+      "type": "object", "additionalProperties": false,
+      "required": ["asset_id", "ordinal", "kind", "media_type", "role", "locator", "source_ref", "relations", "evidence_refs"],
+      "properties": {
+        "asset_id": {"type": "string", "minLength": 1}, "ordinal": {"type": "integer", "minimum": 0},
+        "kind": {"enum": ["image", "video", "text", "unknown"]}, "media_type": {"type": ["string", "null"]},
+        "role": {"type": "string", "minLength": 1}, "locator": {"type": ["string", "null"]},
+        "source_ref": {"$ref": "#/$defs/ref"}, "relations": {"type": "array", "items": {"$ref": "#/$defs/relation"}},
+        "evidence_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/ref"}}
+      }
+    },
+    "relation": {
+      "type": "object", "additionalProperties": false, "required": ["relation", "target_asset_id"],
+      "properties": {"relation": {"type": "string", "minLength": 1}, "target_asset_id": {"type": "string", "minLength": 1}}
+    }
+  }
+}

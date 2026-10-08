@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/rebuild/companion/state-projection.schema.json",
+  "title": "Companion State Projection",
+  "description": "Electron main 投影给 Pet renderer 的脱敏视觉状态。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "occurred_at", "source", "payload"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0.0"},
+    "event_id": {"$ref": "#/$defs/id"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "source": {"type": "string", "enum": ["electron_main"]},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "mood",
+        "revision",
+        "animation_id",
+        "mouth_level",
+        "affinity_progress",
+        "status_badges",
+        "transient_expires_at"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "booting",
+            "ready",
+            "working",
+            "attention",
+            "offline",
+            "idle",
+            "talking",
+            "eating",
+            "sleeping",
+            "dragged",
+            "falling",
+            "climbing",
+            "system_hot",
+            "memory_low",
+            "game_quiet"
+          ]
+        },
+        "mood": {
+          "type": "string",
+          "enum": ["calm", "focused", "curious", "analyzing", "idle", "happy", "normal", "sad", "celebrating", "concerned"]
+        },
+        "revision": {"type": "integer", "minimum": 0},
+        "animation_id": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+            {"type": "null"}
+          ]
+        },
+        "mouth_level": {"type": "integer", "minimum": 0, "maximum": 3},
+        "affinity_progress": {"type": "integer", "minimum": 0, "maximum": 100},
+        "status_badges": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["network_offline", "cpu_hot", "memory_low", "weather_rain", "focus_active", "reminder_due", "game_mode"]
+          }
+        },
+        "transient_expires_at": {
+          "oneOf": [
+            {"type": "string", "format": "date-time"},
+            {"type": "null"}
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9:_-]{0,127}$"}
+  }
+}

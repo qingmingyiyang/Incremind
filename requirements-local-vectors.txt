@@ -1,0 +1,9 @@
+# 本机文字向量的可选依赖，未安装时保持关键词检索。
+sentence-transformers==6.1.0
+transformers==5.19.0
+safetensors>=0.7.0
+torch>=2.7
+torchvision>=0.22
+Pillow>=10
+librosa>=0.11
+huggingface-hub>=1.0

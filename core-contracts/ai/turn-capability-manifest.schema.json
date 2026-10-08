@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://schemas/ai/turn-capability-manifest-v1",
+  "title": "Turn Capability Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "manifest_id", "turn_id", "resolver_id", "profile_id", "profile_revision", "capability_ids", "excluded_reason_counts", "descriptor_bytes"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "manifest_id": {"type": "string", "minLength": 1},
+    "turn_id": {"type": "string", "minLength": 1},
+    "resolver_id": {"type": "string", "minLength": 1},
+    "profile_id": {"type": "string", "minLength": 1},
+    "profile_revision": {"type": "integer", "minimum": 1},
+    "boundary_profile_id": {"type": ["string", "null"], "minLength": 1},
+    "boundary_profile_revision": {"type": ["integer", "null"], "minimum": 1},
+    "application_skill_snapshot_ref": {"type": "string", "pattern": "^crp://session/"},
+    "application_skill_snapshot_revision": {"type": "string", "minLength": 1},
+    "model_routing_snapshot_ref": {"type": "string", "pattern": "^crp://session/"},
+    "model_routing_snapshot_revision": {"type": "string", "minLength": 1},
+    "capability_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "excluded_reason_counts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason", "count"],
+        "properties": {
+          "reason": {"type": "string", "minLength": 1},
+          "count": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "descriptor_bytes": {"type": "integer", "minimum": 0}
+  }
+}

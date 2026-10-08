@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0.0",
+  "id": "document-report-001",
+  "title": "本地优先报告",
+  "type": "report",
+  "project_id": null,
+  "markdown_uri": "crp://default/documents/reports/document-report-001.md",
+  "content_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "source_refs": [
+    {
+      "source_id": "source-text-001",
+      "locator": "char:0-80"
+    },
+    {
+      "source_id": "source-note-001",
+      "locator": "line:3"
+    }
+  ],
+  "source_snapshot": {
+    "snapshot_id": "snapshot-document-report-001-r2",
+    "snapshot_hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "source_refs": [
+      {
+        "source_id": "source-text-001",
+        "locator": "char:0-80"
+      },
+      {
+        "source_id": "source-note-001",
+        "locator": "line:3"
+      }
+    ],
+    "captured_at": "2026-06-29T13:10:00+08:00"
+  },
+  "blocks": [
+    {
+      "id": "block-overview",
+      "block_type": "paragraph",
+      "origin": "ai",
+      "content": "系统保持本地优先并保留来源。",
+      "source_refs": [
+        {
+          "source_id": "source-text-001",
+          "locator": "char:0-40"
+        }
+      ],
+      "edited_by_user": false,
+      "lock_policy": "source_required"
+    },
+    {
+      "id": "block-user-note",
+      "block_type": "paragraph",
+      "origin": "user",
+      "content": "用户补充：交付前必须运行验证。",
+      "source_refs": [],
+      "edited_by_user": true,
+      "lock_policy": "user_edit_protected"
+    }
+  ],
+  "revision": 2,
+  "status": "published",
+  "created_at": "2026-06-29T13:00:00+08:00",
+  "updated_at": "2026-06-29T13:10:00+08:00"
+}

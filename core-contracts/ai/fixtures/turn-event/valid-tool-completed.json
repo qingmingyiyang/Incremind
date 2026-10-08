@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "event_id": "event-abcdef0123456789abcdef0123456789",
+  "turn_id": "turn-0123456789abcdef0123456789abcdef",
+  "session_id": "session-project-alpha",
+  "sequence": 6,
+  "type": "tool.completed",
+  "actor": "tool",
+  "correlation": {"step_id": "step-2", "tool_call_id": "tool-call-1", "model_request_id": null, "operation_id": "op-project-answer-0001"},
+  "data": {"status": "completed", "summary": "已完成项目记忆召回。", "capability_id": "memory.recall", "payload_ref": "crp://default/ai/payloads/payload-1", "receipt_ref": "crp://default/operations/op-project-answer-0001", "evidence_refs": ["crp://default/recall/results/recall-1"], "error_code": null, "retryable": false},
+  "occurred_at": "2026-08-23T04:00:01Z"
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://christmas-os.local/contracts/ai/image-generation-request.schema.json",
+  "title": "Ephemeral Image Generation Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "operation_id", "invocation_id", "prompt", "parameters", "privacy_scope"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "operation_id": {"$ref": "#/$defs/id"},
+    "invocation_id": {"$ref": "#/$defs/id"},
+    "prompt": {"type": "string", "minLength": 1, "maxLength": 16000},
+    "parameters": {"type": "object", "additionalProperties": true},
+    "privacy_scope": {"enum": ["local_only", "remote_allowed"]},
+    "input_image_b64": {"type": ["string", "null"]}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"}
+  }
+}

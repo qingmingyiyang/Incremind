@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/knowledge_item.schema.json",
+  "x-contract-version": "1.0",
+  "$defs": {
+    "KnowledgeEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "chunk_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Chunk Ids",
+          "type": "array"
+        },
+        "frame_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Frame Ids",
+          "type": "array"
+        },
+        "timestamps": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Timestamps",
+          "type": "array"
+        },
+        "quotes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Quotes",
+          "type": "array"
+        }
+      },
+      "title": "KnowledgeEvidence",
+      "type": "object"
+    },
+    "KnowledgeIndex": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "default": false,
+          "title": "Available",
+          "type": "boolean"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords",
+          "type": "array"
+        },
+        "chunk_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Chunk Ids",
+          "type": "array"
+        }
+      },
+      "title": "KnowledgeIndex",
+      "type": "object"
+    },
+    "KnowledgeLinks": {
+      "additionalProperties": false,
+      "properties": {
+        "related_items": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Related Items",
+          "type": "array"
+        },
+        "parent_report": {
+          "default": "",
+          "title": "Parent Report",
+          "type": "string"
+        },
+        "child_reports": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Child Reports",
+          "type": "array"
+        },
+        "linked_video_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Linked Video Ids",
+          "type": "array"
+        },
+        "asset_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Asset Ids",
+          "type": "array"
+        }
+      },
+      "title": "KnowledgeLinks",
+      "type": "object"
+    },
+    "KnowledgeSource": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "bilibili",
+            "manual",
+            "clipboard",
+            "file",
+            "report",
+            "qa"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "url": {
+          "default": "",
+          "title": "Url",
+          "type": "string"
+        },
+        "bvid": {
+          "default": "",
+          "title": "Bvid",
+          "type": "string"
+        },
+        "local_path": {
+          "default": "",
+          "title": "Local Path",
+          "type": "string"
+        },
+        "report_id": {
+          "default": "",
+          "title": "Report Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "KnowledgeSource",
+      "type": "object"
+    },
+    "KnowledgeStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "in_inbox": {
+          "default": false,
+          "title": "In Inbox",
+          "type": "boolean"
+        },
+        "in_daily": {
+          "default": false,
+          "title": "In Daily",
+          "type": "boolean"
+        },
+        "archived": {
+          "default": false,
+          "title": "Archived",
+          "type": "boolean"
+        },
+        "favorite": {
+          "default": false,
+          "title": "Favorite",
+          "type": "boolean"
+        },
+        "high_value": {
+          "default": false,
+          "title": "High Value",
+          "type": "boolean"
+        },
+        "need_review": {
+          "default": false,
+          "title": "Need Review",
+          "type": "boolean"
+        }
+      },
+      "title": "KnowledgeStatus",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "series_id": {
+      "default": "default",
+      "title": "Series Id",
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "video",
+        "note",
+        "clip",
+        "thought",
+        "action",
+        "question",
+        "report"
+      ],
+      "title": "Type",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "content": {
+      "default": "",
+      "title": "Content",
+      "type": "string"
+    },
+    "summary": {
+      "default": "",
+      "title": "Summary",
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "title": "Updated At",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/KnowledgeSource"
+    },
+    "evidence": {
+      "$ref": "#/$defs/KnowledgeEvidence"
+    },
+    "links": {
+      "$ref": "#/$defs/KnowledgeLinks"
+    },
+    "status": {
+      "$ref": "#/$defs/KnowledgeStatus"
+    },
+    "index": {
+      "$ref": "#/$defs/KnowledgeIndex"
+    }
+  },
+  "required": [
+    "type",
+    "title",
+    "source"
+  ],
+  "title": "KnowledgeItem",
+  "type": "object"
+}

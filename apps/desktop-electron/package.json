@@ -1,0 +1,132 @@
+{
+  "name": "chriptmas-os-electron",
+  "private": true,
+  "version": "0.2.0",
+  "license": "AGPL-3.0-only",
+  "description": "Chriptmas OS — Personal AI Memory Desk (Electron 桌面壳)",
+  "main": "src/main.cjs",
+  "scripts": {
+    "doctor": "node src/doctor.cjs",
+    "test": "node --test test/*.test.cjs",
+    "dev": "electron .",
+    "smoke:file-picker": "electron src/file-picker-smoke.cjs",
+    "smoke:platform-adapter": "electron src/platform-adapter-smoke.cjs",
+    "start": "electron .",
+    "show:version": "electron --version",
+    "build:frontend": "cd ../../src/frontend && npm run build",
+    "build:dev": "npm run verify:companion-pack && npm run build:frontend",
+    "copy:frontend": "node scripts/copy-frontend-dist.cjs",
+    "stage:sidecar": "node scripts/stage-sidecar.cjs",
+    "stage:manual": "node scripts/stage-manual.cjs",
+    "profile:sidecar": "node scripts/profile-sidecar.cjs",
+    "profile:long-media": "node scripts/profile-long-media.cjs",
+    "verify:sidecar": "node scripts/verify-sidecar.cjs",
+    "smoke:packaged": "node scripts/smoke-packaged.cjs",
+    "test:e2e:electron": "node scripts/e2e-electron.cjs",
+    "test:e2e:realtime-asr-auth": "node scripts/e2e-electron.cjs --workbench-realtime-asr-auth-only",
+    "test:e2e:mixed-media": "node scripts/e2e-electron.cjs --mixed-media-e2e-only",
+    "test:e2e:application-skill": "node scripts/e2e-electron.cjs --application-skill-only",
+    "test:e2e:desktop-lifecycle": "node scripts/e2e-electron.cjs --desktop-lifecycle-only",
+    "test:e2e:shutdown-handshake": "node scripts/e2e-electron.cjs --shutdown-handshake-only",
+    "test:e2e:ai-turn-kill-recovery": "node scripts/e2e-electron.cjs --ai-turn-kill-recovery-only",
+    "test:e2e:renderer-crash-cursor": "node scripts/e2e-electron.cjs --renderer-crash-cursor-only",
+    "test:e2e:packaged-soak": "node scripts/e2e-electron.cjs --packaged-soak-only",
+    "test:e2e:packaged-public-mcp": "node scripts/e2e-electron.cjs --packaged-public-mcp-only",
+    "test:e2e:plugin-hook-fault": "node scripts/e2e-electron.cjs --plugin-hook-electron-fault-only",
+    "test:e2e:xhs-controlled-credential": "node scripts/e2e-electron.cjs --xhs-controlled-credential-only",
+    "test:e2e:xhs-controlled-binary-revocation": "node scripts/e2e-electron.cjs --xhs-controlled-binary-revocation-only",
+    "test:e2e:xhs-controlled-bundled-ocr": "node scripts/e2e-electron.cjs --xhs-controlled-bundled-ocr-only",
+    "verify:build": "node scripts/verify-build.cjs",
+    "verify:companion-pack": "node scripts/verify-companion-pack.cjs",
+    "build:candidate": "npm run build:windows",
+    "gate:release": "npm run build:windows:gate",
+    "build:windows": "node scripts/build-windows-candidate.cjs --dir",
+    "build:windows:gate": "node scripts/build-windows-candidate.cjs --dir --gate",
+    "build:windows:fast": "node scripts/build-windows-candidate.cjs --dir --fast",
+    "build:windows:refresh-candidate-cache": "node scripts/build-windows-candidate.cjs --dir --refresh-candidate-cache",
+    "build:windows:refresh-sidecar-cache": "node scripts/build-windows-candidate.cjs --dir --refresh-sidecar-cache",
+    "build:windows:installer": "node scripts/build-windows-candidate.cjs --installer",
+    "build:windows:verify": "node scripts/build-windows-candidate.cjs --verify-only --gate",
+    "prebuild": "npm run verify:companion-pack && npm run build:frontend && npm run copy:frontend && npm run stage:manual && npm run stage:sidecar -- --clean",
+    "build": "node scripts/build.cjs --win",
+    "build:dir": "npm run prebuild && node scripts/build.cjs --win --dir && npm run verify:build",
+    "postbuild": "node scripts/verify-build.cjs"
+  },
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.chriptmas.os",
+    "productName": "Chriptmas OS",
+    "asar": false,
+    "afterPack": "./scripts/sidecar-transfer.cjs",
+    "directories": {
+      "output": "release",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "src/**/*",
+      "frontend-dist/**/*",
+      "package.json",
+      "!release/**/*",
+      "!scripts/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": ".candidate-identity-stage",
+        "to": ".",
+        "filter": [
+          "candidate-identity.json"
+        ]
+      },
+      {
+        "from": "../../src/frontend/public/mascots/items",
+        "to": "companion-assets/items",
+        "filter": ["*.svg"]
+      },
+      {
+        "from": ".manual-stage",
+        "to": "manual",
+        "filter": [
+          "readme.md"
+        ]
+      },
+      {
+        "from": "../../config/companion",
+        "to": "companion-config",
+        "filter": [
+          "behaviors.json",
+          "appearance.json",
+          "economy-rules.json",
+          "items.json",
+          "shop.json"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "build-resources/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "ChriptmasOS-${version}-setup.exe",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Chriptmas OS",
+      "installerIcon": "build-resources/icon.ico",
+      "uninstallerIcon": "build-resources/icon.ico",
+      "installerHeaderIcon": "build-resources/icon.ico"
+    }
+  }
+}

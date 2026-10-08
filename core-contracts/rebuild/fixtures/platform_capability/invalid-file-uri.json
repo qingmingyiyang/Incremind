@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "name": "documents_dir",
+  "platform": "macos",
+  "adapter_id": "desktop_macos",
+  "available": true,
+  "permission_required": false,
+  "permission": "not_applicable",
+  "provided_uri": "file:///Users/example/Documents",
+  "error": null,
+  "checked_at": "2026-06-29T11:06:00+08:00"
+}

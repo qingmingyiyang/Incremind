@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0.0",
+  "id": "recall-request-cross-project-001",
+  "query": "对比 Alpha 和 Beta 的输出结构差异。",
+  "project_id": "project-alpha",
+  "scope": "cross_project",
+  "layers": ["l3_project_skill", "l3_series_memory", "l2_scenario", "l1_atom"],
+  "trust_filter": {
+    "include": ["trusted", "user_confirmed"],
+    "minimum_confidence": 0.7,
+    "allow_imported_unverified": false
+  },
+  "budget": {
+    "max_hits": 10,
+    "max_tokens": 9000,
+    "per_layer_limits": {
+      "l3_project_skill": 2,
+      "l3_persona": 0,
+      "l3_series_memory": 2,
+      "l2_scenario": 3,
+      "l1_atom": 3,
+      "l0_source": 0
+    }
+  },
+  "cross_project": {
+    "allowed": true,
+    "grant_id": "grant-alpha-beta-001",
+    "project_ids": ["project-beta"]
+  },
+  "required_context_refs": [
+    {
+      "context_id": "ctx-project-skill-alpha",
+      "kind": "project_skill",
+      "object_id": "skill-project-alpha",
+      "uri": "crp://default/projects/project-alpha/project-skill.json",
+      "reason": "跨项目召回仍以当前项目 Skill 为默认上下文。"
+    }
+  ],
+  "created_at": "2026-06-29T15:05:00+08:00"
+}

@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/rebuild/companion/action-request.schema.json",
+  "title": "Companion Action Request",
+  "description": "受信 renderer 经最小 preload 提交给 Electron main 的固定动作请求。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "occurred_at", "source", "payload"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0.0"},
+    "request_id": {"$ref": "#/$defs/id"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "source": {
+      "type": "string",
+      "enum": ["pet_renderer", "overlay_renderer", "main_renderer", "electron_main"]
+    },
+    "payload": {
+      "oneOf": [
+        {"$ref": "#/$defs/noArgumentAction"},
+        {"$ref": "#/$defs/openPanelAction"},
+        {"$ref": "#/$defs/chatSubmitAction"},
+        {"$ref": "#/$defs/historyDeleteAction"},
+        {"$ref": "#/$defs/overlayBoundAction"},
+        {"$ref": "#/$defs/eventPerformAction"}
+      ]
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9:_-]{0,127}$"
+    },
+    "noArgumentAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_id"],
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "enum": [
+            "companion.context_menu.open",
+            "companion.open_center",
+            "companion.chat.open",
+            "companion.inventory.open",
+            "companion.focus.open",
+            "companion.schedule.open",
+            "companion.note.create",
+            "companion.help.open",
+            "companion.settings.open",
+            "companion.pet.hide",
+            "companion.pet.show",
+            "app.quit"
+          ]
+        }
+      }
+    },
+    "openPanelAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_id", "panel"],
+      "properties": {
+        "action_id": {"type": "string", "const": "companion.open_panel"},
+        "panel": {
+          "type": "string",
+          "enum": [
+            "chat",
+            "history",
+            "character",
+            "master_profile",
+            "schedule",
+            "focus",
+            "inventory",
+            "shop",
+            "status",
+            "launchers",
+            "privacy",
+            "voice_vision",
+            "help_data"
+          ]
+        }
+      }
+    },
+    "chatSubmitAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_id", "text", "context_epoch"],
+      "properties": {
+        "action_id": {"type": "string", "const": "companion.chat.submit"},
+        "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "context_epoch": {"type": "integer", "minimum": 1},
+        "session_id": {
+          "oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]
+        }
+      }
+    },
+    "historyDeleteAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_id", "message_id", "expected_revision", "confirmation_token"],
+      "properties": {
+        "action_id": {"type": "string", "const": "companion.history.delete"},
+        "message_id": {"$ref": "#/$defs/id"},
+        "expected_revision": {"type": "integer", "minimum": 1},
+        "confirmation_token": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{16,128}$"
+        }
+      }
+    },
+    "overlayBoundAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_id", "event_id"],
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "enum": [
+            "companion.open_panel",
+            "companion.reminder.acknowledge",
+            "companion.overlay.dismiss",
+            "companion.chat.retry"
+          ]
+        },
+        "event_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "eventPerformAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_id", "event_id", "choice_id"],
+      "properties": {
+        "action_id": {"type": "string", "const": "companion.event.perform"},
+        "event_id": {"$ref": "#/$defs/id"},
+        "choice_id": {"$ref": "#/$defs/id"}
+      }
+    }
+  }
+}

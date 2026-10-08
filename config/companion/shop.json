@@ -1,0 +1,1 @@
+{"schema_version":1,"offers":[{"id":"offer:cookie","item_id":"food:cookie","price":4,"available":true},{"id":"offer:apple","item_id":"food:apple","price":3,"available":true},{"id":"offer:red-scarf","item_id":"outfit:red-scarf","price":30,"available":true},{"id":"offer:night-frame","item_id":"frame:night","price":20,"available":true}]}

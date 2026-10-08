@@ -1,0 +1,104 @@
+{
+  "id": "project-skill-publication-draft-aa2d5bb0033da80c54b9bb1e",
+  "schema_version": "1.0.0",
+  "target_layer": "project_skill",
+  "source_candidate_id": "candidate-alpha-001",
+  "project_id": "project-alpha",
+  "skill_id": "skill-project-alpha",
+  "expected_project_skill_revision": 0,
+  "structured_payload": {
+    "schema_version": "1.0.0",
+    "id": "skill-project-alpha",
+    "project_id": "project-alpha",
+    "name": "更新优先 patch 既有结构，并保留可追溯来源。",
+    "purpose": "更新优先 patch 既有结构，并保留可追溯来源。",
+    "markdown_uri": "crp://default/projects/project-alpha/project-skill.md",
+    "json_uri": "crp://default/projects/project-alpha/project-skill.json",
+    "markdown_revision": 1,
+    "json_revision": 1,
+    "required_context": [
+      {
+        "context_id": "context-candidate-alpha-001",
+        "kind": "source",
+        "object_id": "source-alpha-001",
+        "uri": "crp://default/sources/source-alpha-001.json",
+        "reason": "用户确认该项目需要连续维护既有输出结构。",
+        "stale": false
+      }
+    ],
+    "output_rules": [
+      {
+        "rule_id": "rule-candidate-alpha-001",
+        "origin": "ai",
+        "rule": "更新优先 patch 既有结构，并保留可追溯来源。",
+        "priority": "must",
+        "source_refs": [
+          {
+            "source_id": "source-alpha-001",
+            "locator": "char:0-64"
+          }
+        ],
+        "locked_by_user": false
+      }
+    ],
+    "style_preferences": {
+      "voice": "直接、具体、可执行",
+      "format_defaults": ["Markdown", "分节标题", "来源引用"]
+    },
+    "update_rules": {
+      "patch_strategy": "patch_existing_first",
+      "user_edit_policy": "user_wins",
+      "allowed_auto_updates": []
+    },
+    "source_refs": [
+      {
+        "source_id": "source-alpha-001",
+        "locator": "char:0-64"
+      }
+    ],
+    "evidence_refs": [
+      {
+        "source_id": "source-alpha-001",
+        "locator": "char:0-64"
+      }
+    ],
+    "decision_log": [
+      {
+        "decision_id": "decision-candidate-alpha-001-r1",
+        "reason": "用户确认该项目需要连续维护既有输出结构。",
+        "actor": "user",
+        "created_at": "2026-07-12T10:00:00+08:00"
+      }
+    ],
+    "conflict": {
+      "status": "none",
+      "conflict_refs": [],
+      "resolution": null
+    },
+    "revision": 1,
+    "status": "draft",
+    "trust_status": "system_generated",
+    "created_at": "2026-07-12T10:00:00+08:00",
+    "updated_at": "2026-07-12T10:00:00+08:00"
+  },
+  "markdown": "# 更新优先 patch 既有结构，并保留可追溯来源。\n\n更新优先 patch 既有结构，并保留可追溯来源。\n",
+  "review_ref": "crp://default/memory-candidates/candidate-alpha-001.json#review",
+  "reviewed_by": "user",
+  "reviewed_at": "2026-07-12T10:00:00+08:00",
+  "review_reason": "用户确认该项目需要连续维护既有输出结构。",
+  "source_refs": [
+    {
+      "source_id": "source-alpha-001",
+      "locator": "char:0-64"
+    }
+  ],
+  "evidence_refs": [
+    {
+      "source_id": "source-alpha-001",
+      "locator": "char:0-64"
+    }
+  ],
+  "draft_digest": "aa2d5bb0033da80c54b9bb1e9f1503f56003e0f17690a9a3b3763275a4012b2e",
+  "created_at": "2026-07-12T10:00:00+08:00",
+  "updated_at": "2026-07-12T10:00:00+08:00"
+}

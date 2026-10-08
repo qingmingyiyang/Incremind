@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "name": "system_info",
+  "platform": "windows",
+  "adapter_id": "desktop_windows",
+  "available": true,
+  "permission_required": false,
+  "permission": "not_applicable",
+  "provided_uri": null,
+  "error": null,
+  "checked_at": "2026-06-30T23:59:00+08:00"
+}

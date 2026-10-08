@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://christmas-os.local/contracts/ai/ppt-master-fixed-request.schema.json",
+  "title": "Fixed PPTX Generation Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "operation_id", "slides"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "operation_id": {"$ref": "#/$defs/id"},
+    "slides": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"$ref": "#/$defs/slide"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"},
+    "text": {"type": "string", "minLength": 1, "maxLength": 600},
+    "slide": {"type": "object", "additionalProperties": false, "required": ["title"], "properties": {"title": {"$ref": "#/$defs/text"}, "body": {"type": "string", "maxLength": 2400}}}
+  }
+}

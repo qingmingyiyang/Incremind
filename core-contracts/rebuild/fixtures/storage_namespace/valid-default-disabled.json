@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0.0",
+  "namespace_id": "default",
+  "storage_version": 1,
+  "app_root_uri": "platform-app-data://chriptmas-replay",
+  "root_uri": "crp://default/",
+  "reference_root_uri": "crp-ref://default/",
+  "legacy_access": "disabled",
+  "legacy_root_uri": null,
+  "write_policy": {
+    "atomic_object_writes": true,
+    "transactional_metadata": true,
+    "legacy_write_allowed": false
+  },
+  "backup_policy": {
+    "enabled": true,
+    "snapshot_uri_prefix": "crp://default/backups/",
+    "retention_count": 5,
+    "pre_restore_required": true
+  },
+  "migration": {
+    "status": "idle",
+    "from_version": null,
+    "target_version": 1,
+    "manifest_uri": null,
+    "rollback_snapshot_uri": null
+  },
+  "created_at": "2026-06-29T14:00:00Z",
+  "updated_at": "2026-06-29T14:00:00Z"
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "id": "asset-pdf-001",
+  "source_id": "source-file-001",
+  "uri": "crp://default/assets/asset-pdf-001",
+  "content_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+  "size_bytes": 4096,
+  "media_type": "application/pdf",
+  "storage_mode": "copy",
+  "availability": "available",
+  "availability_reason": null,
+  "created_at": "2026-06-29T13:00:00Z",
+  "verified_at": "2026-06-29T13:00:01Z",
+  "metadata": {
+    "original_filename": "research.pdf"
+  }
+}

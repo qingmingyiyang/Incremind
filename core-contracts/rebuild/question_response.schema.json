@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/question_response.schema.json",
+  "title": "WorkbenchQuestionResponse",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "status", "answer", "evidence_items", "source_links", "error", "privacy"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "status": {"type": "string", "enum": ["answered"]},
+    "answer": {"type": "object", "additionalProperties": false, "required": ["status", "text"], "properties": {"status": {"enum": ["evidence_found", "insufficient_evidence", "failed"]}, "text": {"type": "string"}}},
+    "evidence_items": {"type": "array", "items": {"type": "object", "additionalProperties": true, "required": ["layer", "object_id", "source_refs", "snippet", "explanation", "score", "quality"], "properties": {"layer": {"type": "string"}, "object_id": {"type": "string"}, "source_refs": {"type": "array"}, "snippet": {"type": "string"}, "explanation": {"type": "string"}, "score": {"type": "number", "minimum": 0, "maximum": 1}, "quality": {"type": "string"}}}},
+    "source_links": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["source_id", "locator", "ref"], "properties": {"source_id": {"type": "string"}, "locator": {"type": "string"}, "ref": {"type": "string", "pattern": "^crp://"}}}},
+    "deep_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "layers", "ephemeral", "content_persisted", "provider_egress_authorized"],
+      "properties": {
+        "count": {"type": "integer", "minimum": 0, "maximum": 12},
+        "layers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["r2_structured_content", "r3_source_evidence"]}
+        },
+        "ephemeral": {"const": true},
+        "content_persisted": {"const": false},
+        "provider_egress_authorized": {"type": "boolean"}
+      }
+    },
+    "error": {"type": ["null", "object"]},
+    "privacy": {"type": "object", "additionalProperties": false, "required": ["mode", "source_path_exposed", "provider_call_performed"], "properties": {"mode": {"enum": ["local_only", "provider_evidence_only"]}, "source_path_exposed": {"const": false}, "provider_call_performed": {"type": "boolean"}, "deep_evidence_ephemeral": {"const": true}, "deep_evidence_persisted": {"const": false}, "provider_egress_authorized": {"type": "boolean"}}}
+  }
+}

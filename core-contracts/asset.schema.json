@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/asset.schema.json",
+  "x-contract-version": "1.0",
+  "additionalProperties": false,
+  "properties": {
+    "asset_id": {
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "series_id": {
+      "title": "Series Id",
+      "type": "string"
+    },
+    "filename": {
+      "title": "Filename",
+      "type": "string"
+    },
+    "media_type": {
+      "default": "application/octet-stream",
+      "title": "Media Type",
+      "type": "string"
+    },
+    "size": {
+      "minimum": 0,
+      "title": "Size",
+      "type": "integer"
+    },
+    "sha256": {
+      "title": "Sha256",
+      "type": "string"
+    },
+    "relative_path": {
+      "title": "Relative Path",
+      "type": "string"
+    },
+    "extracted_text_path": {
+      "default": "",
+      "title": "Extracted Text Path",
+      "type": "string"
+    },
+    "extraction_status": {
+      "default": "unknown",
+      "title": "Extraction Status",
+      "type": "string"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "knowledge_item_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Knowledge Item Ids",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "manual_summary": {
+      "default": "",
+      "title": "Manual Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "asset_id",
+    "series_id",
+    "filename",
+    "size",
+    "sha256",
+    "relative_path"
+  ],
+  "title": "AssetMetadata",
+  "type": "object"
+}

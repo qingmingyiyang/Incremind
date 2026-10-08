@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/ai/prompt-cache-receipt.schema.json",
+  "title": "AI Prompt Cache Receipt",
+  "description": "Provider-reported prompt-cache metadata bound to one frozen routed model request. It deliberately excludes prompts, messages, outputs, endpoints, paths, credentials, cache keys, and raw provider responses.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "receipt_id", "turn_id", "model_request_id",
+    "routing_snapshot_revision", "prompt_cache_scope_identity", "provider_id", "model_id",
+    "cache_status", "source_format", "cache_read_input_tokens", "cache_write_input_tokens",
+    "uncached_input_tokens", "input_recorded", "output_recorded"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "receipt_id": {"type": "string", "pattern": "^prompt-cache-receipt-[A-Za-z0-9._~-]{8,112}$"},
+    "turn_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "model_request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "routing_snapshot_revision": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "prompt_cache_scope_identity": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "provider_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "model_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:~/-]{0,127}$"},
+    "cache_status": {"enum": ["reported", "unavailable"]},
+    "source_format": {"enum": ["provider_usage", "unavailable"]},
+    "cache_read_input_tokens": {"type": ["integer", "null"], "minimum": 0, "maximum": 2147483647},
+    "cache_write_input_tokens": {"type": ["integer", "null"], "minimum": 0, "maximum": 2147483647},
+    "uncached_input_tokens": {"type": ["integer", "null"], "minimum": 0, "maximum": 2147483647},
+    "input_recorded": {"const": false},
+    "output_recorded": {"const": false}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"cache_status": {"const": "reported"}}},
+      "then": {
+        "properties": {"source_format": {"const": "provider_usage"}},
+        "anyOf": [
+          {"properties": {"cache_read_input_tokens": {"type": "integer"}}},
+          {"properties": {"cache_write_input_tokens": {"type": "integer"}}},
+          {"properties": {"uncached_input_tokens": {"type": "integer"}}}
+        ]
+      }
+    },
+    {
+      "if": {"properties": {"cache_status": {"const": "unavailable"}}},
+      "then": {
+        "properties": {
+          "source_format": {"const": "unavailable"},
+          "cache_read_input_tokens": {"type": "null"},
+          "cache_write_input_tokens": {"type": "null"},
+          "uncached_input_tokens": {"type": "null"}
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0.0",
+  "id": "atom-002",
+  "source_id": "source-note-001",
+  "content": "这是一条待确认的系统抽取事实。",
+  "atom_type": "fact",
+  "tags": [
+    "candidate"
+  ],
+  "confidence": 0.66,
+  "source_refs": [
+    {
+      "source_id": "source-note-001",
+      "locator": "line:3"
+    }
+  ],
+  "revision": 1,
+  "created_at": "2026-06-29T12:01:00+08:00",
+  "updated_at": "2026-06-29T12:01:00+08:00",
+  "trust_status": "system_generated"
+}

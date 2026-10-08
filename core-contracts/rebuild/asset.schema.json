@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/asset.schema.json",
+  "title": "Asset",
+  "description": "Source 对应的原档、快照、附件或媒体实体。URI 只表达受控逻辑位置，不保存操作系统绝对路径。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "source_id",
+    "uri",
+    "content_hash",
+    "size_bytes",
+    "media_type",
+    "storage_mode",
+    "availability",
+    "availability_reason",
+    "created_at",
+    "verified_at",
+    "metadata"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "uri": {
+      "type": "string",
+      "description": "copy 使用 crp://，reference 使用 crp-ref://；两者都由 Storage Provider 解析。",
+      "pattern": "^crp(?:-ref)?://[a-z0-9][a-z0-9._-]*/assets/[A-Za-z0-9][A-Za-z0-9._~-]*$"
+    },
+    "content_hash": {
+      "type": "string",
+      "description": "捕获或最近一次成功校验时的 SHA-256，小写十六进制。",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "media_type": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+    },
+    "storage_mode": {
+      "type": "string",
+      "enum": [
+        "copy",
+        "reference"
+      ]
+    },
+    "availability": {
+      "type": "string",
+      "enum": [
+        "available",
+        "missing",
+        "permission_denied",
+        "hash_mismatch",
+        "offline",
+        "unknown"
+      ]
+    },
+    "availability_reason": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "verified_at": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "format": "date-time"
+        }
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "storage_mode": {
+            "const": "copy"
+          }
+        },
+        "required": [
+          "storage_mode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "uri": {
+            "pattern": "^crp://[a-z0-9][a-z0-9._-]*/assets/[A-Za-z0-9][A-Za-z0-9._~-]*$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "storage_mode": {
+            "const": "reference"
+          }
+        },
+        "required": [
+          "storage_mode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "uri": {
+            "pattern": "^crp-ref://[a-z0-9][a-z0-9._-]*/assets/[A-Za-z0-9][A-Za-z0-9._~-]*$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "availability": {
+            "const": "available"
+          }
+        },
+        "required": [
+          "availability"
+        ]
+      },
+      "then": {
+        "properties": {
+          "availability_reason": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "availability_reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  ]
+}

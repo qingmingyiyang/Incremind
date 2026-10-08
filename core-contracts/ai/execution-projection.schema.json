@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/ai/execution-projection.schema.json",
+  "title": "AI Execution Projection",
+  "$defs": {
+    "status": {
+      "enum": ["accepted", "running", "waiting_approval", "completed", "failed", "cancelled"]
+    },
+    "stageKind": {
+      "enum": ["preparing", "planning", "using_tool", "waiting_approval", "completed", "failed", "cancelled", "review_required"]
+    },
+    "stageStatus": {
+      "enum": ["pending", "running", "waiting", "completed", "failed", "cancelled", "review_required"]
+    },
+    "currentStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "status", "label", "detail"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/stageKind"},
+        "status": {"$ref": "#/$defs/stageStatus"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 80},
+        "detail": {"type": "string", "minLength": 1, "maxLength": 160}
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "status", "label", "completed_count"],
+      "properties": {
+        "kind": {"enum": ["context", "planning", "tool", "approval", "result"]},
+        "status": {"$ref": "#/$defs/stageStatus"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 80},
+        "completed_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "expert": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selected_expert", "selection_reason", "current_phase", "evidence_source_count", "receipt_status"],
+      "properties": {
+        "selected_expert": {"type": "string", "minLength": 1, "maxLength": 128},
+        "selection_reason": {"type": "string", "minLength": 1, "maxLength": 120},
+        "current_phase": {"enum": ["selected", "bound", "executing", "awaiting_job", "grounded", "completed"]},
+        "evidence_source_count": {"type": "integer", "minimum": 0, "maximum": 999},
+        "receipt_status": {"enum": ["pending", "completed"]}
+      }
+    },
+    "recorded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_id", "model_id", "usage", "input", "output"],
+      "properties": {
+        "provider_id": {"type": "boolean"},
+        "model_id": {"type": "boolean"},
+        "usage": {"type": "boolean"},
+        "input": {"type": "boolean"},
+        "output": {"type": "boolean"}
+      }
+    },
+    "modelWireAttempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt_number", "status", "provider_id", "model_id", "started_at", "completed_at", "duration_ms", "usage_status", "usage", "cache_status", "cache_metadata", "error_code"],
+      "properties": {
+        "attempt_number": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "status": {"enum": ["succeeded", "failed_transport", "consumer_cancelled"]},
+        "provider_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "model_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "execution_location": {"enum": ["remote", "local_loopback", null]},
+        "started_at": {"type": "string", "format": "date-time"},
+        "completed_at": {"type": "string", "format": "date-time"},
+        "duration_ms": {"type": "integer", "minimum": 0, "maximum": 86400000},
+        "usage_status": {"enum": ["reported", "unavailable"]},
+        "usage": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["input_tokens", "output_tokens", "total_tokens"],
+          "properties": {
+            "input_tokens": {"type": "integer", "minimum": 0},
+            "output_tokens": {"type": "integer", "minimum": 0},
+            "total_tokens": {"type": "integer", "minimum": 0}
+          }
+        },
+        "cache_status": {"enum": ["reported", "unavailable"]},
+        "cache_metadata": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["source_format", "cache_read_input_tokens", "cache_write_input_tokens", "uncached_input_tokens"],
+          "properties": {
+            "source_format": {"const": "provider_usage"},
+            "cache_read_input_tokens": {"type": ["integer", "null"], "minimum": 0},
+            "cache_write_input_tokens": {"type": ["integer", "null"], "minimum": 0},
+            "uncached_input_tokens": {"type": ["integer", "null"], "minimum": 0}
+          }
+        },
+        "error_code": {"type": ["string", "null"], "maxLength": 128}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"usage_status": {"const": "reported"}}},
+          "then": {"properties": {"usage": {"type": "object"}}}
+        },
+        {
+          "if": {"properties": {"usage_status": {"const": "unavailable"}}},
+          "then": {"properties": {"usage": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"cache_status": {"const": "reported"}}},
+          "then": {"properties": {"cache_metadata": {"type": "object"}}}
+        },
+        {
+          "if": {"properties": {"cache_status": {"const": "unavailable"}}},
+          "then": {"properties": {"cache_metadata": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "succeeded"}}},
+          "then": {"properties": {"error_code": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"status": {"enum": ["failed_transport", "consumer_cancelled"]}}},
+          "then": {"properties": {"error_code": {"type": "string"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "consumer_cancelled"}}},
+          "then": {"properties": {"error_code": {"const": "ai.consumer_cancelled"}}}
+        }
+      ]
+    },
+    "modelStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "parent_tool_call_id", "model_request_id", "status", "requested_at", "completed_at", "metadata_status", "receipt_status", "provider_id", "model_id", "usage_status", "usage", "routing_status", "routing", "prompt_cache_status", "prompt_cache", "wire_attempts_status", "wire_attempts", "recorded"],
+      "properties": {
+        "step_id": {"type": ["string", "null"], "maxLength": 128},
+        "parent_tool_call_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+        "model_request_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "status": {"enum": ["requested", "completed", "failed", "cancelled", "timed_out", "incomplete"]},
+        "requested_at": {"type": ["string", "null"], "format": "date-time"},
+        "completed_at": {"type": ["string", "null"], "format": "date-time"},
+        "metadata_status": {"enum": ["recorded", "not_recorded"]},
+        "receipt_status": {"enum": ["recorded", "not_recorded"]},
+        "provider_id": {"type": ["string", "null"], "maxLength": 128},
+        "model_id": {"type": ["string", "null"], "maxLength": 128},
+        "usage_status": {"enum": ["recorded", "not_recorded"]},
+        "usage": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["input_tokens", "output_tokens", "total_tokens"],
+          "properties": {
+            "input_tokens": {"type": "integer", "minimum": 0},
+            "output_tokens": {"type": "integer", "minimum": 0},
+            "total_tokens": {"type": "integer", "minimum": 0}
+          }
+        },
+        "routing_status": {"enum": ["recorded", "not_recorded"]},
+        "routing": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["tier", "provider_id", "model_id", "adapter_kind", "route_revision"],
+          "properties": {
+            "tier": {"enum": ["fast", "standard", "deep", "vision"]},
+            "provider_id": {"type": "string", "minLength": 1, "maxLength": 160},
+            "model_id": {"type": "string", "minLength": 1, "maxLength": 200},
+            "adapter_kind": {"enum": ["openai-compatible", "openai-compatible-vision"]},
+            "route_revision": {"type": "integer", "minimum": 1}
+          }
+        },
+        "prompt_cache_status": {"enum": ["recorded", "not_recorded"]},
+        "prompt_cache": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["status", "source", "cache_read_input_tokens", "cache_write_input_tokens", "uncached_input_tokens"],
+          "properties": {
+            "status": {"enum": ["reported", "unavailable"]},
+            "source": {"enum": ["provider_usage", "unavailable"]},
+            "cache_read_input_tokens": {"type": ["integer", "null"], "minimum": 0},
+            "cache_write_input_tokens": {"type": ["integer", "null"], "minimum": 0},
+            "uncached_input_tokens": {"type": ["integer", "null"], "minimum": 0}
+          }
+        },
+        "dispatch_authority_status": {"enum": ["recorded", "not_recorded"]},
+        "dispatch_authority": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["wait_ms", "hold_ms", "outcome"],
+              "properties": {
+                "wait_ms": {"type": "integer", "minimum": 0, "maximum": 86400000},
+                "hold_ms": {"type": "integer", "minimum": 0, "maximum": 86400000},
+                "outcome": {"enum": ["completed", "failed", "timed_out"]}
+              }
+            }
+          ]
+        },
+        "wire_attempts_status": {"enum": ["recorded", "not_recorded"]},
+        "wire_attempts": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/modelWireAttempt"}},
+        "recorded": {"$ref": "#/$defs/recorded"}
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt", "status", "error_code", "retryable", "effect_certainty", "backoff_ms"],
+      "properties": {
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 10},
+        "status": {"enum": ["running", "retry_scheduled", "completed", "failed", "cancelled", "timed_out", "unknown_effect"]},
+        "error_code": {"type": ["string", "null"], "maxLength": 128},
+        "retryable": {"type": "boolean"},
+        "effect_certainty": {"enum": ["confirmed_none", "confirmed_applied", "unknown", "not_recorded"]},
+        "backoff_ms": {"type": ["integer", "null"], "minimum": 0, "maximum": 300000}
+      }
+    },
+    "boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "requires_receipt", "redaction_required", "reason_codes"],
+      "properties": {
+        "status": {"enum": ["allow", "allow_redacted", "ask", "deny", "not_recorded"]},
+        "requires_receipt": {"type": "boolean"},
+        "redaction_required": {"type": "boolean"},
+        "reason_codes": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128}
+        }
+      }
+    },
+    "toolStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "tool_call_id", "capability_id", "status", "execution_mode", "idempotency", "timeout_ms", "attempts", "boundary", "receipt_available", "evidence_count", "payload_available"],
+      "properties": {
+        "step_id": {"type": ["string", "null"], "maxLength": 128},
+        "tool_call_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "capability_id": {"type": ["string", "null"], "maxLength": 128},
+        "status": {"enum": ["requested", "waiting_approval", "running", "retrying", "completed", "failed", "cancelled", "unknown_effect"]},
+        "execution_mode": {"enum": ["parallel", "exclusive", "not_recorded"]},
+        "idempotency": {"enum": ["idempotent", "verify_before_retry", "never_retry", "not_recorded"]},
+        "timeout_ms": {"type": ["integer", "null"], "minimum": 1, "maximum": 3600000},
+        "attempts": {"type": "array", "maxItems": 10, "items": {"$ref": "#/$defs/attempt"}},
+        "boundary": {"$ref": "#/$defs/boundary"},
+        "receipt_available": {"type": "boolean"},
+        "evidence_count": {"type": "integer", "minimum": 0, "maximum": 256},
+        "payload_available": {"type": "boolean"}
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "event_type", "actor", "occurred_at", "error_code"],
+      "properties": {
+        "sequence": {"type": "integer", "minimum": 1},
+        "event_type": {"type": "string", "minLength": 1, "maxLength": 128},
+        "actor": {"type": "string", "minLength": 1, "maxLength": 32},
+        "occurred_at": {"type": "string", "format": "date-time"},
+        "error_code": {"type": ["string", "null"], "maxLength": 128}
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "turn_id", "view", "status", "current_sequence", "updated_at", "terminal", "current_stage", "stages", "next_action", "expert"],
+      "properties": {
+        "schema_version": {"const": "1.0.0"},
+        "turn_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "view": {"const": "simple"},
+        "status": {"$ref": "#/$defs/status"},
+        "current_sequence": {"type": "integer", "minimum": 1},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "terminal": {"type": "boolean"},
+        "current_stage": {"$ref": "#/$defs/currentStage"},
+        "stages": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"$ref": "#/$defs/stage"}},
+        "next_action": {"enum": ["none", "approve", "review", "retry_manually"]},
+        "expert": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/expert"}]}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "turn_id", "view", "status", "current_sequence", "updated_at", "terminal", "current_stage", "stages", "next_action", "expert", "model_steps", "tool_steps", "diagnostics"],
+      "properties": {
+        "schema_version": {"const": "1.0.0"},
+        "turn_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "view": {"const": "developer"},
+        "status": {"$ref": "#/$defs/status"},
+        "current_sequence": {"type": "integer", "minimum": 1},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "terminal": {"type": "boolean"},
+        "current_stage": {"$ref": "#/$defs/currentStage"},
+        "stages": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"$ref": "#/$defs/stage"}},
+        "next_action": {"enum": ["none", "approve", "review", "retry_manually"]},
+        "expert": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/expert"}]},
+        "model_steps": {"type": "array", "items": {"$ref": "#/$defs/modelStep"}},
+        "tool_steps": {"type": "array", "items": {"$ref": "#/$defs/toolStep"}},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+      }
+    }
+  ]
+}

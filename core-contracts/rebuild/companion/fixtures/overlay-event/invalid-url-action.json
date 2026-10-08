@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0.0",
+  "event_id": "event:overlay:unsafe",
+  "occurred_at": "2026-07-19T10:55:00+08:00",
+  "source": "electron_main",
+  "payload": {
+    "kind": "bubble",
+    "priority": "ambient",
+    "text": "打开这个地址。",
+    "actions": [
+      {
+        "action_id": "companion.open_panel",
+        "label": "打开",
+        "style": "primary",
+        "url": "file:///C:/Users/example/private.txt"
+      }
+    ],
+    "requires_ack": false,
+    "expires_at": "2026-07-19T10:56:00+08:00",
+    "revision": 1
+  }
+}

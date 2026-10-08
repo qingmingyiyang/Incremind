@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://schemas/ai/boundary-request-v1",
+  "title": "Boundary Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "turn_id", "project_id", "actor_id", "target_id", "operation_id", "idempotency_key", "effect", "destination_kind", "destination_id", "data_classes", "scan_state", "reversible", "same_project", "requires_receipt"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "request_id": {"type": "string", "minLength": 1},
+    "turn_id": {"type": "string", "minLength": 1},
+    "project_id": {"type": "string", "minLength": 1},
+    "actor_id": {"type": "string", "minLength": 1},
+    "target_id": {"type": "string", "minLength": 1},
+    "operation_id": {"type": "string", "minLength": 1},
+    "idempotency_key": {"type": "string", "minLength": 1},
+    "effect": {"enum": ["read", "write", "external", "platform", "delete"]},
+    "destination_kind": {"enum": ["local", "provider", "mcp", "platform"]},
+    "destination_id": {"type": "string", "minLength": 1},
+    "data_classes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "scan_state": {"enum": ["not_required", "clean", "redacted", "sensitive", "unknown"]},
+    "reversible": {"type": "boolean"},
+    "same_project": {"type": "boolean"},
+    "requires_receipt": {"type": "boolean"}
+  }
+}

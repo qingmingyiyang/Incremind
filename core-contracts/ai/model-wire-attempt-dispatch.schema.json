@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/ai/model-wire-attempt-dispatch.schema.json",
+  "title": "AI Model Wire Attempt Dispatch",
+  "description": "Metadata-only durable marker written after the egress policy allows a request and before one real provider wire attempt. It excludes prompts, outputs, provider bodies, endpoints, paths, credentials, and error text.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "attempt_id", "turn_id", "model_request_id", "attempt_number",
+    "routing_snapshot_revision", "provider_id", "model_id", "dispatched_at",
+    "input_stored", "output_stored"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "attempt_id": {"type": "string", "pattern": "^model-wire-attempt-[A-Za-z0-9._~-]{8,109}$"},
+    "turn_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "model_request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "attempt_number": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "routing_snapshot_revision": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "provider_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "model_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:~/-]{0,127}$"},
+    "execution_location": {"enum": ["remote", "local_loopback"]},
+    "dispatched_at": {"type": "string", "format": "date-time"},
+    "input_stored": {"const": false},
+    "output_stored": {"const": false}
+  }
+}

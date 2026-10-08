@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://christmas-os.local/contracts/ai/ppt-master-fixed-receipt.schema.json",
+  "title": "Fixed PPTX Generation Receipt", "type": "object", "additionalProperties": false,
+  "required": ["operation_id", "project_id", "request_id", "input_digest", "artifact_commit", "result_id", "receipt_id", "artifact_ref", "slide_count"],
+  "properties": {
+    "operation_id": {"$ref": "#/$defs/id"}, "project_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "request_id": {"$ref": "#/$defs/id"}, "input_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "artifact_commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"}, "result_id": {"$ref": "#/$defs/id"},
+    "receipt_id": {"$ref": "#/$defs/id"}, "artifact_ref": {"type": "string", "pattern": "^crp://presentations/[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"},
+    "slide_count": {"type": "integer", "minimum": 1, "maximum": 12}
+  },
+  "$defs": {"id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"}}
+}

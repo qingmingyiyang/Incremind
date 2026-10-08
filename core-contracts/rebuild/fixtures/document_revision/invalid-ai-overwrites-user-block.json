@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0.0",
+  "id": "document-revision-invalid-ai-overwrite",
+  "document_id": "document-report-001",
+  "revision": 3,
+  "parent_revision": 2,
+  "operation": "ai_patch",
+  "author": "system",
+  "reason": "AI patch must not silently change user protected block",
+  "base_content_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "new_content_hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "source_snapshot": {
+    "snapshot_id": "snapshot-invalid-ai-overwrite",
+    "snapshot_hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "source_refs": [
+      {
+        "source_id": "source-text-001",
+        "locator": "char:0-80"
+      }
+    ],
+    "captured_at": "2026-06-29T13:20:00+08:00"
+  },
+  "changed_blocks": [
+    {
+      "operation": "update",
+      "block_id": "block-user-note",
+      "block": {
+        "id": "block-user-note",
+        "block_type": "paragraph",
+        "origin": "user",
+        "content": "AI 尝试覆盖用户块。",
+        "source_refs": [],
+        "edited_by_user": true,
+        "lock_policy": "user_edit_protected"
+      }
+    }
+  ],
+  "conflict": {
+    "status": "none",
+    "conflict_blocks": [],
+    "resolution": null
+  },
+  "created_at": "2026-06-29T13:20:00+08:00"
+}

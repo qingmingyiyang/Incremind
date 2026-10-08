@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "External task lifecycle receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["turn_id", "owner_id", "payload_ref", "run_revision", "status", "effect_certainty"],
+  "properties": {
+    "turn_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "owner_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+    "payload_ref": {"type": "string", "pattern": "^crp://session/[A-Za-z0-9._~-]+/external-task-result-v1$"},
+    "run_revision": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["completed", "failed", "cancelled", "timed_out", "output_limit"]},
+    "effect_certainty": {"enum": ["confirmed_none", "confirmed_applied", "unknown"]}
+  }
+}

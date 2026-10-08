@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://schemas/ai/project-capability-profile-v1",
+  "title": "Project Capability Profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "profile_id", "project_id", "revision", "boundary_profile_id", "boundary_profile_revision", "enabled_sources", "enabled_skill_ids", "enabled_plugin_ids", "enabled_mcp_server_ids", "allowed_tool_ids", "denied_tool_ids", "preferred_model_tier", "memory_scope", "cross_project_grant_ids", "output_style_profile_id", "max_tools", "max_tool_descriptor_bytes", "tool_discovery_policy", "tool_selection_bindings", "mcp_server_selection_bindings"],
+  "properties": {
+    "schema_version": {"const": "1.3.0"},
+    "profile_id": {"type": "string", "minLength": 1},
+    "project_id": {"type": "string", "minLength": 1},
+    "revision": {"type": "integer", "minimum": 1},
+    "boundary_profile_id": {"type": "string", "minLength": 1},
+    "boundary_profile_revision": {"type": "integer", "minimum": 1},
+    "enabled_sources": {"type": "array", "uniqueItems": true, "items": {"enum": ["core", "platform", "plugin", "mcp", "workflow"]}},
+    "enabled_skill_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "enabled_plugin_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "enabled_mcp_server_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "allowed_tool_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "denied_tool_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "preferred_model_tier": {"enum": ["fast", "standard", "deep", "vision", "image_generation"]},
+    "memory_scope": {"enum": ["project_only", "project_plus_grants"]},
+    "cross_project_grant_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "output_style_profile_id": {"type": ["string", "null"], "minLength": 1},
+    "max_tools": {"type": "integer", "minimum": 1, "maximum": 12},
+    "max_tool_descriptor_bytes": {"type": "integer", "minimum": 1024, "maximum": 262144},
+    "tool_discovery_policy": {"enum": ["auto_discover", "confirm_new", "disabled"]},
+    "tool_selection_bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stable_id", "contract_identity"],
+        "properties": {
+          "stable_id": {"type": "string", "minLength": 1},
+          "contract_identity": {"type": "string", "pattern": "^contract-sha256:[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "mcp_server_selection_bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["server_id", "protocol_profile", "manifest_revision", "endpoint_identity", "credential_subject_id", "transport_generation"],
+        "properties": {
+          "server_id": {"type": "string", "minLength": 1},
+          "protocol_profile": {"enum": ["legacy_2025_11_25", "stateless_2026_07_28"]},
+          "manifest_revision": {"type": "integer", "minimum": 1},
+          "endpoint_identity": {"type": "string", "minLength": 1},
+          "credential_subject_id": {"type": "string", "minLength": 1},
+          "transport_generation": {"type": "integer", "minimum": 1}
+        }
+      }
+    }
+  }
+}

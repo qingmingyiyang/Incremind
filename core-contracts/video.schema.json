@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/video.schema.json",
+  "x-contract-version": "1.0",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "video_id": {
+      "title": "Video Id",
+      "type": "string"
+    },
+    "series_id": {
+      "title": "Series Id",
+      "type": "string"
+    },
+    "bvid": {
+      "title": "Bvid",
+      "type": "string"
+    },
+    "page": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Page",
+      "type": "integer"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "uploader": {
+      "default": "",
+      "title": "Uploader",
+      "type": "string"
+    },
+    "published_at": {
+      "default": "",
+      "title": "Published At",
+      "type": "string"
+    },
+    "source_url": {
+      "title": "Source Url",
+      "type": "string"
+    },
+    "local_path": {
+      "default": "",
+      "title": "Local Path",
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "status": {
+      "enum": [
+        "preparing",
+        "processing",
+        "completed",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "media_mode": {
+      "default": "audio",
+      "enum": [
+        "audio",
+        "video"
+      ],
+      "title": "Media Mode",
+      "type": "string"
+    },
+    "transcript_source": {
+      "default": "unknown",
+      "enum": [
+        "official_subtitle",
+        "whisper",
+        "unknown"
+      ],
+      "title": "Transcript Source",
+      "type": "string"
+    },
+    "structured_available": {
+      "default": false,
+      "title": "Structured Available",
+      "type": "boolean"
+    },
+    "visual_mode": {
+      "default": "disabled",
+      "enum": [
+        "disabled",
+        "mock",
+        "real"
+      ],
+      "title": "Visual Mode",
+      "type": "string"
+    },
+    "in_daily": {
+      "default": false,
+      "title": "In Daily",
+      "type": "boolean"
+    },
+    "exported_markdown": {
+      "default": false,
+      "title": "Exported Markdown",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "video_id",
+    "series_id",
+    "bvid",
+    "title",
+    "source_url",
+    "status"
+  ],
+  "title": "VideoContract",
+  "type": "object"
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0.0",
+  "event_id": "event:provider-job:001",
+  "occurred_at": "2026-07-19T11:06:00+08:00",
+  "source": "fastapi_sidecar",
+  "payload": {
+    "job_id": "job:companion:001",
+    "request_id": "request:chat:001",
+    "route": "companion.chat",
+    "status": "running",
+    "attempt": 1,
+    "max_attempts": 2,
+    "idempotency_key": "chat:request:001",
+    "artifact_tokens": [],
+    "result_ref": null,
+    "error": null,
+    "started_at": "2026-07-19T11:06:00+08:00",
+    "completed_at": null
+  }
+}

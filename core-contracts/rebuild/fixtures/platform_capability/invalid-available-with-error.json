@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "name": "notification",
+  "platform": "windows",
+  "adapter_id": "desktop_windows",
+  "available": true,
+  "permission_required": true,
+  "permission": "granted",
+  "provided_uri": null,
+  "error": {
+    "code": "unknown",
+    "message": "Available capability must not keep an error.",
+    "retryable": true,
+    "degradation": "none"
+  },
+  "checked_at": "2026-06-29T11:03:00+08:00"
+}

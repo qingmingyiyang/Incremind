@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0.0",
+  "id": "skill-active-conflict",
+  "project_id": "project-alpha",
+  "name": "Active Conflict",
+  "purpose": "验证 detected conflict 不能 active 发布。",
+  "markdown_uri": "crp://default/projects/project-alpha/project-skill.md",
+  "json_uri": "crp://default/projects/project-alpha/project-skill.json",
+  "markdown_revision": 2,
+  "json_revision": 2,
+  "required_context": [
+    {
+      "context_id": "ctx-series-alpha",
+      "kind": "series_memory",
+      "object_id": "series-memory-alpha",
+      "uri": "crp://default/memory/series/series-memory-alpha.json",
+      "reason": "测试上下文。",
+      "stale": false
+    }
+  ],
+  "output_rules": [
+    {
+      "rule_id": "rule-structure",
+      "origin": "user",
+      "rule": "沿用旧结构。",
+      "priority": "must",
+      "source_refs": [],
+      "locked_by_user": true
+    }
+  ],
+  "style_preferences": {
+    "voice": "直接",
+    "format_defaults": ["Markdown"]
+  },
+  "update_rules": {
+    "patch_strategy": "patch_existing_first",
+    "user_edit_policy": "user_wins",
+    "allowed_auto_updates": []
+  },
+  "source_refs": [
+    {
+      "source_id": "source-text-001",
+      "locator": "char:0-80"
+    }
+  ],
+  "evidence_refs": [
+    {
+      "source_id": "source-text-001",
+      "locator": "char:0-80"
+    }
+  ],
+  "decision_log": [
+    {
+      "decision_id": "decision-r2",
+      "reason": "测试。",
+      "actor": "system",
+      "created_at": "2026-06-29T14:10:00+08:00"
+    }
+  ],
+  "conflict": {
+    "status": "detected",
+    "conflict_refs": ["rule-structure"],
+    "resolution": null
+  },
+  "revision": 2,
+  "status": "active",
+  "trust_status": "system_generated",
+  "created_at": "2026-06-29T14:00:00+08:00",
+  "updated_at": "2026-06-29T14:20:00+08:00"
+}

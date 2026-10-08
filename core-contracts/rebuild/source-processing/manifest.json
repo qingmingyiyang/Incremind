@@ -1,0 +1,20 @@
+{
+  "domain": "source-processing",
+  "schema_draft": "https://json-schema.org/draft/2020-12/schema",
+  "current_version": "1.1.0",
+  "unknown_version_policy": "reject",
+  "contracts": [{
+    "name": "source-manifest",
+    "file": "source-manifest.schema.json",
+    "producer": "platform_adapter",
+    "consumers": ["media_router"],
+    "semantic_validator": "rebuild.source_processing.SourceManifestCodec",
+    "semantic_invariants": [
+      "asset_id_unique",
+      "ordinal_contiguous_and_matches_array_order",
+      "relation_target_within_manifest",
+      "content_kind_matches_asset_kinds",
+      "mixed_contains_at_least_two_supported_asset_kinds"
+    ]
+  }]
+}

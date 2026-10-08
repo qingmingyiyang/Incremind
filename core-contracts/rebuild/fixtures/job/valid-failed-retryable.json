@@ -1,0 +1,90 @@
+{
+  "schema_version": "1.0.0",
+  "id": "job-capture-failed-001",
+  "source_id": "source-audio-001",
+  "job_type": "parse",
+  "idempotency_key": "parse-source-audio-001",
+  "status": "failed",
+  "attempt": 2,
+  "max_attempts": 3,
+  "lease": null,
+  "progress": {
+    "current": 2,
+    "total": 4,
+    "percent": 50,
+    "message": "parser failed after checkpoint"
+  },
+  "steps": [
+    {
+      "name": "persist_source",
+      "status": "completed",
+      "attempt": 1,
+      "started_at": "2026-06-29T10:00:00+08:00",
+      "completed_at": "2026-06-29T10:00:01+08:00",
+      "progress": 100,
+      "input_refs": [
+        "crp://default/sources/source-audio-001"
+      ],
+      "staged_output_refs": [],
+      "log_refs": [
+        "crp://default/logs/jobs/job-capture-failed-001/persist_source.log"
+      ],
+      "error": null
+    },
+    {
+      "name": "parse_audio",
+      "status": "failed",
+      "attempt": 2,
+      "started_at": "2026-06-29T10:00:02+08:00",
+      "completed_at": "2026-06-29T10:01:00+08:00",
+      "progress": 60,
+      "input_refs": [
+        "crp://default/sources/source-audio-001"
+      ],
+      "staged_output_refs": [
+        "crp://default/staging/jobs/job-capture-failed-001/assets/transcript.partial.json"
+      ],
+      "log_refs": [
+        "crp://default/logs/jobs/job-capture-failed-001/parse_audio.log"
+      ],
+      "error": {
+        "code": "parser_unavailable",
+        "message": "local parser exited before completion",
+        "retryable": true,
+        "failed_step": "parse_audio",
+        "details": {
+          "exit_code": 1
+        }
+      }
+    }
+  ],
+  "error": {
+    "code": "parser_unavailable",
+    "message": "local parser exited before completion",
+    "retryable": true,
+    "failed_step": "parse_audio",
+    "details": {
+      "exit_code": 1
+    }
+  },
+  "checkpoint": {
+    "resume_step": "parse_audio",
+    "checkpoint_uri": "crp://default/jobs/job-capture-failed-001/checkpoints/0002.json",
+    "state_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "updated_at": "2026-06-29T10:00:45+08:00"
+  },
+  "staged_outputs": [
+    {
+      "kind": "asset",
+      "uri": "crp://default/staging/jobs/job-capture-failed-001/assets/transcript.partial.json",
+      "object_id": "transcript-partial-001",
+      "published": false
+    }
+  ],
+  "published_outputs": [],
+  "log_refs": [
+    "crp://default/logs/jobs/job-capture-failed-001/job.log"
+  ],
+  "created_at": "2026-06-29T10:00:00+08:00",
+  "updated_at": "2026-06-29T10:01:00+08:00"
+}

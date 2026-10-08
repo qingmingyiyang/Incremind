@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0.0",
+  "capability_id": "document.create",
+  "version": 1,
+  "name": "创建文档",
+  "description": "创建可审阅文档草稿。",
+  "mode": "write",
+  "input_schema_uri": "crp://default/contracts/document-create.schema.json",
+  "output_schema_uri": "crp://default/contracts/document-result.schema.json",
+  "service_definition": "rebuild.document_engine.DocumentRepositoryPort",
+  "provider": "rebuild.document_engine.RuntimeDocumentProvider",
+  "consumer": "rebuild.ai_kernel.ToolRegistry",
+  "tool_exposed": true,
+  "requires_approval": true,
+  "privacy_categories": ["source_excerpt"],
+  "operation_semantics": "read_only",
+  "event_types": ["document.create.requested", "document.create.completed"],
+  "enabled": true,
+  "bypass_receipt": true
+}

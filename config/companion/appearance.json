@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "pack_id": "bear-companion-v3",
+  "outfits": [
+    {"id": "red-scarf", "item_id": "outfit:red-scarf", "overlay": "items/red-scarf.svg", "label": "红围巾"},
+    {"id": "gold-star", "item_id": "outfit:gold-star", "overlay": "items/gold-star.svg", "label": "成长星徽"}
+  ],
+  "backgrounds": [
+    {"id": "night", "item_id": "frame:night", "theme": "night", "label": "星夜相框"}
+  ],
+  "unlocks": [
+    {"threshold": 25, "growth_stage": "friend", "idle_variant": "warm", "voice_line": "谢谢你一直陪着我。", "story_chapter_id": "chapter:first-trust"},
+    {"threshold": 50, "growth_stage": "partner", "idle_variant": "smile", "voice_line": "今天也一起加油吧。", "story_chapter_id": "chapter:shared-routine", "grant_item_id": "outfit:gold-star"},
+    {"threshold": 75, "growth_stage": "confidant", "idle_variant": "bright", "voice_line": "你的习惯，我已经记在心里了。", "story_chapter_id": "chapter:quiet-promise"},
+    {"threshold": 100, "growth_stage": "bonded", "idle_variant": "radiant", "voice_line": "无论多晚，我都会在这里。", "story_chapter_id": "chapter:always-here"}
+  ],
+  "stories": [
+    {"id": "chapter:first-trust", "title": "第一次信任", "text": "她把珍藏的小星星放到桌边，说以后可以一起保管秘密。", "visual_state": "happy"},
+    {"id": "chapter:shared-routine", "title": "共同的日常", "text": "熟悉的报时声响起，她已经提前准备好了今天的专注清单。", "visual_state": "happy"},
+    {"id": "chapter:quiet-promise", "title": "安静的约定", "text": "窗外很安静。她答应在忙碌和休息之间，始终替你留一盏灯。", "visual_state": "sleepy"},
+    {"id": "chapter:always-here", "title": "一直在这里", "text": "走过许多普通的日子后，她认真地说：这里已经是我们共同的家。", "visual_state": "happy"}
+  ]
+}

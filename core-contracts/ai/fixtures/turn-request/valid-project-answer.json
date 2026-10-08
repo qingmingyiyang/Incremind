@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0.0",
+  "turn_id": "turn-0123456789abcdef0123456789abcdef",
+  "session_id": "session-project-alpha",
+  "operation_id": "op-project-answer-0001",
+  "idempotency_key": "project-answer-request-0001",
+  "scope": {"kind": "project", "project_id": "project-alpha", "series_id": null},
+  "input": {"kind": "text", "text": "根据当前项目资料给出下一步建议。", "refs": []},
+  "desired_outcome": "project.answer",
+  "privacy": {"mode": "local_only", "allow_remote": false, "pii": "possible", "consent_refs": [], "retention": "local_durable"},
+  "capability_policy": {"allowed": ["memory.recall", "project_skill.read", "answer.generate"], "denied": ["external.web_search"], "require_approval": []},
+  "context_policy": {"include_project_skill": true, "include_memory": true, "include_session_history": true, "max_context_bytes": 262144},
+  "approval_policy": {"mode": "risk_based", "auto_approve_read_only": true},
+  "created_at": "2026-08-23T04:00:00Z"
+}

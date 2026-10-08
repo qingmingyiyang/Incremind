@@ -1,0 +1,259 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/model_request.schema.json",
+  "title": "ModelRequest",
+  "description": "Model Gateway 请求合约，固定能力、载荷、隐私、超时、取消、结构化输出和预算边界。",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "locator"],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote": {
+          "type": "string"
+        }
+      }
+    },
+    "inputRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "object_id", "uri"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["source", "asset", "atom", "scenario", "series_memory", "persona", "project_skill", "document", "recall_result", "application_skill_resolution"]
+        },
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uri": {
+          "type": "string",
+          "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"
+        }
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "project_id",
+    "capability",
+    "provider_preference",
+    "payload",
+    "privacy",
+    "timeout",
+    "cancel",
+    "budget",
+    "response_schema",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_id": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "capability": {
+      "type": "string",
+      "enum": ["text_generation", "structured_generation", "embedding", "vision", "transcription"]
+    },
+    "provider_preference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "provider", "model", "allow_remote", "config_version"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["local_only", "local_first", "remote_allowed"]
+        },
+        "provider": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "model": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "allow_remote": {
+          "type": "boolean"
+        },
+        "config_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "content", "input_refs", "source_refs", "recall_result_id"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["answer", "document_draft", "memory_extraction", "embedding", "vision_caption", "transcription"]
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/inputRef"
+          }
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourceRef"
+          }
+        },
+        "recall_result_id": {
+          "type": ["string", "null"],
+          "minLength": 1
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "pii", "allow_remote", "redaction", "retention"],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": ["local_only", "project", "remote_allowed"]
+        },
+        "pii": {
+          "type": "string",
+          "enum": ["none", "possible", "present"]
+        },
+        "allow_remote": {
+          "type": "boolean"
+        },
+        "redaction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["applied", "strategy"],
+          "properties": {
+            "applied": {
+              "type": "boolean"
+            },
+            "strategy": {
+              "type": ["string", "null"],
+              "enum": ["none", "mask_pii", "remove_source_text", "user_confirmed", null]
+            }
+          }
+        },
+        "retention": {
+          "type": "string",
+          "enum": ["none", "transient_log", "provider_default"]
+        }
+      }
+    },
+    "timeout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_timeout_ms", "idle_timeout_ms", "deadline_at"],
+      "properties": {
+        "request_timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 600000
+        },
+        "idle_timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 600000
+        },
+        "deadline_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    },
+    "cancel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cancellable", "cancel_token", "requested"],
+      "properties": {
+        "cancellable": {
+          "type": "boolean"
+        },
+        "cancel_token": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "requested": {
+          "type": "boolean"
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_input_tokens", "max_output_tokens", "max_total_tokens", "max_cost_usd"],
+      "properties": {
+        "max_input_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200000
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "max_total_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200000
+        },
+        "max_cost_usd": {
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "response_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "json_schema_uri", "strict"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["text", "json", "embedding", "transcript"]
+        },
+        "json_schema_uri": {
+          "type": ["string", "null"],
+          "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+[.]schema[.]json$"
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

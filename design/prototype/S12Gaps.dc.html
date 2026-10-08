@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>资料库 · 待补</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500&amp;family=Noto+Serif+SC:wght@500;700&amp;family=Fira+Code:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+.app{--serif:'Noto Serif SC',serif;--sans:'Noto Sans SC',system-ui,sans-serif;--mono:'Fira Code',ui-monospace,monospace}
+.t-light{--paper:#F7F4EE;--panel:#FFFDF9;--sunk:#EFEAE1;--ink:#1C1A17;--ink2:#4E4A44;--muted:#6F6A62;--line:#E6E0D5;--line2:#D2CABC;--red:#C0282F;--mark:#F4E3AE;--onred:#FFFFFF;--shadow:rgba(28,26,23,.14)}
+.t-dark{--paper:#1A1815;--panel:#221F1B;--sunk:#2A2621;--ink:#ECE6DB;--ink2:#C4BDB1;--muted:#A39C90;--line:#332F29;--line2:#48423A;--red:#E66B6F;--mark:#5A4919;--onred:#1A1815;--shadow:rgba(0,0,0,.45)}
+.ic{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--line2);flex-shrink:0}
+.dot.on{background:var(--ink)}
+.dot.red{background:var(--red)}
+.dot.ghost{background:transparent;box-shadow:inset 0 0 0 1.5px var(--line2)}
+.dot.now{background:var(--red);animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+input,textarea{font:inherit;color:var(--ink);background:transparent;border:0;outline:none;resize:none;min-width:0}
+input::placeholder,textarea::placeholder{color:var(--muted)}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+a{color:inherit;text-decoration:none}
+mark{background:var(--mark);color:var(--ink);border-radius:2px;padding:0 1px}
+.tab{color:var(--muted);border-bottom:2px solid transparent}
+.tab.on{color:var(--ink);border-bottom-color:var(--red)}
+.flt{color:var(--muted);border-bottom:1.5px solid transparent}
+.flt.on{color:var(--ink);border-bottom-color:var(--ink)}
+.side{color:var(--ink2)}
+.side.on{color:var(--red)}
+.sel{background:var(--sunk)}
+.seg{color:var(--muted);border-bottom:2px solid transparent}
+.seg.on{color:var(--ink);border-bottom-color:var(--red)}
+.grp{color:var(--muted);border-left:2px solid transparent}
+.grp.on{color:var(--ink);border-left-color:var(--red)}
+.sw{width:40px;height:22px;border-radius:11px;background:var(--line2);position:relative;flex-shrink:0}
+.sw::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--panel)}
+.sw.on{background:var(--red)}
+.sw.on::after{left:21px}
+.tag{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:4px;font-family:var(--mono);font-size:12px;color:var(--ink2);background:var(--panel);white-space:nowrap}
+.av{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--sunk);color:var(--ink2);flex-shrink:0;box-shadow:0 0 0 1.5px var(--paper)}
+.rel{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;font-family:var(--mono);font-size:15px;color:var(--ink2);flex-shrink:0}
+.sup{vertical-align:super;font-size:11px;font-family:var(--mono);color:var(--red);padding:0 2px;line-height:1}
+.lbl{display:inline-flex;align-items:center;height:18px;padding:0 5px;border:1px solid var(--line2);border-radius:4px;font-family:var(--sans);font-size:11px;color:var(--muted);vertical-align:3px;margin:0 2px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border:1px solid var(--line2);border-radius:4px;font-size:14px;color:var(--ink);white-space:nowrap}
+.btn.pri{background:var(--red);color:var(--onred);border-color:var(--red)}
+.menu{background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:0 12px 32px var(--shadow)}
+.ctx{padding:2px 6px;border:1px solid var(--line);border-radius:4px}
+.chev.on{transform:rotate(90deg)}
+.cb{width:16px;height:16px;border:1.5px solid var(--line2);border-radius:3px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--onred)}
+.cb.on{background:var(--red);border-color:var(--red)}
+.eff{display:inline-flex;align-items:center;height:18px;padding:0 5px;border:1px solid var(--line2);border-radius:4px;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+.btn.sm{height:28px;padding:0 10px;font-size:13px}
+.dot.fail{background:transparent;box-shadow:inset 0 0 0 1.5px var(--red)}
+.bub{background:var(--sunk);border-radius:12px;padding:5px 12px;font-size:13px;line-height:1.6;color:var(--ink2)}
+</style>
+</helmet>
+<div class="app {{themeClass}}" style="width:1440px;height:900px;position:relative;overflow:hidden;display:grid;grid-template-columns:64px minmax(0,1fr);background:var(--paper);color:var(--ink);font-family:var(--sans)">
+<nav aria-label="主导航" style="border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:16px 0;gap:4px">
+<a href="Companion.dc.html" aria-label="伙伴" title="伙伴" style="position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center;margin-bottom:20px">
+<img src="/_blob/534ec8071ddfdf6c7d1ed4414f26015e" alt="" style="width:34px;height:34px;border-radius:50%;background:var(--sunk);object-fit:cover">
+</a>
+<a href="Main.dc.html" style="position:relative;width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+<span style="font-size:11px">工作台</span>
+</a>
+<a href="Library.dc.html" aria-current="page" style="position:relative;width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--red)">
+<span style="position:absolute;left:0;top:16px;width:2px;height:28px;background:var(--red)"></span>
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"></path><path d="M3 13l9 5 9-5"></path></svg>
+<span style="font-size:11px;color:var(--ink)">资料库</span>
+</a>
+<a href="Settings.dc.html" style="position:relative;width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+<span style="font-size:11px">设置</span>
+</a>
+<div style="flex-grow:1"></div>
+<button aria-label="切换明暗" title="明暗" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg>
+</button>
+</nav>
+<div style="display:flex;flex-direction:column;min-width:0;height:900px">
+<header style="height:56px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 28px">
+<button aria-label="切换项目" style="display:flex;align-items:center;gap:8px;height:44px;font-size:14px;color:var(--ink)">
+<span style="width:6px;height:6px;border-radius:50%;background:var(--red)"></span>
+<span>旅行</span>
+<svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color:var(--muted)"><path d="M6 9l6 6 6-6"></path></svg>
+</button>
+<span style="display:flex;align-items:center;gap:16px"><span style="font-size:13px;color:var(--muted);font-family:var(--mono)">10·06 周二</span></span>
+</header>
+<div style="flex-grow:1;min-height:0;display:grid;grid-template-columns:220px minmax(0,1fr) 520px">
+<div style="border-right:1px solid var(--line);padding:20px 12px 20px 28px;display:flex;flex-direction:column;gap:2px;min-width:0">
+<button class="side on" style="height:40px;display:flex;align-items:center;justify-content:space-between;font-size:14px;padding-right:8px"><span>全部</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)"></span></button>
+<button class="side" style="height:40px;display:flex;align-items:center;justify-content:space-between;font-size:14px;padding-right:8px"><span>成都</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)"></span></button>
+<button class="side" style="height:40px;display:flex;align-items:center;justify-content:space-between;font-size:14px;padding-right:8px"><span>大理</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)"></span></button>
+<div style="height:1px;background:var(--line);margin:14px 0"></div>
+<button class="side" style="height:40px;display:flex;align-items:center;justify-content:space-between;font-size:14px;padding-right:8px"><span>收件箱</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">4</span></button>
+<button class="side" style="height:40px;display:flex;align-items:center;justify-content:space-between;font-size:14px;padding-right:8px"><span>我</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)"></span></button>
+</div>
+<div style="display:flex;flex-direction:column;min-width:0;min-height:0;padding:12px 32px 0">
+<div style="display:flex;align-items:flex-end;gap:32px;border-bottom:1px solid var(--line)">
+<button class="tab on" style="padding:6px 0 12px;font-family:var(--serif);font-size:24px;font-weight:700;display:flex;align-items:baseline;gap:8px"><span>认识</span><span style="font-family:var(--mono);font-size:12px;font-weight:400;color:var(--muted)">26</span></button><button class="tab" style="padding:6px 0 12px;font-family:var(--serif);font-size:24px;font-weight:700;display:flex;align-items:baseline;gap:8px"><span>摘要</span><span style="font-family:var(--mono);font-size:12px;font-weight:400;color:var(--muted)">9</span></button><button class="tab" style="padding:6px 0 12px;font-family:var(--serif);font-size:24px;font-weight:700;display:flex;align-items:baseline;gap:8px"><span>整理稿</span><span style="font-family:var(--mono);font-size:12px;font-weight:400;color:var(--muted)">9</span></button><button class="tab" style="padding:6px 0 12px;font-family:var(--serif);font-size:24px;font-weight:700;display:flex;align-items:baseline;gap:8px"><span>原件</span><span style="font-family:var(--mono);font-size:12px;font-weight:400;color:var(--muted)">9</span></button>
+<div style="flex-grow:1"></div>
+<div style="display:flex;align-items:flex-end;gap:4px">
+<label style="display:flex;align-items:center;gap:8px;width:240px;height:40px;margin-bottom:8px;border-bottom:1px solid var(--line2);color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="M20 20l-4.5-4.5"></path></svg>
+<input aria-label="搜索" placeholder="搜索" style="flex-grow:1;font-size:14px">
+</label>
+<div style="position:relative;margin-bottom:8px"><button aria-label="更多" style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" style="fill:currentColor"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></button>
+<div role="menu" aria-label="更多" style="position:absolute;right:0;top:44px;width:220px;background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:0 12px 32px var(--shadow);padding:4px 0;z-index:6">
+<a role="menuitem" href="SettingsProject.dc.html" style="display:flex;align-items:center;gap:12px;height:44px;padding:0 16px;font-size:14px"><span style="flex-grow:1">约束</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">2</span><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color:var(--muted)"><path d="M7 17L17 7M9 7h8v8"></path></svg></a>
+<button role="menuitem" style="width:100%;display:flex;align-items:center;gap:12px;height:44px;padding:0 16px;font-size:14px;border-top:1px solid var(--line)"><span style="flex-grow:1">备忘</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">5</span></button>
+<a role="menuitem" href="S12Review.dc.html" style="display:flex;align-items:center;gap:12px;height:44px;padding:0 16px;font-size:14px;border-top:1px solid var(--line)"><span style="flex-grow:1">纠偏</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">4</span></a>
+<button role="menuitem" class="sel" style="width:100%;display:flex;align-items:center;gap:12px;height:44px;padding:0 16px;font-size:14px;border-top:1px solid var(--line)"><span style="flex-grow:1">待补</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">4</span></button>
+</div>
+</div>
+</div>
+</div>
+<div style="display:flex;gap:22px;padding:14px 0 6px;font-size:14px"><button class="flt" style="height:30px;display:flex;align-items:center;gap:8px"><span class="dot red"></span><span>待确认</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">7</span></button><button class="flt on" style="height:30px;display:flex;align-items:center;gap:8px"><span class="dot on"></span><span>生效</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">18</span></button><button class="flt" style="height:30px;display:flex;align-items:center;gap:8px"><span class="dot ghost"></span><span>已遗忘</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">1</span></button></div>
+<div style="flex-grow:1;min-height:0;overflow:hidden;padding:8px 0 96px">
+<div style="display:flex;align-items:center;gap:14px;min-height:60px;border-bottom:1px solid var(--line);padding:0 10px">
+<span class="dot on"></span>
+<button style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:3px;padding:10px 0"><span style="font-size:16px;color:var(--ink)">宽窄巷子早上 9 点前人少</span></button>
+<span style="font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap">成都 · 2 源</span>
+</div>
+<div style="display:flex;align-items:center;gap:14px;min-height:60px;border-bottom:1px solid var(--line);padding:0 10px">
+<span class="dot on"></span>
+<button style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:3px;padding:10px 0"><span style="font-size:16px;color:var(--ink)">陈麻婆在西玉龙街</span></button>
+<span style="font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap">成都 · 2 源</span>
+</div>
+<div style="display:flex;align-items:center;gap:14px;min-height:60px;border-bottom:1px solid var(--line);padding:0 10px">
+<span class="dot on"></span>
+<button style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:3px;padding:10px 0"><span style="font-size:16px;color:var(--ink)">春熙路适合下午逛</span></button>
+<span style="font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap">成都 · 3 源</span>
+</div>
+<div style="display:flex;align-items:center;gap:14px;min-height:60px;border-bottom:1px solid var(--line);padding:0 10px">
+<span class="dot on"></span>
+<button style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:3px;padding:10px 0"><span style="font-size:16px;color:var(--ink)">排行程前先查景点是否周一闭馆</span></button>
+<span style="font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap">项目层 · 1 源</span>
+</div>
+<div style="display:flex;align-items:center;gap:14px;min-height:60px;border-bottom:1px solid var(--line);padding:0 10px">
+<span class="dot on"></span>
+<button style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:3px;padding:10px 0"><span style="font-size:16px;color:var(--ink)">出门偏好少排队</span></button>
+<span style="font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap">我 · 4 源</span>
+</div>
+</div>
+</div>
+<aside aria-label="聚焦面板" style="border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-width:0;min-height:0">
+<div style="height:56px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 12px 0 24px;border-bottom:1px solid var(--line)">
+<span style="font-size:14px;color:var(--ink)">待补</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">4</span>
+<div style="flex-grow:1"></div>
+<button aria-label="关闭" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</div>
+<div style="flex-grow:1;min-height:0;overflow:hidden;padding:20px 24px 24px;display:flex;flex-direction:column">
+<div style="display:flex;flex-direction:column;border-bottom:1px solid var(--line)">
+<div style="display:flex;align-items:center;gap:12px;min-height:60px;border-top:1px solid var(--line);padding:0 4px 0 8px;background:var(--sunk);">
+<button style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:4px;padding:10px 0"><span style="font-size:15px;color:var(--ink)">宽窄巷子附近哪里停车方便</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">3 次 · 10·05</span></button>
+<button aria-label="丢弃" title="丢弃" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</div>
+<div style="display:flex;align-items:center;gap:12px;min-height:60px;border-top:1px solid var(--line);padding:0 4px 0 8px;">
+<button style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:4px;padding:10px 0"><span style="font-size:15px;color:var(--ink)">成都地铁几点停运</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">2 次 · 10·03</span></button>
+<button aria-label="丢弃" title="丢弃" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</div>
+<div style="display:flex;align-items:center;gap:12px;min-height:60px;border-top:1px solid var(--line);padding:0 4px 0 8px;">
+<button style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:4px;padding:10px 0"><span style="font-size:15px;color:var(--ink)">熊猫基地要不要提前预约</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">1 次 · 10·02</span></button>
+<button aria-label="丢弃" title="丢弃" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</div>
+<div style="display:flex;align-items:center;gap:12px;min-height:60px;border-top:1px solid var(--line);padding:0 4px 0 8px;">
+<button style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:4px;padding:10px 0"><span style="font-size:15px;color:var(--ink)">大理到丽江的火车多久一班</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">1 次 · 09·28</span></button>
+<button aria-label="丢弃" title="丢弃" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</div>
+</div>
+</div>
+</aside>
+</div>
+</div>
+<div style="position:absolute;right:24px;bottom:20px;z-index:5;display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+<button aria-label="进度" style="height:36px;padding:0 14px;border:1px solid var(--line2);border-radius:18px;background:var(--panel);display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;color:var(--ink)">
+<span class="dot now"></span><span>0</span>
+<span class="dot red" style="margin-left:6px"></span><span>7</span>
+</button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeClass: this.props.dark ? 't-dark' : 't-light' };
+  }
+}
+</script>
+</body>
+</html>

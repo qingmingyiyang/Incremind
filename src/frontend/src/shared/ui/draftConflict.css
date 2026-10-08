@@ -1,0 +1,9 @@
+.ws-draft-conflict{display:grid;gap:12px;padding:12px 0;border-top:2px solid var(--red);border-bottom:1px solid var(--line);font-size:12px;line-height:1.5;color:var(--ink)}
+.ws-draft-conflict>strong{color:var(--red)}
+.ws-draft-conflict p{margin:0;color:var(--muted)}
+.ws-conflict-diff{max-height:240px;overflow:auto;border-top:1px solid var(--line)}
+.ws-conflict-row{display:grid;gap:4px;padding:8px 0;border-bottom:1px solid var(--line)}
+.ws-conflict-row span{white-space:pre-wrap;overflow-wrap:anywhere}
+.ws-conflict-actions{display:flex;flex-wrap:wrap;gap:12px}
+.ws-conflict-actions button{padding:8px 0;border:0;border-bottom:1px solid var(--line2);background:transparent;color:var(--ink);font-weight:700;cursor:pointer}
+.ws-conflict-actions button:hover{border-bottom-color:var(--red);color:var(--red)}

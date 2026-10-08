@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0.0",
+  "version": "expert-ab-synthetic-v1",
+  "data_class": "synthetic_non_personal",
+  "cases": [
+    {
+      "case_id": "fictional-research-01",
+      "route_id": "route:research-fixture-v1",
+      "boundary_revision": "boundary:fixture-r1",
+      "model_id": "model:fixture-v1",
+      "decoder": "temperature=0",
+      "tool_budget": 3,
+      "rubric_revision": "rubric:evidence-grounded-r1",
+      "treatment_expert_id": "video-research-expert",
+      "price": null
+    }
+  ],
+  "observations": [
+    {
+      "case_id": "fictional-research-01",
+      "arm": "baseline",
+      "expert_id": null,
+      "route_id": "route:research-fixture-v1",
+      "boundary_revision": "boundary:fixture-r1",
+      "model_id": "model:fixture-v1",
+      "decoder": "temperature=0",
+      "tool_budget": 3,
+      "rubric_revision": "rubric:evidence-grounded-r1",
+      "quality_score": 0.62,
+      "input_tokens": 120,
+      "output_tokens": 80,
+      "latency_ms": 410
+    },
+    {
+      "case_id": "fictional-research-01",
+      "arm": "treatment",
+      "expert_id": "video-research-expert",
+      "route_id": "route:research-fixture-v1",
+      "boundary_revision": "boundary:fixture-r1",
+      "model_id": "model:fixture-v1",
+      "decoder": "temperature=0",
+      "tool_budget": 3,
+      "rubric_revision": "rubric:evidence-grounded-r1",
+      "quality_score": 0.71,
+      "input_tokens": 126,
+      "output_tokens": 82,
+      "latency_ms": 435
+    }
+  ]
+}

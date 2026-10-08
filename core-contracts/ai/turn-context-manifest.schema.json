@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://schemas/ai/turn-context-manifest-v1",
+  "title": "Turn Context Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "manifest_id", "turn_id", "resolver_id", "project_id", "series_id", "project_profile_id", "project_profile_revision", "boundary_profile_id", "boundary_profile_revision", "capability_manifest_ref", "entries", "compactions", "excluded_reason_counts", "max_context_bytes", "selected_context_bytes"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "manifest_id": {"type": "string", "minLength": 1},
+    "turn_id": {"type": "string", "minLength": 1},
+    "resolver_id": {"type": "string", "minLength": 1},
+    "project_id": {"type": ["string", "null"], "minLength": 1},
+    "series_id": {"type": ["string", "null"], "minLength": 1},
+    "project_profile_id": {"type": "string", "minLength": 1},
+    "project_profile_revision": {"type": "integer", "minimum": 1},
+    "boundary_profile_id": {"type": "string", "minLength": 1},
+    "boundary_profile_revision": {"type": "integer", "minimum": 1},
+    "capability_manifest_ref": {"type": "string", "pattern": "^crp://session/.+"},
+    "entries": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entry_id", "kind", "source_ref", "payload_ref", "source_project_id", "revision_identity", "content_fingerprint", "provenance_refs", "disclosure", "selection_reason", "content_bytes"],
+        "properties": {
+          "entry_id": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["capability_manifest", "input_ref", "project_skill", "memory_r0", "memory_r1", "memory_r2", "memory_r3", "session_history", "source", "output_style", "application_skill_snapshot", "application_skill", "model_routing_snapshot", "context_binding", "runtime_self_manifest", "world_state_projection", "context_summary", "tool_artifact", "task_graph_change", "agent_message"]},
+          "source_ref": {"type": ["string", "null"], "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"},
+          "payload_ref": {"type": ["string", "null"], "pattern": "^crp://session/.+"},
+          "source_project_id": {"type": ["string", "null"], "minLength": 1},
+          "revision_identity": {"type": ["string", "null"], "minLength": 1},
+          "content_fingerprint": {"type": ["string", "null"], "minLength": 1},
+          "provenance_refs": {"type": "array", "uniqueItems": true, "maxItems": 64, "items": {"type": "string", "pattern": "^crp://[a-z0-9][a-z0-9_-]*/.+$"}},
+          "disclosure": {"enum": ["model", "tool_only", "audit_only", "reference_only"]},
+          "selection_reason": {"type": "string", "minLength": 1, "maxLength": 256},
+          "content_bytes": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "compactions": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["compaction_id", "strategy", "source_entry_ids", "output_entry_id", "input_bytes", "output_bytes"],
+        "properties": {
+          "compaction_id": {"type": "string", "minLength": 1},
+          "strategy": {"type": "string", "minLength": 1, "maxLength": 128},
+          "source_entry_ids": {"type": "array", "uniqueItems": true, "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "output_entry_id": {"type": "string", "minLength": 1},
+          "input_bytes": {"type": "integer", "minimum": 1},
+          "output_bytes": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "excluded_reason_counts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason", "count"],
+        "properties": {
+          "reason": {"type": "string", "minLength": 1},
+          "count": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "max_context_bytes": {"type": "integer", "minimum": 1024, "maximum": 1048576},
+    "selected_context_bytes": {"type": "integer", "minimum": 0}
+  }
+}

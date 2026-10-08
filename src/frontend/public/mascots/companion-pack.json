@@ -1,0 +1,65 @@
+{
+  "version": 3,
+  "pack_id": "bear-companion-v3",
+  "sprite": {
+    "src": "./mascots/bear_companion_sprite-v1.png",
+    "width": 1536,
+    "height": 1872,
+    "frame_width": 384,
+    "frame_height": 468,
+    "columns": 4,
+    "rows": 4
+  },
+  "hit_region": {
+    "kind": "alpha",
+    "threshold": 18
+  },
+  "overlays": {
+    "rain": {
+      "src": "./mascots/companion-weather-umbrella.png",
+      "natural_width": 1254,
+      "natural_height": 1254,
+      "x": 32,
+      "y": 0,
+      "width": 320,
+      "height": 320
+    },
+    "outfit_red_scarf": {
+      "src": "./mascots/items/red-scarf.svg",
+      "natural_width": 96,
+      "natural_height": 96,
+      "x": 144,
+      "y": 192,
+      "width": 96,
+      "height": 96
+    },
+    "outfit_gold_star": {
+      "src": "./mascots/items/gold-star.svg",
+      "natural_width": 96,
+      "natural_height": 96,
+      "x": 158,
+      "y": 224,
+      "width": 68,
+      "height": 68
+    }
+  },
+  "states": {
+    "ready": { "row": 0, "frames": [0, 1, 2, 3], "fps": 1.67, "loop": true, "fallback": null, "authentic": true },
+    "working": { "row": 1, "frames": [0, 1, 2, 3], "fps": 3.64, "loop": true, "fallback": "ready", "authentic": true },
+    "attention": { "row": 2, "frames": [0, 1, 2, 3], "fps": 5.56, "loop": false, "fallback": "ready", "authentic": true },
+    "offline": { "row": 3, "frames": [0, 1, 2, 3], "fps": 1.11, "loop": true, "fallback": "ready", "authentic": true },
+    "booting": { "fallback": "ready" },
+    "speaking": { "fallback": "attention" },
+    "sleeping": { "fallback": "ready" },
+    "warning": { "fallback": "offline" },
+    "drag": { "fallback": "attention" },
+    "falling": { "fallback": "working" },
+    "hang_left": { "fallback": "ready" },
+    "hang_right": { "fallback": "ready" },
+    "idle": { "fallback": "ready" },
+    "talk": { "fallback": "attention" },
+    "listen": { "fallback": "attention" },
+    "sleep": { "fallback": "ready" },
+    "warn": { "fallback": "offline" }
+  }
+}

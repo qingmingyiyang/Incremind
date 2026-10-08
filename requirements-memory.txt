@@ -1,0 +1,2 @@
+# Optional local vector retrieval capability. Installed only by memory-enabled deployments.
+sqlite-vec==0.1.9

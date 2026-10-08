@@ -1,0 +1,19 @@
+{
+  "base_corpus": "corpus.json",
+  "inspirations": [
+    {"id":"inspiration-origami","text":"折纸星球可以把天文展台做成可折叠的星座卡。"},
+    {"id":"inspiration-lamp","text":"霜瓶光廊可以用带冰纹的灯罩表现四季。"},
+    {"id":"inspiration-echo","text":"回声花园通过脚步节奏唤醒声音。"},
+    {"id":"inspiration-map","text":"菌丝地图可以把地下路径变成互动桌游。"},
+    {"id":"inspiration-bridge","text":"纸桥浮岛使用纸折结构展现悬浮岛屿。"},
+    {"id":"inspiration-thread","text":"风筝线谱让每条风筝线对应一个旋律。"}
+  ],
+  "inspiration_questions": [
+    {"id":"inspiration-1","category":"inspiration","project_id":"eval-inspiration","question":"折纸星球适合怎么搭建？","expected_ids":["inspiration-origami"],"expected_evidence":{"inspiration-origami":"折纸星球可以把天文展台做成可折叠的星座卡。"}},
+    {"id":"inspiration-2","category":"inspiration","project_id":"eval-inspiration-other","question":"霜瓶光廊有哪些材料？","expected_ids":["inspiration-lamp"],"expected_evidence":{"inspiration-lamp":"霜瓶光廊可以用带冰纹的灯罩表现四季。"}},
+    {"id":"inspiration-3","category":"inspiration","project_id":"eval-inspiration","question":"回声花园怎么用脚步节奏？","expected_ids":["inspiration-echo"],"expected_evidence":{"inspiration-echo":"回声花园通过脚步节奏唤醒声音。"}},
+    {"id":"inspiration-4","category":"inspiration","project_id":"eval-inspiration-other","question":"菌丝地图的互动桌游如何设计？","expected_ids":["inspiration-map"],"expected_evidence":{"inspiration-map":"菌丝地图可以把地下路径变成互动桌游。"}},
+    {"id":"inspiration-5","category":"inspiration","project_id":"eval-inspiration","question":"纸桥浮岛有什么点子？","expected_ids":["inspiration-bridge"],"expected_evidence":{"inspiration-bridge":"纸桥浮岛使用纸折结构展现悬浮岛屿。"}},
+    {"id":"inspiration-6","category":"inspiration","project_id":"eval-inspiration-other","question":"风筝线谱能带来哪些创意？","expected_ids":["inspiration-thread"],"expected_evidence":{"inspiration-thread":"风筝线谱让每条风筝线对应一个旋律。"}}
+  ]
+}

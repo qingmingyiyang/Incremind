@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "External context exact read request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["client", "tool", "query", "scope", "budget"],
+  "properties": {
+    "client": {"enum": ["claude", "codex"]},
+    "tool": {"enum": ["projects", "recall", "methods", "read"]},
+    "query": {"type": "string", "not": {"pattern": "\u0000"}},
+    "budget": {"type": "integer", "minimum": 1, "maximum": 12000},
+    "scope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["user_id", "project_id"],
+      "properties": {
+        "user_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
+        "project_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"}
+      }
+    }
+  }
+}

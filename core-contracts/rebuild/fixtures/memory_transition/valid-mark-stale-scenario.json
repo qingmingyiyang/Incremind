@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0.0",
+  "id": "memory-transition-002",
+  "object_type": "scenario",
+  "object_id": "scenario-002",
+  "transition_type": "mark_stale",
+  "from_trust_status": "system_generated",
+  "to_trust_status": "system_generated",
+  "from_revision": 2,
+  "to_revision": 3,
+  "actor": "system",
+  "reason": "source source-text-002 changed",
+  "evidence_refs": [
+    {
+      "object_type": "source",
+      "object_id": "source-text-002",
+      "source_refs": [
+        {
+          "source_id": "source-text-002",
+          "locator": "revision:2"
+        }
+      ]
+    }
+  ],
+  "created_at": "2026-06-29T12:41:00+08:00"
+}

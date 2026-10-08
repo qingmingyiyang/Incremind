@@ -1,0 +1,404 @@
+{
+  "base_corpus": "corpus.json",
+  "elsewhere": {
+    "projects": [
+      {
+        "id": "else-home",
+        "name": "家庭 家务 安排",
+        "scenes": [
+          "厨房"
+        ]
+      },
+      {
+        "id": "else-travel",
+        "name": "旅行 出行 路线",
+        "scenes": [
+          "日本 机票 行程"
+        ]
+      },
+      {
+        "id": "else-bridge",
+        "name": "桥梁 工程 预算",
+        "scenes": [
+          "设备 验收 采购"
+        ]
+      },
+      {
+        "id": "else-garden",
+        "name": "阳台 园艺 浇水",
+        "scenes": [
+          "盆栽 施肥"
+        ]
+      },
+      {
+        "id": "else-books",
+        "name": "阅读 书单 笔记",
+        "scenes": [
+          "小说 读书 分享"
+        ]
+      },
+      {
+        "id": "else-health",
+        "name": "跑步 运动 训练",
+        "scenes": [
+          "马拉松 比赛"
+        ]
+      },
+      {
+        "id": "else-study",
+        "name": "英语 学习 词汇",
+        "scenes": [
+          "听力 练习"
+        ]
+      },
+      {
+        "id": "else-audit1",
+        "name": "年度 财务 审计",
+        "scenes": []
+      },
+      {
+        "id": "else-audit2",
+        "name": "年度 财务 审计",
+        "scenes": []
+      }
+    ],
+    "questions": [
+      {
+        "id": "elsewhere-positive-1",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "旅行 出行 路线",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-travel",
+          "scene": null
+        }
+      },
+      {
+        "id": "elsewhere-positive-2",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "桥梁 工程 预算",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-bridge",
+          "scene": null
+        }
+      },
+      {
+        "id": "elsewhere-positive-3",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "阳台 园艺 浇水",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-garden",
+          "scene": null
+        }
+      },
+      {
+        "id": "elsewhere-positive-4",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "阅读 书单 笔记",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-books",
+          "scene": null
+        }
+      },
+      {
+        "id": "elsewhere-positive-5",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "跑步 运动 训练",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-health",
+          "scene": null
+        }
+      },
+      {
+        "id": "elsewhere-positive-6",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "英语 学习 词汇",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-study",
+          "scene": null
+        }
+      },
+      {
+        "id": "elsewhere-positive-7",
+        "category": "elsewhere",
+        "partition": "held_out",
+        "project_id": "else-home",
+        "question": "日本 机票 行程 安排",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-travel",
+          "scene": "日本 机票 行程"
+        }
+      },
+      {
+        "id": "elsewhere-positive-8",
+        "category": "elsewhere",
+        "partition": "held_out",
+        "project_id": "else-home",
+        "question": "设备 验收 采购 清单",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-bridge",
+          "scene": "设备 验收 采购"
+        }
+      },
+      {
+        "id": "elsewhere-positive-9",
+        "category": "elsewhere",
+        "partition": "held_out",
+        "project_id": "else-home",
+        "question": "盆栽 施肥 方法",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-garden",
+          "scene": "盆栽 施肥"
+        }
+      },
+      {
+        "id": "elsewhere-positive-10",
+        "category": "elsewhere",
+        "partition": "held_out",
+        "project_id": "else-home",
+        "question": "小说 读书 分享 记录",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-books",
+          "scene": "小说 读书 分享"
+        }
+      },
+      {
+        "id": "elsewhere-positive-11",
+        "category": "elsewhere",
+        "partition": "held_out",
+        "project_id": "else-home",
+        "question": "马拉松 比赛 准备",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-health",
+          "scene": "马拉松 比赛"
+        }
+      },
+      {
+        "id": "elsewhere-positive-12",
+        "category": "elsewhere",
+        "partition": "held_out",
+        "project_id": "else-home",
+        "question": "听力 练习 内容",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-study",
+          "scene": "听力 练习"
+        }
+      },
+      {
+        "id": "elsewhere-negative-1",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "量子 纠缠 实验",
+        "tagged": false,
+        "expected_ids": [],
+        "expected_elsewhere": null
+      },
+      {
+        "id": "elsewhere-negative-2",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "天气 气压 海流",
+        "tagged": false,
+        "expected_ids": [],
+        "expected_elsewhere": null
+      },
+      {
+        "id": "elsewhere-negative-3",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "年度 财务 审计",
+        "tagged": false,
+        "expected_ids": [],
+        "expected_elsewhere": null
+      },
+      {
+        "id": "elsewhere-negative-4",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "家庭 家务 安排",
+        "tagged": false,
+        "expected_ids": [],
+        "expected_elsewhere": null
+      },
+      {
+        "id": "elsewhere-negative-5",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-travel",
+        "question": "旅行 出行 路线",
+        "tagged": false,
+        "expected_ids": [],
+        "expected_elsewhere": null
+      },
+      {
+        "id": "elsewhere-negative-6",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-bridge",
+        "question": "桥梁 工程 预算",
+        "tagged": false,
+        "expected_ids": [],
+        "expected_elsewhere": null
+      },
+      {
+        "id": "elsewhere-negative-7",
+        "category": "elsewhere",
+        "partition": "held_out",
+        "project_id": "else-home",
+        "question": "树莓派 芯片 电路",
+        "tagged": false,
+        "expected_ids": [],
+        "expected_elsewhere": null
+      },
+      {
+        "id": "elsewhere-negative-8",
+        "category": "elsewhere",
+        "partition": "held_out",
+        "project_id": "else-home",
+        "question": "项目 最新 动向",
+        "tagged": false,
+        "expected_ids": [],
+        "expected_elsewhere": null
+      },
+      {
+        "id": "elsewhere-negative-9",
+        "category": "elsewhere",
+        "partition": "held_out",
+        "project_id": "else-home",
+        "question": "年度 财务 审计 计划",
+        "tagged": false,
+        "expected_ids": [],
+        "expected_elsewhere": null
+      },
+      {
+        "id": "elsewhere-negative-10",
+        "category": "elsewhere",
+        "partition": "held_out",
+        "project_id": "else-health",
+        "question": "跑步 运动 训练",
+        "tagged": false,
+        "expected_ids": [],
+        "expected_elsewhere": null
+      },
+      {
+        "id": "elsewhere-negative-11",
+        "category": "elsewhere",
+        "partition": "held_out",
+        "project_id": "else-study",
+        "question": "英语 学习 词汇",
+        "tagged": false,
+        "expected_ids": [],
+        "expected_elsewhere": null
+      },
+      {
+        "id": "elsewhere-negative-12",
+        "category": "elsewhere",
+        "partition": "held_out",
+        "project_id": "else-home",
+        "question": "旅行 出行 路线",
+        "tagged": true,
+        "expected_ids": [],
+        "expected_elsewhere": null
+      },
+      {
+        "id": "elsewhere-calibration-paraphrase-1",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "出行 路线 安排",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-travel",
+          "scene": null
+        }
+      },
+      {
+        "id": "elsewhere-calibration-paraphrase-2",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "工程 预算 清单",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-bridge",
+          "scene": null
+        }
+      },
+      {
+        "id": "elsewhere-calibration-paraphrase-3",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "园艺 浇水 建议",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-garden",
+          "scene": null
+        }
+      },
+      {
+        "id": "elsewhere-calibration-paraphrase-4",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "书单 笔记 方法",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-books",
+          "scene": null
+        }
+      },
+      {
+        "id": "elsewhere-calibration-paraphrase-5",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "运动 训练 方案",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-health",
+          "scene": null
+        }
+      },
+      {
+        "id": "elsewhere-calibration-paraphrase-6",
+        "category": "elsewhere",
+        "partition": "calibration",
+        "project_id": "else-home",
+        "question": "学习 词汇 记录",
+        "expected_ids": [],
+        "expected_elsewhere": {
+          "project_id": "else-study",
+          "scene": null
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/rebuild/companion/provider-job.schema.json",
+  "title": "Companion Provider Job",
+  "description": "Companion sidecar 对外投影的 Provider job 状态，不包含 endpoint、密钥和原始输入。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "occurred_at", "source", "payload"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0.0"},
+    "event_id": {"$ref": "#/$defs/id"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "source": {"type": "string", "enum": ["fastapi_sidecar"]},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id",
+        "request_id",
+        "route",
+        "status",
+        "attempt",
+        "max_attempts",
+        "idempotency_key",
+        "artifact_tokens",
+        "result_ref",
+        "error",
+        "started_at",
+        "completed_at"
+      ],
+      "properties": {
+        "job_id": {"$ref": "#/$defs/id"},
+        "request_id": {"$ref": "#/$defs/id"},
+        "route": {
+          "type": "string",
+          "enum": ["companion.chat", "companion.event", "companion.diary", "companion.vision", "companion.voice", "companion.tts"]
+        },
+        "status": {"type": "string", "enum": ["queued", "running", "completed", "failed", "cancelled", "timed_out"]},
+        "attempt": {"type": "integer", "minimum": 0},
+        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 5},
+        "idempotency_key": {"$ref": "#/$defs/id"},
+        "artifact_tokens": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"}
+        },
+        "result_ref": {
+          "oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]
+        },
+        "error": {
+          "oneOf": [{"$ref": "#/$defs/error"}, {"type": "null"}]
+        },
+        "started_at": {
+          "oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]
+        },
+        "completed_at": {
+          "oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "completed"}}},
+          "then": {
+            "properties": {
+              "result_ref": {"$ref": "#/$defs/id"},
+              "error": {"type": "null"},
+              "completed_at": {"type": "string", "format": "date-time"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"enum": ["failed", "timed_out"]}}},
+          "then": {
+            "properties": {
+              "result_ref": {"type": "null"},
+              "error": {"$ref": "#/$defs/error"},
+              "completed_at": {"type": "string", "format": "date-time"}
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9:_-]{0,127}$"},
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": {"type": "string", "enum": ["cancelled", "timeout", "provider_unavailable", "provider_error", "invalid_response", "privacy_blocked", "internal_error"]},
+        "message": {"type": "string", "minLength": 1, "maxLength": 240},
+        "retryable": {"type": "boolean"}
+      }
+    }
+  }
+}

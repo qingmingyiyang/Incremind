@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "affinity_thresholds": [0, 25, 50, 75, 100],
+  "mood": { "sad_max": -25, "happy_min": 25 },
+  "commands": {
+    "daily_check_in": { "affinity": 0, "mood": 2, "coins": 10, "cooldown_seconds": 0, "daily_limit": 1, "reason": "每日签到" },
+    "petting": { "affinity": 2, "mood": 1, "coins": 0, "cooldown_seconds": 60, "daily_limit": 10, "reason": "抚摸互动" },
+    "chat": { "affinity": 1, "mood": 0, "coins": 0, "cooldown_seconds": 0, "daily_limit": 20, "reason": "陪伴对话" },
+    "focus_complete": { "affinity": 1, "mood": 2, "coins": 5, "cooldown_seconds": 0, "daily_limit": 4, "reason": "完成专注" },
+    "reminder_complete": { "affinity": 0, "mood": 1, "coins": 2, "cooldown_seconds": 0, "daily_limit": 10, "reason": "完成日程" },
+    "minigame_win": { "affinity": 1, "mood": 2, "coins": 1, "cooldown_seconds": 0, "daily_limit": 3, "reason": "小游戏获胜" }
+  }
+}

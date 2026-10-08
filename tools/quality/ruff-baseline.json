@@ -1,0 +1,1136 @@
+[
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F401",
+    "message": "`io` imported but unused",
+    "row": 6230,
+    "column": 12
+  },
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F401",
+    "message": "`rebuild.product_core.ExportPreset` imported but unused",
+    "row": 238,
+    "column": 5
+  },
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F401",
+    "message": "`rebuild.product_core.ExportableEvidenceLink` imported but unused",
+    "row": 239,
+    "column": 5
+  },
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F401",
+    "message": "`rebuild.product_core.ExportableSource` imported but unused",
+    "row": 241,
+    "column": 5
+  },
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F401",
+    "message": "`rebuild.product_core.ExportableTag` imported but unused",
+    "row": 242,
+    "column": 5
+  },
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F401",
+    "message": "`rebuild.product_core.detect_adapter` imported but unused",
+    "row": 246,
+    "column": 5
+  },
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F401",
+    "message": "`rebuild.product_core.mask_path` imported but unused",
+    "row": 107,
+    "column": 5
+  },
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F401",
+    "message": "`rebuild.product_core.serialize_asset_package_import_report` imported but unused",
+    "row": 253,
+    "column": 5
+  },
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F401",
+    "message": "`rebuild.product_core.serialize_exportable_memory` imported but unused",
+    "row": 257,
+    "column": 5
+  },
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F401",
+    "message": "`rebuild.product_core.serialize_exportable_source` imported but unused",
+    "row": 258,
+    "column": 5
+  },
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F401",
+    "message": "`rebuild.product_core.serialize_external_import_result` imported but unused",
+    "row": 254,
+    "column": 5
+  },
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F401",
+    "message": "`rebuild.product_core.serialize_self_use_alpha_readiness` imported but unused",
+    "row": 219,
+    "column": 5
+  },
+  {
+    "path": "src/backend/api/routes/rebuild.py",
+    "code": "F841",
+    "message": "Local variable `bundle_name` is assigned to but never used",
+    "row": 6384,
+    "column": 5
+  },
+  {
+    "path": "src/backend/api/routes/settings.py",
+    "code": "F841",
+    "message": "Local variable `provider` is assigned to but never used",
+    "row": 291,
+    "column": 9
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.ConversationMessage` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 421,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.ExternalImportAdapter` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 422,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.GenericJsonConversationAdapter` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 425,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.GenericLLMConversationAdapter` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 426,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.GenericMarkdownTxtAdapter` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 427,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.GenericZipBundleAdapter` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 428,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.ImportedMemoryCandidate` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 429,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.NormalizedBundle` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 430,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.ParsedBundle` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 431,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.SourceRecord` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 432,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.ValidationResult` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 433,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.detect_adapter` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 434,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.get_default_adapters` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 438,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.serialize_imported_memory_candidate` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 441,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.serialize_source_record` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 442,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.serialize_validation_result` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 443,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.external_import_framework.validate_import_result` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 444,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_asr_provider_settings.serialize_local_asr_provider_settings` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 967,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.CreateMemorySnapshot` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 70,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.ExportMemoryAssetPackage` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 71,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.GetProviderBoundary` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 72,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.GetVaultStatus` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 73,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.ListMemorySnapshots` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 74,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.LocalMemoryVaultError` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 75,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.MemoryAssetExportError` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 76,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.MemoryAssetPackageFile` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 78,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.MemoryAssetPackage` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 77,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.MemoryRestoreConfirmation` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 80,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.MemoryRollbackPlan` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 79,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.MemorySnapshotError` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 82,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.MemorySnapshotSummary` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 83,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.MemorySnapshot` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 81,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.PrepareMemoryRestoreConfirmation` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 84,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.ProviderBoundaryCapability` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 86,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.ProviderBoundary` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 85,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.RollbackToMemorySnapshot` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 87,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.VaultAssetLayer` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 88,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.VaultBackupStatus` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 89,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.VaultIndexStatus` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 90,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.VaultStatusError` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 92,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.VaultStatus` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 91,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.mask_path` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 93,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.serialize_memory_asset_package_file` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 95,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.serialize_memory_asset_package` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 94,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.serialize_memory_restore_confirmation` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 97,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.serialize_memory_rollback_plan` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 96,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.serialize_memory_snapshot_summary` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 99,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.serialize_memory_snapshot` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 98,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.serialize_provider_boundary_capability` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 101,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.serialize_provider_boundary` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 100,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.serialize_vault_asset_layer` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 102,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.serialize_vault_backup_status` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 103,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.serialize_vault_index_status` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 104,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_memory_vault.serialize_vault_status` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 105,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.local_video_provider_settings.serialize_local_video_provider_settings` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 975,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.MemoryCandidate` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 406,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.MemoryQualityGateError` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 407,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.QualityGateDecision` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 408,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.QualityGateReport` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 409,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.TrustLevel` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 410,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.compute_trust_level` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 411,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.detect_secrets` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 412,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.evaluate_candidate` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 413,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.evaluate_candidates` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 414,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.redact_content` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 415,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.serialize_memory_candidate` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 416,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.serialize_quality_gate_decision` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 417,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.serialize_quality_gate_report` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 418,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_router.MemoryDeltaEntry` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 397,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_router.MemoryEventIntent` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 398,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_router.MemoryRouterError` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 400,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_router.MemoryRouterResult` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 401,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_router.MemoryRouter` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 399,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_router.SeriesCandidate` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 402,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.memory_router.serialize_memory_router_result` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 403,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.DailyConversationScenario` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 54,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.DeltaItem` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 55,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.DrillMemoryNode` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 56,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.DrillResult` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 57,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.GetDailyConversationScenario` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 58,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.GetMemoryDelta` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 59,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.GetProjectBrainLayerDrill` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 60,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.MemoryDelta` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 61,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.ProjectBrainDrillError` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 62,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.serialize_daily_conversation_scenario` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 63,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.serialize_delta_item` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 64,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.serialize_drill_memory_node` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 65,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.serialize_drill_result` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 66,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_drill.serialize_memory_delta` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 67,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_overview.BrainCandidateItem` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 40,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_overview.BrainChangeItem` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 41,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_overview.BrainLayerSummary` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 42,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_overview.BrainMemoryItem` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 43,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_overview.GetProjectBrainOverview` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 44,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_overview.ProjectBrainOverviewError` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 46,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_overview.ProjectBrainOverview` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 45,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_overview.serialize_brain_candidate_item` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 47,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_overview.serialize_brain_change_item` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 48,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_overview.serialize_brain_layer_summary` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 49,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_overview.serialize_brain_memory_item` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 50,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.project_brain_overview.serialize_project_brain_overview` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 51,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/__init__.py",
+    "code": "F401",
+    "message": "`.workbench_auto_intake.WorkbenchAutoIntakeEndpointResponse` imported but unused; consider removing, adding to `__all__`, or using a redundant alias",
+    "row": 669,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/answer_feedback.py",
+    "code": "F841",
+    "message": "Local variable `recall_result` is assigned to but never used",
+    "row": 96,
+    "column": 9
+  },
+  {
+    "path": "src/rebuild/product_core/document_html_render.py",
+    "code": "F401",
+    "message": "`dataclasses.field` imported but unused",
+    "row": 21,
+    "column": 36
+  },
+  {
+    "path": "src/rebuild/product_core/external_import_framework.py",
+    "code": "F401",
+    "message": "`typing.Literal` imported but unused",
+    "row": 36,
+    "column": 25
+  },
+  {
+    "path": "src/rebuild/product_core/external_import_framework.py",
+    "code": "F841",
+    "message": "Local variable `title` is assigned to but never used",
+    "row": 875,
+    "column": 17
+  },
+  {
+    "path": "src/rebuild/product_core/local_asr_provider_settings.py",
+    "code": "F401",
+    "message": "`.media_processing_queue.MediaProcessingQueueError` imported but unused",
+    "row": 12,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/local_memory_vault.py",
+    "code": "F401",
+    "message": "`dataclasses.field` imported but unused",
+    "row": 31,
+    "column": 36
+  },
+  {
+    "path": "src/rebuild/product_core/local_memory_vault.py",
+    "code": "F401",
+    "message": "`re` imported but unused",
+    "row": 29,
+    "column": 8
+  },
+  {
+    "path": "src/rebuild/product_core/local_ocr_provider_settings.py",
+    "code": "F401",
+    "message": "`.media_processing_queue.MediaProcessingQueueError` imported but unused",
+    "row": 12,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/long_audio_chunker.py",
+    "code": "F401",
+    "message": "`collections.abc.Sequence` imported but unused",
+    "row": 16,
+    "column": 48
+  },
+  {
+    "path": "src/rebuild/product_core/long_audio_chunker.py",
+    "code": "F401",
+    "message": "`dataclasses.field` imported but unused",
+    "row": 17,
+    "column": 36
+  },
+  {
+    "path": "src/rebuild/product_core/long_audio_chunker.py",
+    "code": "F401",
+    "message": "`pathlib.Path` imported but unused",
+    "row": 18,
+    "column": 21
+  },
+  {
+    "path": "src/rebuild/product_core/memory_export_framework.py",
+    "code": "F401",
+    "message": "`.memory_quality_gate.detect_secrets` imported but unused",
+    "row": 62,
+    "column": 34
+  },
+  {
+    "path": "src/rebuild/product_core/memory_quality_gate.py",
+    "code": "F401",
+    "message": "`dataclasses.field` imported but unused",
+    "row": 41,
+    "column": 36
+  },
+  {
+    "path": "src/rebuild/product_core/memory_router.py",
+    "code": "F401",
+    "message": "`collections.abc.Mapping` imported but unused",
+    "row": 18,
+    "column": 29
+  },
+  {
+    "path": "src/rebuild/product_core/memory_router.py",
+    "code": "F401",
+    "message": "`dataclasses.field` imported but unused",
+    "row": 19,
+    "column": 36
+  },
+  {
+    "path": "src/rebuild/product_core/phase6_readiness.py",
+    "code": "F401",
+    "message": "`collections.abc.Sequence` imported but unused",
+    "row": 3,
+    "column": 38
+  },
+  {
+    "path": "src/rebuild/product_core/project_brain_drill.py",
+    "code": "F401",
+    "message": "`dataclasses.field` imported but unused",
+    "row": 28,
+    "column": 36
+  },
+  {
+    "path": "src/rebuild/product_core/project_brain_drill.py",
+    "code": "F401",
+    "message": "`typing.Any` imported but unused",
+    "row": 29,
+    "column": 20
+  },
+  {
+    "path": "src/rebuild/product_core/project_brain_overview.py",
+    "code": "F401",
+    "message": "`collections.abc.Sequence` imported but unused",
+    "row": 17,
+    "column": 38
+  },
+  {
+    "path": "src/rebuild/product_core/project_brain_overview.py",
+    "code": "F401",
+    "message": "`dataclasses.field` imported but unused",
+    "row": 18,
+    "column": 36
+  },
+  {
+    "path": "src/rebuild/product_core/project_brain_overview.py",
+    "code": "F401",
+    "message": "`typing.Any` imported but unused",
+    "row": 19,
+    "column": 20
+  },
+  {
+    "path": "src/rebuild/product_core/provider_doctor.py",
+    "code": "E731",
+    "message": "Do not assign a `lambda` expression, use a `def`",
+    "row": 193,
+    "column": 5
+  },
+  {
+    "path": "src/rebuild/product_core/skill_document_handoff.py",
+    "code": "F401",
+    "message": "`collections.abc.Sequence` imported but unused",
+    "row": 3,
+    "column": 38
+  },
+  {
+    "path": "src/rebuild/product_core/tag_index.py",
+    "code": "F401",
+    "message": "`collections.abc.Sequence` imported but unused",
+    "row": 5,
+    "column": 38
+  },
+  {
+    "path": "src/rebuild/product_core/workbench_auto_intake.py",
+    "code": "F541",
+    "message": "f-string without any placeholders",
+    "row": 2186,
+    "column": 30
+  },
+  {
+    "path": "src/rebuild/product_core/workbench_auto_intake.py",
+    "code": "F821",
+    "message": "Undefined name `MemoryRouter`",
+    "row": 242,
+    "column": 25
+  },
+  {
+    "path": "src/rebuild/product_core/workbench_document_draft.py",
+    "code": "F401",
+    "message": "`collections.abc.Sequence` imported but unused",
+    "row": 3,
+    "column": 38
+  },
+  {
+    "path": "tools/analysis/run_speed_profile.py",
+    "code": "F401",
+    "message": "`typing.Callable` imported but unused",
+    "row": 6,
+    "column": 20
+  },
+  {
+    "path": "tools/scripts/e2e_core_path_smoke.py",
+    "code": "E402",
+    "message": "Module level import not at top of file",
+    "row": 27,
+    "column": 1
+  },
+  {
+    "path": "tools/scripts/e2e_core_path_smoke.py",
+    "code": "E402",
+    "message": "Module level import not at top of file",
+    "row": 28,
+    "column": 1
+  },
+  {
+    "path": "tools/scripts/e2e_intake_smoke.py",
+    "code": "E402",
+    "message": "Module level import not at top of file",
+    "row": 21,
+    "column": 1
+  },
+  {
+    "path": "tools/scripts/e2e_intake_smoke.py",
+    "code": "E402",
+    "message": "Module level import not at top of file",
+    "row": 22,
+    "column": 1
+  },
+  {
+    "path": "tools/scripts/e2e_intake_smoke.py",
+    "code": "F401",
+    "message": "`backend.replay.contracts.Series` imported but unused",
+    "row": 22,
+    "column": 59
+  },
+  {
+    "path": "tools/scripts/e2e_report_smoke.py",
+    "code": "E402",
+    "message": "Module level import not at top of file",
+    "row": 21,
+    "column": 1
+  },
+  {
+    "path": "tools/scripts/e2e_report_smoke.py",
+    "code": "E402",
+    "message": "Module level import not at top of file",
+    "row": 22,
+    "column": 1
+  },
+  {
+    "path": "tools/scripts/e2e_report_smoke.py",
+    "code": "E402",
+    "message": "Module level import not at top of file",
+    "row": 23,
+    "column": 1
+  },
+  {
+    "path": "tools/scripts/e2e_report_smoke.py",
+    "code": "F841",
+    "message": "Local variable `library` is assigned to but never used",
+    "row": 64,
+    "column": 9
+  },
+  {
+    "path": "tools/scripts/test_auth_e2e.py",
+    "code": "E402",
+    "message": "Module level import not at top of file",
+    "row": 21,
+    "column": 1
+  },
+  {
+    "path": "tools/scripts/trim-runtime.py",
+    "code": "F401",
+    "message": "`os` imported but unused",
+    "row": 27,
+    "column": 8
+  },
+  {
+    "path": "tools/scripts/trim-runtime.py",
+    "code": "F541",
+    "message": "f-string without any placeholders",
+    "row": 411,
+    "column": 11
+  },
+  {
+    "path": "tools/scripts/trim-runtime.py",
+    "code": "F541",
+    "message": "f-string without any placeholders",
+    "row": 417,
+    "column": 15
+  },
+  {
+    "path": "tools/scripts/trim-runtime.py",
+    "code": "F541",
+    "message": "f-string without any placeholders",
+    "row": 418,
+    "column": 15
+  },
+  {
+    "path": "tools/scripts/trim-runtime.py",
+    "code": "F541",
+    "message": "f-string without any placeholders",
+    "row": 420,
+    "column": 15
+  },
+  {
+    "path": "tools/validate_real_replay.py",
+    "code": "E402",
+    "message": "Module level import not at top of file",
+    "row": 13,
+    "column": 1
+  },
+  {
+    "path": "tools/validate_real_replay.py",
+    "code": "E402",
+    "message": "Module level import not at top of file",
+    "row": 15,
+    "column": 1
+  },
+  {
+    "path": "tools/validate_real_replay.py",
+    "code": "E402",
+    "message": "Module level import not at top of file",
+    "row": 16,
+    "column": 1
+  }
+]

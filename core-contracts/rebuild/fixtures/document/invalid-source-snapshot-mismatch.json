@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0.0",
+  "id": "document-invalid-snapshot",
+  "title": "来源快照不匹配",
+  "type": "note",
+  "project_id": null,
+  "markdown_uri": "crp://default/documents/notes/document-invalid-snapshot.md",
+  "content_hash": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+  "source_refs": [
+    {
+      "source_id": "source-text-001",
+      "locator": "char:0-10"
+    }
+  ],
+  "source_snapshot": {
+    "snapshot_id": "snapshot-invalid-mismatch",
+    "snapshot_hash": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "source_refs": [
+      {
+        "source_id": "source-other-001",
+        "locator": "char:0-10"
+      }
+    ],
+    "captured_at": "2026-06-29T13:00:00+08:00"
+  },
+  "blocks": [
+    {
+      "id": "block-ai",
+      "block_type": "paragraph",
+      "origin": "ai",
+      "content": "来源快照必须覆盖文档来源。",
+      "source_refs": [
+        {
+          "source_id": "source-text-001",
+          "locator": "char:0-10"
+        }
+      ],
+      "edited_by_user": false,
+      "lock_policy": "source_required"
+    }
+  ],
+  "revision": 1,
+  "status": "draft",
+  "created_at": "2026-06-29T13:00:00+08:00",
+  "updated_at": "2026-06-29T13:00:00+08:00"
+}

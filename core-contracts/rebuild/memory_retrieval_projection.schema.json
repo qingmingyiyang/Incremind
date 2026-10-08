@@ -1,0 +1,564 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/memory_retrieval_projection.schema.json",
+  "title": "MemoryRetrievalProjection",
+  "description": "由当前权威 Series、Scenario、Atom 和 Project Skill 快照重建的 R0/R1 只读投影。它不拥有业务权威，不包含原始来源正文或 Project Skill 可执行正文。",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "authorityRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "object_type",
+        "object_id",
+        "revision",
+        "content_hash"
+      ],
+      "properties": {
+        "object_type": {
+          "type": "string",
+          "enum": [
+            "series_memory",
+            "scenario",
+            "atom",
+            "project_skill"
+          ]
+        },
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "locator"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 320
+        }
+      }
+    },
+    "scenarioRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenario_id",
+        "revision",
+        "title",
+        "summary_preview"
+      ],
+      "properties": {
+        "scenario_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "summary_preview": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 320
+        }
+      }
+    },
+    "atomRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "atom_id",
+        "revision",
+        "atom_type",
+        "content_preview"
+      ],
+      "properties": {
+        "atom_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "atom_type": {
+          "type": "string",
+          "enum": [
+            "fact",
+            "opinion",
+            "quote",
+            "decision",
+            "action",
+            "question",
+            "preference",
+            "other"
+          ]
+        },
+        "content_preview": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 320
+        }
+      }
+    },
+    "projectSkillRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "skill_id",
+        "revision",
+        "name",
+        "purpose_preview"
+      ],
+      "properties": {
+        "skill_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "purpose_preview": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      }
+    },
+    "r0Item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projection_id",
+        "projection_type",
+        "project_id",
+        "series_id",
+        "series_memory_id",
+        "authority_identity",
+        "authority_fingerprint",
+        "generator_policy_id",
+        "projection_version",
+        "generated_at",
+        "status",
+        "failure_code",
+        "title",
+        "description",
+        "keywords",
+        "source_refs",
+        "derived_from",
+        "content_length"
+      ],
+      "properties": {
+        "projection_id": {
+          "type": "string",
+          "pattern": "^r0_series_router:[0-9a-f]{32}$"
+        },
+        "projection_type": {
+          "const": "r0_series_router"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "series_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "series_memory_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authority_identity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "authority_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "generator_policy_id": {
+          "const": "deterministic-r0-r1-builder-v1"
+        },
+        "projection_version": {
+          "const": "progressive-memory-r0-r1-v1"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "stale",
+            "rebuilding",
+            "failed"
+          ]
+        },
+        "failure_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 320
+        },
+        "keywords": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "source_refs": {
+          "type": "array",
+          "maxItems": 24,
+          "items": {
+            "$ref": "#/$defs/sourceRef"
+          }
+        },
+        "derived_from": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/authorityRef"
+          }
+        },
+        "content_length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3000
+        }
+      }
+    },
+    "r1Item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projection_id",
+        "projection_type",
+        "project_id",
+        "series_id",
+        "series_memory_id",
+        "authority_identity",
+        "authority_fingerprint",
+        "generator_policy_id",
+        "projection_version",
+        "generated_at",
+        "status",
+        "failure_code",
+        "summary",
+        "scenario_refs",
+        "atom_refs",
+        "skill_refs",
+        "source_refs",
+        "derived_from",
+        "content_length"
+      ],
+      "properties": {
+        "projection_id": {
+          "type": "string",
+          "pattern": "^r1_series_digest:[0-9a-f]{32}$"
+        },
+        "projection_type": {
+          "const": "r1_series_digest"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "series_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "series_memory_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authority_identity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "authority_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "generator_policy_id": {
+          "const": "deterministic-r0-r1-builder-v1"
+        },
+        "projection_version": {
+          "const": "progressive-memory-r0-r1-v1"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "stale",
+            "rebuilding",
+            "failed"
+          ]
+        },
+        "failure_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1600
+        },
+        "scenario_refs": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/scenarioRef"
+          }
+        },
+        "atom_refs": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/atomRef"
+          }
+        },
+        "skill_refs": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/projectSkillRef"
+          }
+        },
+        "source_refs": {
+          "type": "array",
+          "maxItems": 24,
+          "items": {
+            "$ref": "#/$defs/sourceRef"
+          }
+        },
+        "derived_from": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/authorityRef"
+          }
+        },
+        "content_length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16000
+        }
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "projection_version",
+    "project_id",
+    "authority_identity",
+    "authority_fingerprint",
+    "generated_at",
+    "status",
+    "derived_from",
+    "project_skill_refs",
+    "r0_items",
+    "r1_items",
+    "safety"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "projection_version": {
+      "type": "string",
+      "const": "progressive-memory-r0-r1-v1"
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority_identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "authority_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "empty"
+      ]
+    },
+    "derived_from": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/authorityRef"
+      }
+    },
+    "project_skill_refs": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/projectSkillRef"
+      }
+    },
+    "r0_items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/r0Item"
+      }
+    },
+    "r1_items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/r1Item"
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "derived",
+        "business_authority",
+        "rebuildable",
+        "source_body_included",
+        "project_skill_body_included",
+        "business_writes_allowed"
+      ],
+      "properties": {
+        "derived": {
+          "const": true
+        },
+        "business_authority": {
+          "const": false
+        },
+        "rebuildable": {
+          "const": true
+        },
+        "source_body_included": {
+          "const": false
+        },
+        "project_skill_body_included": {
+          "const": false
+        },
+        "business_writes_allowed": {
+          "const": false
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "empty"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "derived_from": {
+            "maxItems": 0
+          },
+          "project_skill_refs": {
+            "maxItems": 0
+          },
+          "r0_items": {
+            "maxItems": 0
+          },
+          "r1_items": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "derived_from": {
+            "minItems": 1
+          },
+          "r0_items": {
+            "minItems": 1
+          },
+          "r1_items": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ]
+}

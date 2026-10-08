@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0.0",
+  "id": "model-request-structured-invalid",
+  "project_id": "project-alpha",
+  "capability": "structured_generation",
+  "provider_preference": {
+    "mode": "local_only",
+    "provider": "local-llm",
+    "model": "local-structured-small",
+    "allow_remote": false,
+    "config_version": 1
+  },
+  "payload": {
+    "kind": "memory_extraction",
+    "content": "抽取 Atom 候选。",
+    "input_refs": [
+      {
+        "kind": "source",
+        "object_id": "source-text-001",
+        "uri": "crp://default/sources/source-text-001.json"
+      }
+    ],
+    "source_refs": [
+      {
+        "source_id": "source-text-001",
+        "locator": "char:0-80"
+      }
+    ],
+    "recall_result_id": null
+  },
+  "privacy": {
+    "scope": "local_only",
+    "pii": "none",
+    "allow_remote": false,
+    "redaction": {
+      "applied": false,
+      "strategy": "none"
+    },
+    "retention": "none"
+  },
+  "timeout": {
+    "request_timeout_ms": 30000,
+    "idle_timeout_ms": 10000,
+    "deadline_at": "2026-06-29T16:15:00+08:00"
+  },
+  "cancel": {
+    "cancellable": true,
+    "cancel_token": "cancel-invalid-schema",
+    "requested": false
+  },
+  "budget": {
+    "max_input_tokens": 3000,
+    "max_output_tokens": 1500,
+    "max_total_tokens": 4500,
+    "max_cost_usd": 0
+  },
+  "response_schema": {
+    "type": "json",
+    "json_schema_uri": null,
+    "strict": false
+  },
+  "created_at": "2026-06-29T16:04:00+08:00"
+}

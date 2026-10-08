@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>手机 · 工作台</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500&amp;family=Noto+Serif+SC:wght@500;700&amp;family=Fira+Code:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+.app{--serif:'Noto Serif SC',serif;--sans:'Noto Sans SC',system-ui,sans-serif;--mono:'Fira Code',ui-monospace,monospace}
+.t-light{--paper:#F7F4EE;--panel:#FFFDF9;--sunk:#EFEAE1;--ink:#1C1A17;--ink2:#4E4A44;--muted:#6F6A62;--line:#E6E0D5;--line2:#D2CABC;--red:#C0282F;--onred:#FFFFFF;--shadow:rgba(28,26,23,.14)}
+.t-dark{--paper:#1A1815;--panel:#221F1B;--sunk:#2A2621;--ink:#ECE6DB;--ink2:#C4BDB1;--muted:#A39C90;--line:#332F29;--line2:#48423A;--red:#E66B6F;--onred:#1A1815;--shadow:rgba(0,0,0,.45)}
+.ic{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--line2);flex-shrink:0}
+.dot.on{background:var(--ink)}
+.dot.now{background:var(--red);animation:pulse 1s ease-in-out infinite}
+.dot.red{background:var(--red)}
+.dot.fail{background:transparent;box-shadow:inset 0 0 0 2px var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:focus-visible,a:focus-visible,textarea:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+textarea{font:inherit;color:var(--ink);background:transparent;border:0;outline:none;resize:none}
+textarea::placeholder{color:var(--muted)}
+a{color:inherit;text-decoration:none}
+.seg{color:var(--muted);border-bottom:2px solid transparent}
+.seg.on{color:var(--ink);border-bottom-color:var(--red)}
+</style>
+</helmet>
+<div class="app {{themeClass}}" style="width:390px;height:844px;position:relative;overflow:hidden;display:flex;flex-direction:column;background:var(--paper);color:var(--ink);font-family:var(--sans)">
+
+<header style="height:56px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--line)">
+<a href="Companion.dc.html" aria-label="伙伴" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center">
+<img src="/_blob/534ec8071ddfdf6c7d1ed4414f26015e" alt="" style="width:32px;height:32px;border-radius:50%;background:var(--sunk);object-fit:cover">
+</a>
+<button aria-label="切换项目" style="flex-grow:1;display:flex;align-items:center;justify-content:center;gap:6px;height:44px;font-size:15px">
+<span style="width:6px;height:6px;border-radius:50%;background:var(--red)"></span><span>创作助手</span>
+<svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color:var(--muted)"><path d="M6 9l6 6 6-6"></path></svg>
+</button>
+<button aria-label="进度" aria-expanded="{{trayOpen}}" onClick="{{toggleTray}}" style="height:32px;padding:0 10px;border:1px solid var(--line2);border-radius:16px;display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px">
+<span class="dot now"></span><span>1</span><span class="dot red" style="margin-left:4px"></span><span>{{pend}}</span>
+</button>
+</header>
+
+<sc-if value="{{trayOpen}}" hint-placeholder-val="{{ false }}">
+<div role="region" aria-label="进度列表" style="position:absolute;top:56px;left:0;right:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line2);box-shadow:0 12px 24px var(--shadow)">
+<div style="display:flex;align-items:center;gap:12px;min-height:48px;padding:0 16px"><span class="dot now"></span><span style="flex-grow:1;font-size:14px">面试复盘.m4a</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">62%</span></div>
+<sc-if value="{{hasPend}}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;align-items:center;gap:12px;min-height:48px;padding:0 16px;border-top:1px solid var(--line)"><span class="dot red"></span><span style="flex-grow:1;font-size:14px">短视频开头的三个钩子</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">{{pend}}</span></div>
+</sc-if>
+<div style="display:flex;align-items:center;gap:12px;min-height:48px;padding:0 16px;border-top:1px solid var(--line)"><span class="dot fail"></span><span style="flex-grow:1;font-size:14px">用户研究.pdf</span><button style="height:40px;font-size:13px;color:var(--red)">重试</button></div>
+</div>
+</sc-if>
+
+<div style="flex-grow:1;min-height:0;overflow:auto;padding:16px 16px 12px;display:flex;flex-direction:column;gap:20px">
+<div style="align-self:flex-end;max-width:280px;background:var(--sunk);border-radius:12px;padding:9px 12px;font-size:14px;line-height:1.6;color:var(--ink2);word-break:break-all">https://mp.weixin.qq.com/s/hook-3s</div>
+<div style="display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;align-items:center;gap:10px">
+<svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color:var(--red);flex-shrink:0"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"></path></svg>
+<span style="font-size:15px;font-weight:500;flex-grow:1">短视频开头的三个钩子</span>
+<span style="display:inline-flex;gap:4px"><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span></span>
+<button aria-label="打开整理稿" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:var(--ink2)"><svg class="ic" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"></path></svg></button>
+</div>
+<sc-for list="{{chips}}" as="c" hint-placeholder-count="2">
+<sc-if value="{{c.visible}}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;align-items:center;gap:4px;min-height:44px;padding:0 4px 0 12px;border:1px solid {{c.border}};border-radius:4px;background:var(--panel);font-size:14px">
+<span style="flex-grow:1">{{c.text}}</span>
+<sc-if value="{{c.pending}}" hint-placeholder-val="{{ true }}">
+<span style="display:inline-flex">
+<button aria-label="确认" onClick="{{c.ok}}" style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;color:var(--ink2)"><svg class="ic" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></button>
+<button aria-label="丢弃" onClick="{{c.drop}}" style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</span>
+</sc-if>
+<sc-if value="{{c.confirmed}}" hint-placeholder-val="{{ false }}">
+<span aria-label="已确认" style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;color:var(--red)"><svg class="ic" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span>
+</sc-if>
+</div>
+</sc-if>
+</sc-for>
+</div>
+<div style="align-self:flex-end;max-width:280px;background:var(--sunk);border-radius:12px;padding:9px 12px;font-size:14px;line-height:1.6;color:var(--ink2)">上次那篇说的开头技巧有哪些？</div>
+<div style="display:flex;gap:10px;align-items:flex-start">
+<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" style="fill:var(--red);flex-shrink:0;margin-top:8px"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"></path></svg>
+<div style="display:flex;flex-direction:column;gap:8px">
+<p style="margin:0;font-family:var(--serif);font-size:16px;line-height:1.8">三种：制造悬念、制造反差、用具体数字。开头 3 秒内用上其中一种<sup style="color:var(--red);font-family:var(--mono);font-size:10px;padding:0 2px">1</sup>，数字比形容词更抓人<sup style="color:var(--red);font-family:var(--mono);font-size:10px;padding:0 2px">2</sup>。</p>
+<div style="display:flex;gap:6px;font-family:var(--mono);font-size:11px;color:var(--muted)"><span style="padding:1px 5px;border:1px solid var(--line);border-radius:4px">认 2</span><span style="padding:1px 5px;border:1px solid var(--line);border-radius:4px">摘 1</span><span style="padding:1px 5px;border:1px solid var(--line);border-radius:4px">原 1</span></div>
+</div>
+</div>
+</div>
+
+<div style="flex-shrink:0;padding:8px 12px 10px">
+<div style="background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:10px 8px 6px 14px;display:flex;flex-direction:column;gap:4px">
+<textarea aria-label="输入" rows="1" placeholder="{{placeholder}}" style="width:100%;font-size:16px;line-height:1.5"></textarea>
+<div style="display:flex;align-items:center">
+<button aria-label="添加文件" style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+<button aria-label="录音" style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg></button>
+<div style="flex-grow:1"></div>
+<sc-for list="{{intents}}" as="it" hint-placeholder-count="3">
+<button class="seg {{it.cls}}" aria-pressed="{{it.pressed}}" onClick="{{it.pick}}" style="height:36px;padding:0 8px;font-size:13px">{{it.label}}</button>
+</sc-for>
+<button aria-label="发送" style="margin-left:6px;width:38px;height:38px;border-radius:50%;background:var(--red);color:var(--onred);display:flex;align-items:center;justify-content:center"><svg class="ic" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" style="stroke-width:2"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></button>
+</div>
+</div>
+</div>
+
+<nav aria-label="主导航" style="height:60px;flex-shrink:0;display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));border-top:1px solid var(--line)">
+<a href="Mobile.dc.html" aria-current="page" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--red)">
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg><span style="font-size:11px;color:var(--ink)">工作台</span>
+</a>
+<a href="MobileLibrary.dc.html" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"></path><path d="M3 13l9 5 9-5"></path></svg><span style="font-size:11px">资料库</span>
+</a>
+<a href="Settings.dc.html" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg><span style="font-size:11px">设置</span>
+</a>
+</nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { intent: 'ask', chips: { c1: 'pending', c2: 'pending' }, trayOpen: false };
+  }
+  renderVals() {
+    const s = this.state;
+    const set = (p) => this.setState(p);
+    const defs = [{ id: 'c1', text: '开头 3 秒决定完播率' }, { id: 'c2', text: '标题用具体数字更有效' }];
+    const chips = defs.map((c) => {
+      const st = s.chips[c.id];
+      return {
+        text: c.text, visible: st !== 'drop', pending: st === 'pending', confirmed: st === 'ok',
+        border: st === 'ok' ? 'var(--ink2)' : 'var(--line2)',
+        ok: () => this.setState({ chips: Object.assign({}, this.state.chips, { [c.id]: 'ok' }) }),
+        drop: () => this.setState({ chips: Object.assign({}, this.state.chips, { [c.id]: 'drop' }) })
+      };
+    });
+    const pend = chips.filter((c) => c.pending).length;
+    const ph = { remember: '丢进来', ask: '问问你记住的', do: '要我做什么' };
+    return {
+      themeClass: this.props.dark ? 't-dark' : 't-light',
+      chips: chips, pend: String(pend), hasPend: pend > 0,
+      trayOpen: s.trayOpen, toggleTray: () => set({ trayOpen: !s.trayOpen }),
+      placeholder: ph[s.intent],
+      intents: [['remember', '记住'], ['ask', '问'], ['do', '干活']].map((d) => ({ label: d[1], cls: s.intent === d[0] ? 'on' : '', pressed: s.intent === d[0], pick: () => set({ intent: d[0] }) }))
+    };
+  }
+}
+</script>
+</body>
+</html>

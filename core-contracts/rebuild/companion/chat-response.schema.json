@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/rebuild/companion/chat-response.schema.json",
+  "title": "Companion Chat Response",
+  "description": "Companion sidecar 返回给 Electron main 的有界聊天结果与脱敏 trace。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "occurred_at", "source", "payload"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0.0"},
+    "request_id": {"$ref": "#/$defs/id"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "source": {"type": "string", "enum": ["fastapi_sidecar"]},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "session_id",
+        "message_id",
+        "context_epoch",
+        "text",
+        "retryable",
+        "failure",
+        "trace",
+        "state_hint"
+      ],
+      "properties": {
+        "status": {"type": "string", "enum": ["completed", "failed", "cancelled", "offline_fallback"]},
+        "session_id": {"$ref": "#/$defs/id"},
+        "message_id": {
+          "oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]
+        },
+        "context_epoch": {"type": "integer", "minimum": 1},
+        "text": {"type": ["string", "null"], "maxLength": 8000},
+        "retryable": {"type": "boolean"},
+        "failure": {
+          "oneOf": [{"$ref": "#/$defs/failure"}, {"type": "null"}]
+        },
+        "trace": {"$ref": "#/$defs/trace"},
+        "state_hint": {"type": "string", "enum": ["ready", "talking", "attention", "offline"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"enum": ["completed", "offline_fallback"]}}},
+          "then": {
+            "properties": {
+              "message_id": {"$ref": "#/$defs/id"},
+              "text": {"type": "string", "minLength": 1, "maxLength": 8000},
+              "failure": {"type": "null"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "failed"}}},
+          "then": {
+            "properties": {
+              "text": {"type": "null"},
+              "failure": {"$ref": "#/$defs/failure"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "cancelled"}}},
+          "then": {
+            "properties": {
+              "text": {"type": "null"},
+              "retryable": {"const": false},
+              "failure": {"$ref": "#/$defs/failure"}
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9:_-]{0,127}$"},
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": ["cancelled", "timeout", "provider_unavailable", "provider_error", "invalid_response", "privacy_blocked", "conflict", "internal_error"]
+        },
+        "message": {"type": "string", "minLength": 1, "maxLength": 240}
+      }
+    },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route", "provider_mode", "prompt_revision", "profile_revision", "memory_ids"],
+      "properties": {
+        "route": {"type": "string", "const": "companion.chat"},
+        "provider_mode": {"type": "string", "enum": ["local", "remote", "none"]},
+        "prompt_revision": {"type": "integer", "minimum": 1},
+        "profile_revision": {"type": "integer", "minimum": 1},
+        "memory_ids": {
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/id"}
+        }
+      }
+    }
+  }
+}

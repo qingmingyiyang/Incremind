@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0.0",
+  "envelope_revision": "packaged-soak-win-baseline-2026-08-27-r1",
+  "candidate": {
+    "size_bytes": 235732992,
+    "last_write_utc": "2026-08-26T21:08:08.000Z"
+  },
+  "sample_contract": {
+    "duration_seconds": 3600,
+    "sample_interval_seconds": 10,
+    "minimum_samples": 360,
+    "baseline_count": 3
+  },
+  "derivation": {
+    "method": "observed_max_plus_full_observed_range",
+    "validation_refs": [
+      "validation-P7-PACKAGED-LONG-DURATION-BASELINE-001.md",
+      "validation-P7-PACKAGED-LONG-DURATION-BASELINE-002.md",
+      "validation-P7-PACKAGED-LONG-DURATION-BASELINE-003.md"
+    ]
+  },
+  "limits": {
+    "peak_rss_bytes": 1302822912,
+    "peak_private_bytes": 996950016,
+    "peak_handles": 4006,
+    "peak_threads": 187,
+    "peak_processes": 8
+  }
+}

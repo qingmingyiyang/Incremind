@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://schemas/ai/tool-definition-v2",
+  "title": "AI Tool Definition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool_id", "version", "display_name", "description", "source", "owner_id", "effect", "data_classes", "destination", "input_schema_uri", "output_schema_uri", "receipt_schema_uri", "operation_semantics", "execution_mode", "resource_locks", "idempotency", "retry_policy", "verification_tool_id", "compensation_tool_id", "mutability", "egress_class", "network_scope", "data_egress_scope", "timeout_ms", "required_scopes", "boundary_requirements", "available", "nested_model_handle_budget"],
+  "properties": {
+    "schema_version": {"const": "2.0.0"},
+    "tool_id": {"type": "string", "minLength": 1, "maxLength": 160},
+    "version": {"type": "integer", "minimum": 1},
+    "display_name": {"type": "string", "minLength": 1, "maxLength": 160},
+    "description": {"type": "string", "minLength": 1, "maxLength": 2048},
+    "source": {"enum": ["core", "platform", "plugin", "mcp", "workflow"]},
+    "owner_id": {"type": "string", "minLength": 1, "maxLength": 160},
+    "effect": {"enum": ["read", "write", "external", "platform", "delete"]},
+    "data_classes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "destination": {"enum": ["local", "provider", "mcp", "platform"]},
+    "input_schema_uri": {"type": "string", "minLength": 1},
+    "output_schema_uri": {"type": "string", "minLength": 1},
+    "receipt_schema_uri": {"type": ["string", "null"], "minLength": 1},
+    "operation_semantics": {"enum": ["none", "read_only", "receipt_required"]},
+    "execution_mode": {"enum": ["parallel", "exclusive"]},
+    "resource_locks": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "idempotency": {"enum": ["idempotent", "verify_before_retry", "never_retry"]},
+    "retry_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_attempts", "backoff_ms", "retryable_error_codes"],
+      "properties": {
+        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+        "backoff_ms": {"type": "integer", "minimum": 0, "maximum": 300000},
+        "retryable_error_codes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "verification_tool_id": {"type": ["string", "null"], "minLength": 1},
+    "compensation_tool_id": {"type": ["string", "null"], "minLength": 1},
+    "mutability": {"enum": ["read_only", "reversible", "irreversible"]},
+    "egress_class": {"enum": ["none", "local", "remote"]},
+    "network_scope": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "data_egress_scope": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 3600000},
+    "nested_model_handle_budget": {"type": "integer", "minimum": 1, "maximum": 16},
+    "required_scopes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "boundary_requirements": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "available": {"type": "boolean"},
+    "connection_identity": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["protocol", "server_id", "protocol_version", "manifest_revision", "endpoint_identity", "credential_subject_id", "transport_generation", "catalog_revision", "tool_schema_revision"],
+      "properties": {
+        "protocol": {"const": "mcp"},
+        "server_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "protocol_version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "manifest_revision": {"type": "integer", "minimum": 1},
+        "endpoint_identity": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "credential_subject_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "transport_generation": {"type": "integer", "minimum": 1},
+        "catalog_revision": {"type": "integer", "minimum": 1},
+        "tool_schema_revision": {"type": "integer", "minimum": 1}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"effect": {"enum": ["write", "external", "platform", "delete"]}}},
+      "then": {
+        "properties": {
+          "operation_semantics": {"const": "receipt_required"},
+          "receipt_schema_uri": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"idempotency": {"const": "verify_before_retry"}}},
+      "then": {"properties": {"verification_tool_id": {"type": "string", "minLength": 1}}}
+    },
+    {
+      "if": {"properties": {"verification_tool_id": {"type": "string"}}},
+      "then": {"properties": {"idempotency": {"const": "verify_before_retry"}}}
+    },
+    {
+      "if": {"properties": {"idempotency": {"const": "never_retry"}}},
+      "then": {"properties": {"retry_policy": {"properties": {"max_attempts": {"const": 1}}}}}
+    },
+    {
+      "if": {"properties": {"retry_policy": {"properties": {"max_attempts": {"const": 1}}}}},
+      "then": {"properties": {"retry_policy": {"properties": {"retryable_error_codes": {"maxItems": 0}}}}}
+    },
+    {
+      "if": {"properties": {"egress_class": {"const": "remote"}}},
+      "then": {
+        "properties": {
+          "destination": {"enum": ["provider", "mcp", "platform"]},
+          "network_scope": {"minItems": 1},
+          "data_egress_scope": {"minItems": 1}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"egress_class": {"enum": ["none", "local"]}}},
+      "then": {
+        "properties": {
+          "network_scope": {"maxItems": 0},
+          "data_egress_scope": {"maxItems": 0}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"effect": {"const": "external"}}},
+      "then": {"properties": {"egress_class": {"const": "remote"}}}
+    },
+    {
+      "if": {"properties": {"effect": {"const": "read"}}},
+      "then": {"properties": {"mutability": {"const": "read_only"}}}
+    },
+    {
+      "if": {"properties": {"mutability": {"const": "irreversible"}}},
+      "then": {"anyOf": [
+        {"properties": {"execution_mode": {"const": "exclusive"}}},
+        {"properties": {
+          "tool_id": {"const": "external.task.execute"}, "version": {"const": 1},
+          "source": {"const": "core"}, "owner_id": {"const": "external-task-runner"},
+          "effect": {"const": "external"}, "destination": {"const": "provider"},
+          "operation_semantics": {"const": "receipt_required"}, "execution_mode": {"const": "parallel"},
+          "mutability": {"const": "irreversible"}, "egress_class": {"const": "remote"},
+          "idempotency": {"const": "never_retry"},
+          "retry_policy": {"const": {"max_attempts": 1, "backoff_ms": 0, "retryable_error_codes": []}},
+          "timeout_ms": {"const": 1230000}, "boundary_requirements": {"const": ["external_execute"]},
+          "available": {"const": true}, "verification_tool_id": {"type": "null"},
+          "compensation_tool_id": {"type": "null"}, "connection_identity": {"type": "null"},
+          "nested_model_handle_budget": {"const": 1},
+          "receipt_schema_uri": {"type": "string", "pattern": "\\S"},
+          "data_classes": {"minItems": 1}, "network_scope": {"minItems": 1}, "data_egress_scope": {"minItems": 1}
+        }}
+      ]}
+    },
+    {
+      "if": {"properties": {"mutability": {"const": "read_only"}}},
+      "then": {"properties": {"compensation_tool_id": {"type": "null"}}}
+    },
+    {
+      "if": {"properties": {"effect": {"const": "delete"}}},
+      "then": {"properties": {"execution_mode": {"const": "exclusive"}}}
+    },
+    {
+      "if": {"properties": {"source": {"const": "mcp"}}},
+      "then": {
+        "required": ["connection_identity"],
+        "properties": {
+          "destination": {"const": "mcp"},
+          "connection_identity": {"type": "object"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"source": {"enum": ["core", "platform", "plugin", "workflow"]}}},
+      "then": {"properties": {"connection_identity": {"type": ["null"]}}}
+    }
+  ]
+}

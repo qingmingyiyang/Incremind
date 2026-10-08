@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "projects": [
+    {"id": "research", "name": "机器人研究", "scenes": {"算法": "向量检索 召回 排序 策略 评测 机器人算法", "论文": "论文 文献 阅读 图神经网络 引用"}},
+    {"id": "career", "name": "求职", "scenes": {"简历": "简历 作品集 岗位 经历 实习", "面试": "面试 自我介绍 算法题 STAR"}},
+    {"id": "brand", "name": "品牌", "scenes": {"供应链": "供应链 产地 溯源 仓储 运输 农产品", "营销": "品牌 营销 电商 客户 渠道"}},
+    {"id": "writing", "name": "写作", "scenes": {"小说": "小说 人物 故事 情节 叙事", "随笔": "随笔 观察 感受 文章 写作"}},
+    {"id": "life", "name": "生活", "scenes": {"妈妈": "妈妈 红茶 礼物 厨房 陶瓷", "爸爸": "爸爸 钓鱼 渔具 山路 徒步", "朋友": "朋友 咖啡 店铺 待购 唱片 周末"}, "life_project": true}
+  ],
+  "materials": [
+    {"id": "P01", "current_project": "research", "title": "研究计划", "summary": "研究安排", "expected": {"project_id": "research", "scene": null}},
+    {"id": "P02", "current_project": "research", "title": "向量检索召回", "summary": "召回排序实验", "expected": {"project_id": "research", "scene": "算法"}},
+    {"id": "P03", "current_project": "brand", "title": "图神经网络论文", "summary": "文献引用与论文阅读", "expected": {"project_id": "research", "scene": "论文"}},
+    {"id": "P04", "current_project": "career", "title": "机器人策略评测", "summary": "算法评测和排序", "expected": {"project_id": "research", "scene": "算法"}},
+    {"id": "P05", "current_project": "writing", "title": "文献引用", "summary": "阅读论文的方法", "expected": {"project_id": "research", "scene": "论文"}},
+    {"id": "P06", "current_project": "research", "title": "求职简历", "summary": "岗位实习经历", "expected": {"project_id": "career", "scene": "简历"}},
+    {"id": "P07", "current_project": "career", "title": "面试自我介绍", "summary": "面试练习", "expected": {"project_id": "career", "scene": "面试"}},
+    {"id": "P08", "current_project": "life", "title": "作品集简历", "summary": "实习经历整理", "expected": {"project_id": "career", "scene": "简历"}},
+    {"id": "P09", "current_project": "writing", "title": "STAR面试", "summary": "面试自我介绍", "expected": {"project_id": "career", "scene": "面试"}},
+    {"id": "P10", "current_project": "research", "title": "农产品供应链", "summary": "产地溯源仓储", "expected": {"project_id": "brand", "scene": "供应链"}},
+    {"id": "P11", "current_project": "brand", "title": "电商营销渠道", "summary": "客户渠道与品牌营销", "expected": {"project_id": "brand", "scene": "营销"}},
+    {"id": "P12", "current_project": "life", "title": "仓储运输", "summary": "农产品产地溯源", "expected": {"project_id": "brand", "scene": "供应链"}},
+    {"id": "P13", "current_project": "career", "title": "品牌客户", "summary": "电商渠道营销", "expected": {"project_id": "brand", "scene": "营销"}},
+    {"id": "P14", "current_project": "research", "title": "小说人物情节", "summary": "故事叙事", "expected": {"project_id": "writing", "scene": "小说"}},
+    {"id": "P15", "current_project": "writing", "title": "观察随笔", "summary": "文章中的观察与感受", "expected": {"project_id": "writing", "scene": "随笔"}},
+    {"id": "P16", "current_project": "life", "title": "故事情节", "summary": "小说人物叙事", "expected": {"project_id": "writing", "scene": "小说"}},
+    {"id": "P17", "current_project": "brand", "title": "写作随笔", "summary": "感受与观察", "expected": {"project_id": "writing", "scene": "随笔"}},
+    {"id": "P18", "current_project": "life", "title": "生活计划", "summary": "生活安排", "expected": {"project_id": "life", "scene": null}},
+    {"id": "P19", "current_project": "career", "title": "妈妈厨房陶瓷", "summary": "给妈妈的红茶礼物", "expected": {"project_id": "life", "scene": "妈妈"}},
+    {"id": "P20", "current_project": "research", "title": "爸爸钓鱼", "summary": "山路徒步与渔具", "expected": {"project_id": "life", "scene": "爸爸"}},
+    {"id": "P21", "current_project": "inbox", "title": "灵感 小说人物的转折", "summary": "故事情节", "quick_note": true, "expected": {"project_id": "writing", "scene": "小说"}},
+    {"id": "P22", "current_project": "inbox", "title": "灵感 论文引用视角", "summary": "文献阅读", "quick_note": true, "expected": {"project_id": "research", "scene": "论文"}},
+    {"id": "P23", "current_project": "inbox", "title": "咖啡店铺待购清单", "summary": "朋友周末咖啡", "quick_note": true, "expected": {"project_id": "life", "scene": "朋友"}},
+    {"id": "P24", "current_project": "inbox", "title": "红茶礼物点子送妈妈", "summary": "陶瓷厨房", "quick_note": true, "expected": {"project_id": "life", "scene": "妈妈"}},
+    {"id": "P25", "current_project": "inbox", "title": "渔具礼物点子送爸爸", "summary": "爸爸钓鱼", "quick_note": true, "expected": {"project_id": "life", "scene": "爸爸"}},
+    {"id": "P26", "current_project": "inbox", "title": "电商营销灵感", "summary": "客户渠道", "quick_note": true, "expected": {"project_id": "brand", "scene": "营销"}}
+  ]
+}

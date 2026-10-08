@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "name": "credential_store",
+  "platform": "windows",
+  "adapter_id": "desktop_windows",
+  "available": false,
+  "permission_required": true,
+  "permission": "denied",
+  "provided_uri": null,
+  "error": null,
+  "checked_at": "2026-06-29T11:04:00+08:00"
+}

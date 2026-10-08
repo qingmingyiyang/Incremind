@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/ai/analyze-source-receipt.schema.json",
+  "title": "AnalyzeSourceInvocationReceipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "receipt_id", "turn_id", "tool_call_id", "operation_id", "tool_name", "tool_version", "idempotency_key", "outcome", "evidence_refs"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "receipt_id": {"type": "string", "minLength": 1},
+    "turn_id": {"type": "string", "minLength": 1},
+    "tool_call_id": {"type": "string", "minLength": 1},
+    "operation_id": {"type": "string", "minLength": 1},
+    "tool_name": {"const": "analyze_source"},
+    "tool_version": {"const": 1},
+    "idempotency_key": {"type": "string", "minLength": 16},
+    "outcome": {"$ref": "#/$defs/outcome"},
+    "evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/controlledRef"}}
+  },
+  "$defs": {
+    "controlledRef": {"type": "string", "pattern": "^crp://[A-Za-z0-9][A-Za-z0-9._~/-]*$"},
+    "outcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason", "manifest_ref", "manifest_revision", "job_id", "job_ref", "job_revision", "replayed"],
+      "properties": {
+        "status": {"enum": ["terminal", "admitted"]},
+        "reason": {"type": ["string", "null"]},
+        "manifest_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/controlledRef"}]},
+        "manifest_revision": {"type": ["string", "null"]},
+        "source_manifest_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/controlledRef"}]},
+        "source_manifest_revision": {"type": ["string", "null"]},
+        "job_id": {"type": ["string", "null"]},
+        "job_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/controlledRef"}]},
+        "canonical_job_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/controlledRef"}]},
+        "job_revision": {"type": ["integer", "null"], "minimum": 1},
+        "replayed": {"type": "boolean"},
+        "credential_use": {
+          "type": "object", "additionalProperties": false,
+          "required": ["authorization_revision", "secret_generation", "result"],
+          "properties": {
+            "authorization_revision": {"type": "integer", "minimum": 1},
+            "secret_generation": {"type": "integer", "minimum": 1},
+            "result": {"enum": ["resolved", "admitted", "terminal"]}
+          }
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "terminal"}}}, "then": {"properties": {"reason": {"type": "string"}, "job_id": {"type": "null"}, "job_ref": {"type": "null"}, "job_revision": {"type": "null"}, "replayed": {"const": false}}}},
+        {"if": {"properties": {"status": {"const": "admitted"}}}, "then": {"required": ["source_manifest_ref", "source_manifest_revision", "canonical_job_ref"], "properties": {"reason": {"type": "null"}, "manifest_ref": {"$ref": "#/$defs/controlledRef"}, "manifest_revision": {"type": "string", "minLength": 1}, "source_manifest_ref": {"$ref": "#/$defs/controlledRef"}, "source_manifest_revision": {"type": "string", "minLength": 1}, "job_id": {"type": "string", "minLength": 1}, "job_ref": {"$ref": "#/$defs/controlledRef"}, "canonical_job_ref": {"$ref": "#/$defs/controlledRef"}, "job_revision": {"type": "integer", "minimum": 1}}}}
+      ]
+    }
+  }
+}

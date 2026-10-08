@@ -1,0 +1,595 @@
+{
+  "documents": [],
+  "insights": [],
+  "questions": [],
+  "gap_annotation": {
+    "scope": "Independent synthetic lexical and protocol controls; not service grouping or model semantic quality",
+    "version": "@1",
+    "thresholds_tuned": false
+  },
+  "gap_cases": [
+    {
+      "id": "below-threshold",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ],
+          "trace": [
+            {
+              "coverage": 0.599
+            }
+          ]
+        }
+      },
+      "expected": true
+    },
+    {
+      "id": "at-threshold",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ],
+          "trace": [
+            {
+              "coverage": 0.6
+            }
+          ]
+        }
+      },
+      "expected": false
+    },
+    {
+      "id": "high-coverage",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ],
+          "trace": [
+            {
+              "coverage": 1
+            }
+          ]
+        }
+      },
+      "expected": false
+    },
+    {
+      "id": "zero-coverage",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ],
+          "trace": [
+            {
+              "coverage": 0
+            }
+          ]
+        }
+      },
+      "expected": true
+    },
+    {
+      "id": "zero-citations",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [],
+          "trace": [
+            {
+              "coverage": 1
+            }
+          ]
+        }
+      },
+      "expected": true
+    },
+    {
+      "id": "no-match",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "no_match": true,
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ],
+          "trace": [
+            {
+              "coverage": 1
+            }
+          ]
+        }
+      },
+      "expected": true
+    },
+    {
+      "id": "unknown-none",
+      "operation": "insufficient",
+      "input": {
+        "answer": null
+      },
+      "expected": null
+    },
+    {
+      "id": "unknown-array",
+      "operation": "insufficient",
+      "input": {
+        "answer": []
+      },
+      "expected": null
+    },
+    {
+      "id": "unknown-citations-missing",
+      "operation": "insufficient",
+      "input": {
+        "answer": {}
+      },
+      "expected": null
+    },
+    {
+      "id": "unknown-citations-shape",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": {}
+        }
+      },
+      "expected": null
+    },
+    {
+      "id": "unknown-trace-missing",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "id": "unknown-trace-empty",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ],
+          "trace": []
+        }
+      },
+      "expected": null
+    },
+    {
+      "id": "unknown-trace-entry",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ],
+          "trace": [
+            null
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "id": "unknown-boolean-coverage",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ],
+          "trace": [
+            {
+              "coverage": true
+            }
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "id": "unknown-text-coverage",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ],
+          "trace": [
+            {
+              "coverage": "0.5"
+            }
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "id": "unknown-negative-coverage",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ],
+          "trace": [
+            {
+              "coverage": -0.1
+            }
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "id": "unknown-over-coverage",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ],
+          "trace": [
+            {
+              "coverage": 1.1
+            }
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "id": "unknown-coverage-missing",
+      "operation": "insufficient",
+      "input": {
+        "answer": {
+          "citations": [
+            {
+              "id": "synthetic-material"
+            }
+          ],
+          "trace": [
+            {}
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "id": "zh-exact",
+      "operation": "related",
+      "input": {
+        "first": "如何安排项目预算？",
+        "second": "如何安排项目预算!"
+      },
+      "expected": true
+    },
+    {
+      "id": "zh-overlap",
+      "operation": "related",
+      "input": {
+        "first": "项目预算如何安排",
+        "second": "请说明项目预算如何安排"
+      },
+      "expected": true
+    },
+    {
+      "id": "zh-unrelated",
+      "operation": "related",
+      "input": {
+        "first": "项目预算如何安排",
+        "second": "晚餐食谱包含哪些菜"
+      },
+      "expected": false
+    },
+    {
+      "id": "zh-different-number",
+      "operation": "related",
+      "input": {
+        "first": "预算100如何安排",
+        "second": "预算200如何安排"
+      },
+      "expected": false
+    },
+    {
+      "id": "en-case",
+      "operation": "related",
+      "input": {
+        "first": "Project budget report?",
+        "second": "PROJECT BUDGET REPORT!"
+      },
+      "expected": true
+    },
+    {
+      "id": "en-overlap",
+      "operation": "related",
+      "input": {
+        "first": "plan project budget",
+        "second": "please plan project budget carefully"
+      },
+      "expected": true
+    },
+    {
+      "id": "en-unrelated",
+      "operation": "related",
+      "input": {
+        "first": "winter travel packing",
+        "second": "database index migration"
+      },
+      "expected": false
+    },
+    {
+      "id": "en-different-number",
+      "operation": "related",
+      "input": {
+        "first": "Report budget 100 units",
+        "second": "Report budget 200 units"
+      },
+      "expected": false
+    },
+    {
+      "id": "whitespace",
+      "operation": "related",
+      "input": {
+        "first": "alpha beta gamma",
+        "second": "alpha  beta\tgamma"
+      },
+      "expected": true
+    },
+    {
+      "id": "empty-text",
+      "operation": "related",
+      "input": {
+        "first": "",
+        "second": "some question"
+      },
+      "expected": false
+    },
+    {
+      "id": "fresh",
+      "operation": "selection",
+      "input": {
+        "items": [
+          {
+            "id": "gap-fresh",
+            "last_at": "2026-10-03T00:00:00+00:00",
+            "unresolved": true
+          }
+        ],
+        "now": "2026-10-03T00:00:00+00:00",
+        "dismissed": [],
+        "enabled": true
+      },
+      "expected": [
+        "gap-fresh"
+      ]
+    },
+    {
+      "id": "before-ninety-days",
+      "operation": "selection",
+      "input": {
+        "items": [
+          {
+            "id": "gap-recent",
+            "last_at": "2026-07-05T00:00:01+00:00",
+            "unresolved": true
+          }
+        ],
+        "now": "2026-10-03T00:00:00+00:00",
+        "dismissed": [],
+        "enabled": true
+      },
+      "expected": [
+        "gap-recent"
+      ]
+    },
+    {
+      "id": "exact-ninety-days",
+      "operation": "selection",
+      "input": {
+        "items": [
+          {
+            "id": "gap-expired",
+            "last_at": "2026-07-05T00:00:00+00:00",
+            "unresolved": true
+          }
+        ],
+        "now": "2026-10-03T00:00:00+00:00",
+        "dismissed": [],
+        "enabled": true
+      },
+      "expected": []
+    },
+    {
+      "id": "after-ninety-days",
+      "operation": "selection",
+      "input": {
+        "items": [
+          {
+            "id": "gap-expired",
+            "last_at": "2026-07-04T00:00:00+00:00",
+            "unresolved": true
+          }
+        ],
+        "now": "2026-10-03T00:00:00+00:00",
+        "dismissed": [],
+        "enabled": true
+      },
+      "expected": []
+    },
+    {
+      "id": "future-clock",
+      "operation": "selection",
+      "input": {
+        "items": [
+          {
+            "id": "gap-future",
+            "last_at": "2026-10-03T00:00:01+00:00",
+            "unresolved": true
+          }
+        ],
+        "now": "2026-10-03T00:00:00+00:00",
+        "dismissed": [],
+        "enabled": true
+      },
+      "expected": []
+    },
+    {
+      "id": "resolved",
+      "operation": "selection",
+      "input": {
+        "items": [
+          {
+            "id": "gap-resolved",
+            "last_at": "2026-10-03T00:00:00+00:00",
+            "unresolved": false
+          }
+        ],
+        "now": "2026-10-03T00:00:00+00:00",
+        "dismissed": [],
+        "enabled": true
+      },
+      "expected": []
+    },
+    {
+      "id": "dismissed",
+      "operation": "selection",
+      "input": {
+        "items": [
+          {
+            "id": "gap-dismissed",
+            "last_at": "2026-10-03T00:00:00+00:00",
+            "unresolved": true
+          }
+        ],
+        "now": "2026-10-03T00:00:00+00:00",
+        "dismissed": [
+          "gap-dismissed"
+        ],
+        "enabled": true
+      },
+      "expected": []
+    },
+    {
+      "id": "disabled-recording",
+      "operation": "selection",
+      "input": {
+        "items": [
+          {
+            "id": "gap-off",
+            "last_at": "2026-10-03T00:00:00+00:00",
+            "unresolved": true
+          }
+        ],
+        "now": "2026-10-03T00:00:00+00:00",
+        "dismissed": [],
+        "enabled": false
+      },
+      "expected": []
+    },
+    {
+      "id": "stable-order",
+      "operation": "selection",
+      "input": {
+        "items": [
+          {
+            "id": "gap-a",
+            "last_at": "2026-10-03T00:00:00+00:00",
+            "unresolved": true
+          },
+          {
+            "id": "gap-b",
+            "last_at": "2026-10-03T00:00:00+00:00",
+            "unresolved": true
+          }
+        ],
+        "now": "2026-10-03T00:00:00+00:00",
+        "dismissed": [],
+        "enabled": true
+      },
+      "expected": [
+        "gap-b",
+        "gap-a"
+      ]
+    },
+    {
+      "id": "mixed-selection",
+      "operation": "selection",
+      "input": {
+        "items": [
+          {
+            "id": "gap-old",
+            "last_at": "2026-07-06T00:00:00+00:00",
+            "unresolved": true
+          },
+          {
+            "id": "gap-new",
+            "last_at": "2026-10-01T00:00:00+00:00",
+            "unresolved": true
+          },
+          {
+            "id": "gap-expired",
+            "last_at": "2026-07-05T00:00:00+00:00",
+            "unresolved": true
+          },
+          {
+            "id": "gap-dismissed",
+            "last_at": "2026-10-03T00:00:00+00:00",
+            "unresolved": true
+          },
+          {
+            "id": "gap-resolved",
+            "last_at": "2026-10-03T00:00:00+00:00",
+            "unresolved": false
+          }
+        ],
+        "now": "2026-10-03T00:00:00+00:00",
+        "dismissed": [
+          "gap-dismissed"
+        ],
+        "enabled": true
+      },
+      "expected": [
+        "gap-new",
+        "gap-old"
+      ]
+    }
+  ]
+}

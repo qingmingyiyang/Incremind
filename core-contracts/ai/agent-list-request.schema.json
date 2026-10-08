@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://chriptmas-os.local/contracts/ai/agent-list-request.schema.json","type":"object","additionalProperties":false,"required":["include_messages"],"properties":{"include_messages":{"type":"boolean"}}}

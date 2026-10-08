@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "name": "app_data_dir",
+  "platform": "windows",
+  "adapter_id": "desktop_windows",
+  "available": true,
+  "permission_required": false,
+  "permission": "not_applicable",
+  "provided_uri": null,
+  "error": null,
+  "checked_at": "2026-06-29T11:08:00+08:00"
+}

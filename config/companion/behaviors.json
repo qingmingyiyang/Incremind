@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "events": [
+    {
+      "id": "friendly_tap_five",
+      "enabled": true,
+      "counter": "gesture.pet",
+      "threshold": 5,
+      "reset": "daily",
+      "cooldown_seconds": 3600,
+      "actions": [
+        { "type": "show_text", "text": "今天已经摸了好多次啦。" },
+        { "type": "visual_state", "state": "happy" }
+      ]
+    },
+    {
+      "id": "game_companion_three",
+      "enabled": true,
+      "counter": "minigame.play",
+      "threshold": 3,
+      "reset": "weekly",
+      "cooldown_seconds": 86400,
+      "actions": [
+        { "type": "show_text", "text": "三局连战完成，今天的胜负先记在小本本上。" },
+        { "type": "visual_state", "state": "surprised" }
+      ]
+    }
+  ]
+}

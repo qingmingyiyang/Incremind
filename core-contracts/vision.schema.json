@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/vision.schema.json",
+  "x-contract-version": "1.0",
+  "$defs": {
+    "VisionClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "frame_id": {
+          "title": "Frame Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "claim": {
+          "title": "Claim",
+          "type": "string"
+        },
+        "source_mode": {
+          "enum": [
+            "mock",
+            "real"
+          ],
+          "title": "Source Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "frame_id",
+        "timestamp",
+        "claim",
+        "source_mode"
+      ],
+      "title": "VisionClaim",
+      "type": "object"
+    },
+    "VisionFrame": {
+      "additionalProperties": false,
+      "properties": {
+        "frame_id": {
+          "title": "Frame Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "local_path": {
+          "default": "",
+          "title": "Local Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "frame_id",
+        "timestamp"
+      ],
+      "title": "VisionFrame",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "disabled",
+        "mock",
+        "real"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "provider": {
+      "default": "",
+      "title": "Provider",
+      "type": "string"
+    },
+    "model": {
+      "default": "",
+      "title": "Model",
+      "type": "string"
+    },
+    "is_mock": {
+      "default": false,
+      "title": "Is Mock",
+      "type": "boolean"
+    },
+    "local_detection_used": {
+      "default": false,
+      "title": "Local Detection Used",
+      "type": "boolean"
+    },
+    "frames": {
+      "items": {
+        "$ref": "#/$defs/VisionFrame"
+      },
+      "title": "Frames",
+      "type": "array"
+    },
+    "claims": {
+      "items": {
+        "$ref": "#/$defs/VisionClaim"
+      },
+      "title": "Claims",
+      "type": "array"
+    },
+    "uncertainties": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Uncertainties",
+      "type": "array"
+    }
+  },
+  "required": [
+    "mode"
+  ],
+  "title": "VisionContract",
+  "type": "object"
+}

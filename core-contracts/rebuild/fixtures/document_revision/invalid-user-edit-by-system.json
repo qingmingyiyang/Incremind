@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0.0",
+  "id": "document-revision-invalid-user-edit-author",
+  "document_id": "document-project-001",
+  "revision": 2,
+  "parent_revision": 1,
+  "operation": "user_edit",
+  "author": "system",
+  "reason": "user_edit must be authored by user",
+  "base_content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "new_content_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "source_snapshot": {
+    "snapshot_id": "snapshot-invalid-user-edit-author",
+    "snapshot_hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "source_refs": [
+      {
+        "source_id": "source-text-001",
+        "locator": "char:0-80"
+      }
+    ],
+    "captured_at": "2026-06-29T13:10:00+08:00"
+  },
+  "changed_blocks": [
+    {
+      "operation": "update",
+      "block_id": "block-title",
+      "block": {
+        "id": "block-title",
+        "block_type": "heading",
+        "origin": "user",
+        "content": "用户编辑标题",
+        "source_refs": [],
+        "edited_by_user": true,
+        "lock_policy": "user_edit_protected"
+      }
+    }
+  ],
+  "conflict": {
+    "status": "none",
+    "conflict_blocks": [],
+    "resolution": null
+  },
+  "created_at": "2026-06-29T13:10:00+08:00"
+}

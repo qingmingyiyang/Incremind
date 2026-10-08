@@ -1,0 +1,23 @@
+# Recognition web workbench and preserved Agent execution runtime.
+# Full legacy media/document adapters remain in requirements.txt.
+fastapi>=0.115,<1
+pydantic>=2.5,<3
+PyYAML>=6,<7
+anyio>=4,<5
+uvicorn[standard]>=0.30,<1
+python-multipart>=0.0.18,<1
+httpx>=0.27,<1
+cryptography>=42,<49
+PyJWT>=2.10,<3
+litellm==1.74.0
+langgraph>=1.2.12,<2
+langgraph-checkpoint>=4.2,<5
+langchain-core>=1.6.4,<2
+blake3==1.0.9
+Pillow>=10,<13
+# Offline device pairing QR codes; BSD-3-Clause / historical MIT.
+qrcode>=8.2,<9
+psutil>=7.0,<8
+# Local stdio MCP memory service for Claude Code / Codex (python -m backend.memory_app.mcp); MIT.
+mcp==1.27.1
+-r requirements-memory.txt

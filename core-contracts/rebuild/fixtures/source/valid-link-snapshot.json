@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0.0",
+  "id": "source-link-001",
+  "type": "link",
+  "title": "示例网页快照",
+  "capture_mode": "snapshot",
+  "storage_uri": "crp://default/sources/source-link-001",
+  "original_url": "https://example.com/article",
+  "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "media_type": "text/html",
+  "size_bytes": 2048,
+  "parser_version": "html-snapshot/1",
+  "processing_state": "ready",
+  "created_at": "2026-06-29T12:05:00Z",
+  "imported_from_legacy": false,
+  "trust_status": "system_generated",
+  "metadata": {
+    "retrieved_at": "2026-06-29T12:04:58Z"
+  }
+}

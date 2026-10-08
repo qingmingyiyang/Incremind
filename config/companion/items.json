@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "items": [
+    {"id":"food:cookie","kind":"food","name":"黄油曲奇","image":"items/cookie.svg","effect":{"affinity":2,"mood":2},"reply_templates":["酥酥甜甜的，谢谢御主。","曲奇被我好好吃掉啦。"],"animation_id":"eating"},
+    {"id":"food:apple","kind":"food","name":"红苹果","image":"items/apple.svg","effect":{"affinity":1,"mood":1},"reply_templates":["脆脆的苹果，很清爽。","今天也有好好补充水果。"],"animation_id":"eating"},
+    {"id":"outfit:red-scarf","kind":"outfit","name":"红围巾","image":"items/red-scarf.svg","effect":{"pack_id":"bear-companion-v3","outfit_id":"red-scarf"},"reply_templates":["红围巾已经放进衣柜，可以随时换上。"],"animation_id":"attention"},
+    {"id":"outfit:gold-star","kind":"outfit","name":"成长星徽","image":"items/gold-star.svg","effect":{"pack_id":"bear-companion-v3","outfit_id":"gold-star"},"reply_templates":["这是一起成长的证明。"],"animation_id":"attention"},
+    {"id":"frame:night","kind":"frame","name":"星夜相框","image":"items/night-frame.svg","effect":{"frame_theme":"night"},"reply_templates":["星光已经装进房间啦。"],"animation_id":"attention"}
+  ]
+}

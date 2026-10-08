@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "name": "file_picker",
+  "platform": "macos",
+  "adapter_id": "desktop_macos",
+  "available": true,
+  "permission_required": true,
+  "permission": "granted",
+  "provided_uri": null,
+  "error": null,
+  "checked_at": "2026-06-29T11:01:00+08:00"
+}

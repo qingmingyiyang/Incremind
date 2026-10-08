@@ -1,0 +1,1532 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "r01",
+      "category": "single_remember",
+      "text": "记下：纸鹤展的入口设在东侧。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "记下：纸鹤展的入口设在东侧。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "明确保存事实，不要求回答或制作产物。"
+    },
+    {
+      "id": "r02",
+      "category": "single_remember",
+      "text": "今天完成了星桥模型的第一版。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "今天完成了星桥模型的第一版。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "汇报已发生的虚构项目进展，属于记录。"
+    },
+    {
+      "id": "r03",
+      "category": "single_remember",
+      "text": "#蓝桔/复盘 保留这个决定：蓝桔项目每周四复盘。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "保留这个决定：蓝桔项目每周四复盘。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "scope_tag"
+      ],
+      "rationale": "明确记录决定。"
+    },
+    {
+      "id": "r04",
+      "category": "single_remember",
+      "text": "本次测试温度为二十二度，湿度为百分之四十。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "本次测试温度为二十二度，湿度为百分之四十。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "实验观察陈述，无提问。"
+    },
+    {
+      "id": "r05",
+      "category": "single_remember",
+      "text": "https://example.com/fictional-notes",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "https://example.com/fictional-notes",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "link"
+      ],
+      "rationale": "单独链接按记住处理。"
+    },
+    {
+      "id": "r06",
+      "category": "single_remember",
+      "text": "把这份附件收好，作为纸舟项目的参考。 #纸舟/参考",
+      "has_files": true,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "把这份附件收好，作为纸舟项目的参考。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "attachment",
+        "scope_tag"
+      ],
+      "rationale": "附件的明确用途是保存。"
+    },
+    {
+      "id": "r07",
+      "category": "single_remember",
+      "text": "我偏好先看结论，再看解释。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "我偏好先看结论，再看解释。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "记录虚构用户偏好。"
+    },
+    {
+      "id": "r08",
+      "category": "single_remember",
+      "text": "补充一下：样机采用纸质外壳。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "补充一下：样机采用纸质外壳。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "补充资料事实，无执行要求。"
+    },
+    {
+      "id": "r09",
+      "category": "single_remember",
+      "text": "收藏这个链接：https://example.com/paper-garden",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "收藏这个链接：https://example.com/paper-garden",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "link"
+      ],
+      "rationale": "收藏链接，不要求即时回答链接内容。"
+    },
+    {
+      "id": "r10",
+      "category": "single_remember",
+      "text": "明天的虚构排练定在九点，先记在这里。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "明天的虚构排练定在九点，先记在这里。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous"
+      ],
+      "rationale": "保存安排，不要求启动提醒。"
+    },
+    {
+      "id": "a01",
+      "category": "single_ask",
+      "text": "上次纸鹤展讨论了什么？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "上次纸鹤展讨论了什么？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "询问既有讨论内容。"
+    },
+    {
+      "id": "a02",
+      "category": "single_ask",
+      "text": "哪种纸张更适合折叠模型？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "哪种纸张更适合折叠模型？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "要求知识回答，无独立交付物。"
+    },
+    {
+      "id": "a03",
+      "category": "single_ask",
+      "text": "请解释星桥方案里支架的作用。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "请解释星桥方案里支架的作用。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous"
+      ],
+      "rationale": "解释请求属于问，即使没有问号。"
+    },
+    {
+      "id": "a04",
+      "category": "single_ask",
+      "text": "为什么纸舟样机容易倾斜？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "为什么纸舟样机容易倾斜？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "请求原因解释。"
+    },
+    {
+      "id": "a05",
+      "category": "single_ask",
+      "text": "#蓝桔/验收\n蓝桔项目的验收标准是什么",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "蓝桔项目的验收标准是什么",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "scope_tag"
+      ],
+      "rationale": "无问号仍是明确提问。"
+    },
+    {
+      "id": "a06",
+      "category": "single_ask",
+      "text": "这份附件里的两个图有什么差别？",
+      "has_files": true,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "这份附件里的两个图有什么差别？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "attachment"
+      ],
+      "rationale": "附件用于回答问题，没有额外保存要求。"
+    },
+    {
+      "id": "a07",
+      "category": "single_ask",
+      "text": "https://example.com/paper-house 这篇材料的核心观点是什么？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "https://example.com/paper-house 这篇材料的核心观点是什么？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "link",
+        "ambiguous"
+      ],
+      "rationale": "链接是问题证据，整句目的为问。"
+    },
+    {
+      "id": "a08",
+      "category": "single_ask",
+      "text": "我想知道我们上次选的是哪种结构。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "我想知道我们上次选的是哪种结构。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous"
+      ],
+      "rationale": "间接疑问仍请求回答。"
+    },
+    {
+      "id": "a09",
+      "category": "single_ask",
+      "text": "三角支架和方形支架相比，哪个更稳定？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "三角支架和方形支架相比，哪个更稳定？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "比较知识而非制作报告。"
+    },
+    {
+      "id": "a10",
+      "category": "single_ask",
+      "text": "帮我解释一下这里的留白是什么意思。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "帮我解释一下这里的留白是什么意思。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous"
+      ],
+      "rationale": "帮我开头但要求解释，语义属于问。"
+    },
+    {
+      "id": "d01",
+      "category": "single_do",
+      "text": "帮我写一份纸鹤展的开场稿。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "帮我写一份纸鹤展的开场稿。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "明确要求生成稿件。"
+    },
+    {
+      "id": "d02",
+      "category": "single_do",
+      "text": "请把蓝桔项目的步骤整理成清单。 #蓝桔/执行",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "请把蓝桔项目的步骤整理成清单。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "scope_tag"
+      ],
+      "rationale": "要求结构化产物。"
+    },
+    {
+      "id": "d03",
+      "category": "single_do",
+      "text": "做一份三天的纸模练习计划。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "做一份三天的纸模练习计划。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "要求可执行计划产物。"
+    },
+    {
+      "id": "d04",
+      "category": "single_do",
+      "text": "能把这段话改成三句展板文案吗？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "能把这段话改成三句展板文案吗？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous"
+      ],
+      "rationale": "疑问形式表达制作请求，属于干活。"
+    },
+    {
+      "id": "d05",
+      "category": "single_do",
+      "text": "生成一张虚构纸舟展的物料表。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "生成一张虚构纸舟展的物料表。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "生成交付物，非询问信息。"
+    },
+    {
+      "id": "d06",
+      "category": "single_do",
+      "text": "请将附件整理成一页会议纪要。",
+      "has_files": true,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "请将附件整理成一页会议纪要。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "attachment"
+      ],
+      "rationale": "附件作为制作输入，不构成单独记住需求。"
+    },
+    {
+      "id": "d07",
+      "category": "single_do",
+      "text": "https://example.com/mock-outline 请根据这份提纲写一段开场白。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "https://example.com/mock-outline 请根据这份提纲写一段开场白。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "link",
+        "ambiguous"
+      ],
+      "rationale": "链接为制作输入，整句目标是写稿。"
+    },
+    {
+      "id": "d08",
+      "category": "single_do",
+      "text": "把纸桥、纸塔、纸船排成一个两列对照表。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "把纸桥、纸塔、纸船排成一个两列对照表。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "请求格式转换产物。"
+    },
+    {
+      "id": "d09",
+      "category": "single_do",
+      "text": "我需要一份星桥项目的演示提纲，请现在起草。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "我需要一份星桥项目的演示提纲，请现在起草。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous"
+      ],
+      "rationale": "间接开头仍有明确制作指令。"
+    },
+    {
+      "id": "d10",
+      "category": "single_do",
+      "text": "写一则虚构纸风车比赛的招募公告，保留在草稿里。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "写一则虚构纸风车比赛的招募公告，保留在草稿里。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [],
+      "rationale": "仅生成草稿，不要求对外发布。"
+    },
+    {
+      "id": "ra01",
+      "category": "remember_ask",
+      "text": "记下：纸桥跨度改为二十厘米。这个跨度会增加什么风险？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "记下：纸桥跨度改为二十厘米。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "ask",
+          "span": "这个跨度会增加什么风险？",
+          "instruction": "纸桥跨度改为二十厘米后，会增加什么风险？",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "dependent"
+      ],
+      "rationale": "问题依赖新记录的跨度。"
+    },
+    {
+      "id": "ra02",
+      "category": "remember_ask",
+      "text": "保留今天的纸鹤展观察：入口有些拥挤。另外，上次确定的展览主题是什么？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "保留今天的纸鹤展观察：入口有些拥挤。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "ask",
+          "span": "另外，上次确定的展览主题是什么？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "independent"
+      ],
+      "rationale": "保存观察与查询旧主题互不依赖。"
+    },
+    {
+      "id": "ra03",
+      "category": "remember_ask",
+      "text": "收藏 https://example.com/mock-brief 。这份材料的核心建议是什么？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "收藏 https://example.com/mock-brief 。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "ask",
+          "span": "这份材料的核心建议是什么？",
+          "instruction": "请说明 https://example.com/mock-brief 的核心建议。",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "link",
+        "dependent"
+      ],
+      "rationale": "问题指向同条收藏材料。"
+    },
+    {
+      "id": "ra04",
+      "category": "remember_ask",
+      "text": "这个调整与之前方案有什么区别？先记下这次调整：展架从四层变成三层。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "这个调整与之前方案有什么区别？",
+          "instruction": "展架从四层改成三层，与之前的方案有什么区别？",
+          "depends_on": [
+            1
+          ]
+        },
+        {
+          "intent": "remember",
+          "span": "先记下这次调整：展架从四层变成三层。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "forward_reference",
+        "dependent"
+      ],
+      "rationale": "文字顺序先问后记，问题仍依赖后面的调整。"
+    },
+    {
+      "id": "ra05",
+      "category": "remember_ask",
+      "text": "#纸舟/试做\r\n记下：试做时第二种折法更省纸。为什么会有这个差异？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "记下：试做时第二种折法更省纸。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "ask",
+          "span": "为什么会有这个差异？",
+          "instruction": "试做中第二种折法更省纸，为什么会有这个差异？",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "scope_tag",
+        "dependent"
+      ],
+      "rationale": "问题依赖本次试做观察。"
+    },
+    {
+      "id": "ra06",
+      "category": "remember_ask",
+      "text": "保存附件作为本轮讨论记录。另外，纸鹤展原定哪天开幕？",
+      "has_files": true,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "保存附件作为本轮讨论记录。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "ask",
+          "span": "另外，纸鹤展原定哪天开幕？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "attachment",
+        "independent"
+      ],
+      "rationale": "附件保存与旧安排查询独立。"
+    },
+    {
+      "id": "rd01",
+      "category": "remember_do",
+      "text": "记下：纸舟展的主题定为慢慢漂。据此写三条展板标题。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "记下：纸舟展的主题定为慢慢漂。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "据此写三条展板标题。",
+          "instruction": "以慢慢漂为纸舟展主题，写三条展板标题。",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "dependent"
+      ],
+      "rationale": "标题制作依赖新记录的主题。"
+    },
+    {
+      "id": "rd02",
+      "category": "remember_do",
+      "text": "保留今天的试做记录：第一批共十二件。另外，写一首关于纸风车的四行小诗。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "保留今天的试做记录：第一批共十二件。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "另外，写一首关于纸风车的四行小诗。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "independent"
+      ],
+      "rationale": "记录数量与写诗独立。"
+    },
+    {
+      "id": "rd03",
+      "category": "remember_do",
+      "text": "收藏 https://example.com/mock-speech 。把它改写成两分钟的开场稿。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "收藏 https://example.com/mock-speech 。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "把它改写成两分钟的开场稿。",
+          "instruction": "将 https://example.com/mock-speech 改写成两分钟开场稿。",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "link",
+        "dependent"
+      ],
+      "rationale": "改写依赖收藏的原件。"
+    },
+    {
+      "id": "rd04",
+      "category": "remember_do",
+      "text": "按下面的要求起草一份物料清单。记下要求：只用纸板、棉线和木夹。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "按下面的要求起草一份物料清单。",
+          "instruction": "只使用纸板、棉线和木夹，起草一份物料清单。",
+          "depends_on": [
+            1
+          ]
+        },
+        {
+          "intent": "remember",
+          "span": "记下要求：只用纸板、棉线和木夹。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "forward_reference",
+        "dependent"
+      ],
+      "rationale": "制作在文字中靠前，但依赖后置要求。"
+    },
+    {
+      "id": "rd05",
+      "category": "remember_do",
+      "text": "记下：这次纸塔展示只面向初学者。请根据这个定位写一段介绍。 #纸塔/展示",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "记下：这次纸塔展示只面向初学者。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "请根据这个定位写一段介绍。",
+          "instruction": "为仅面向初学者的纸塔展示写一段介绍。",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "scope_tag",
+        "dependent"
+      ],
+      "rationale": "介绍应接收定位原文。"
+    },
+    {
+      "id": "rd06",
+      "category": "remember_do",
+      "text": "保存附件里的纸桥草图。另外，做一份纸鹤展志愿者签到表模板。",
+      "has_files": true,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "保存附件里的纸桥草图。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "另外，做一份纸鹤展志愿者签到表模板。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "attachment",
+        "independent"
+      ],
+      "rationale": "附件记录与另一个活动模板独立。"
+    },
+    {
+      "id": "ad01",
+      "category": "ask_do",
+      "text": "我们上次定了哪些验收标准？根据回答做一张检查表。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "我们上次定了哪些验收标准？",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "根据回答做一张检查表。",
+          "instruction": "使用验收标准查询的回答制作检查表。",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "dependent"
+      ],
+      "rationale": "检查表应使用查询回答。"
+    },
+    {
+      "id": "ad02",
+      "category": "ask_do",
+      "text": "什么是纸张的克重？另外，写一首关于纸船的短诗。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "什么是纸张的克重？",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "另外，写一首关于纸船的短诗。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "independent"
+      ],
+      "rationale": "知识问答与短诗独立。"
+    },
+    {
+      "id": "ad03",
+      "category": "ask_do",
+      "text": "https://example.com/mock-spec 中的结构有什么优点？按这些优点写三句展示文案。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "https://example.com/mock-spec 中的结构有什么优点？",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "按这些优点写三句展示文案。",
+          "instruction": "使用材料结构优点的回答，写三句展示文案。",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "link",
+        "dependent"
+      ],
+      "rationale": "文案依赖链接问答结论。"
+    },
+    {
+      "id": "ad04",
+      "category": "ask_do",
+      "text": "用后面问题的答案整理一份对照表。纸桥和纸塔的受力特点分别是什么？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "用后面问题的答案整理一份对照表。",
+          "instruction": "使用纸桥和纸塔受力特点的回答制作对照表。",
+          "depends_on": [
+            1
+          ]
+        },
+        {
+          "intent": "ask",
+          "span": "纸桥和纸塔的受力特点分别是什么？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "forward_reference",
+        "dependent"
+      ],
+      "rationale": "先出现制作请求，仍依赖后置问答。"
+    },
+    {
+      "id": "ad05",
+      "category": "ask_do",
+      "text": "附件里的两种折法有什么区别？根据比较结果写一份选用指南。",
+      "has_files": true,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "附件里的两种折法有什么区别？",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "根据比较结果写一份选用指南。",
+          "instruction": "使用附件中两种折法的比较结果，写一份选用指南。",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "attachment",
+        "dependent"
+      ],
+      "rationale": "附件只是问答输入，后续制作依赖答案。"
+    },
+    {
+      "id": "ad06",
+      "category": "ask_do",
+      "text": "#星桥/彩排 上次星桥项目为什么缩短了演示？另外，起草一份通用的彩排签到表。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "上次星桥项目为什么缩短了演示？",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "另外，起草一份通用的彩排签到表。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "scope_tag",
+        "independent"
+      ],
+      "rationale": "追问原因与通用模板互不依赖。"
+    },
+    {
+      "id": "rad01",
+      "category": "all_three",
+      "text": "记下：纸塔展示限时五分钟。这个时长比上次短多少？按照这个时长做一份讲解提纲。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "记下：纸塔展示限时五分钟。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "ask",
+          "span": "这个时长比上次短多少？",
+          "instruction": "本次纸塔展示限时五分钟，比上次短多少？",
+          "depends_on": [
+            0
+          ]
+        },
+        {
+          "intent": "do",
+          "span": "按照这个时长做一份讲解提纲。",
+          "instruction": "为限时五分钟的纸塔展示制作讲解提纲。",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "fan_out"
+      ],
+      "rationale": "问与干活都只依赖新记录，不构成三层链。"
+    },
+    {
+      "id": "rad02",
+      "category": "all_three",
+      "text": "保留今天的观察：纸舟在静水中更稳。上次纸鹤展有多少个展台？另外，写一则纸风车活动草稿。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "保留今天的观察：纸舟在静水中更稳。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "ask",
+          "span": "上次纸鹤展有多少个展台？",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "另外，写一则纸风车活动草稿。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "independent"
+      ],
+      "rationale": "三个目的独立，允许并行。"
+    },
+    {
+      "id": "rad03",
+      "category": "all_three",
+      "text": "记下：本次展板只能放三条说明。上次参观者最关心哪几个问题？结合这个数量限制和问题答案，写出展板说明。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "记下：本次展板只能放三条说明。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "ask",
+          "span": "上次参观者最关心哪几个问题？",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "结合这个数量限制和问题答案，写出展板说明。",
+          "instruction": "依据参观者关心问题的查询答案，写出最多三条展板说明。",
+          "depends_on": [
+            0,
+            1
+          ]
+        }
+      ],
+      "tags": [
+        "fan_in"
+      ],
+      "rationale": "干活同时依赖记录与独立问答，依赖高度两层。"
+    },
+    {
+      "id": "rad04",
+      "category": "all_three",
+      "text": "上次的活动主题是什么？记下今天的进度：纸桥已搭好。请用刚才查询到的主题写一句开场白。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "上次的活动主题是什么？",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "remember",
+          "span": "记下今天的进度：纸桥已搭好。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "请用刚才查询到的主题写一句开场白。",
+          "instruction": "使用活动主题查询的回答写一句开场白。",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "ask_before_remember",
+        "dependent"
+      ],
+      "rationale": "保存进度独立，开场白只依赖主题查询。"
+    },
+    {
+      "id": "rad05",
+      "category": "all_three",
+      "text": "#纸鹤/排练\n根据后面的限制制作一张排练流程表。另外，上次排练在哪里举行？记下本轮限制：总共二十分钟，只用一个舞台。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "根据后面的限制制作一张排练流程表。",
+          "instruction": "制作一张总时长二十分钟且只使用一个舞台的排练流程表。",
+          "depends_on": [
+            2
+          ]
+        },
+        {
+          "intent": "ask",
+          "span": "另外，上次排练在哪里举行？",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "remember",
+          "span": "记下本轮限制：总共二十分钟，只用一个舞台。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "forward_reference",
+        "scope_tag"
+      ],
+      "rationale": "流程表依赖后置限制，旧地点查询独立。"
+    },
+    {
+      "id": "rad06",
+      "category": "all_three",
+      "text": "收藏 https://example.com/mock-folding 作为参考。另外，纸张克重表示什么？基于收藏的材料做一份练习清单。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "收藏 https://example.com/mock-folding 作为参考。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "ask",
+          "span": "另外，纸张克重表示什么？",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "do",
+          "span": "基于收藏的材料做一份练习清单。",
+          "instruction": "依据 https://example.com/mock-folding 制作练习清单。",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "link",
+        "dependent"
+      ],
+      "rationale": "练习清单依赖链接原件，常识问答独立。"
+    },
+    {
+      "id": "s01",
+      "category": "statement_like_question",
+      "text": "我发现周三开会效率最高。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "我发现周三开会效率最高。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous",
+        "statement"
+      ],
+      "rationale": "观察陈述，没有要求解释原因。"
+    },
+    {
+      "id": "s02",
+      "category": "statement_like_question",
+      "text": "为什么大家喜欢三角支架，我今天终于想明白了：搭起来更快。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "为什么大家喜欢三角支架，我今天终于想明白了：搭起来更快。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous",
+        "statement"
+      ],
+      "rationale": "疑问从句已经自行作答，整体是记录发现。"
+    },
+    {
+      "id": "s03",
+      "category": "statement_like_question",
+      "text": "怎么让纸船更稳，我的试验结论是把底折宽。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "怎么让纸船更稳，我的试验结论是把底折宽。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous",
+        "statement"
+      ],
+      "rationale": "陈述已得出的结论，不向系统发问。"
+    },
+    {
+      "id": "s04",
+      "category": "statement_like_question",
+      "text": "上次我问过纸张该怎么选，今天试用后决定采用厚一点的。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "上次我问过纸张该怎么选，今天试用后决定采用厚一点的。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous",
+        "statement"
+      ],
+      "rationale": "提及历史问题并记录当前决定。"
+    },
+    {
+      "id": "s05",
+      "category": "statement_like_question",
+      "text": "哪种折法更省纸这件事，我们已经确认是第二种。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "哪种折法更省纸这件事，我们已经确认是第二种。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous",
+        "statement"
+      ],
+      "rationale": "疑问词引出已确认的事实。"
+    },
+    {
+      "id": "s06",
+      "category": "statement_like_question",
+      "text": "记下今天的展板标题：纸桥为什么站得住？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "记下今天的展板标题：纸桥为什么站得住？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous",
+        "statement"
+      ],
+      "rationale": "末尾问号属于要保存的标题，不是问答请求。"
+    },
+    {
+      "id": "i01",
+      "category": "single_inspiration",
+      "text": "灵感：让纸鹤展的路线像一条折线。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "inspiration",
+          "span": "灵感：让纸鹤展的路线像一条折线。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "inspiration"
+      ],
+      "rationale": "以灵感开头的独立创意片段，沿既定灵感语义保存。"
+    },
+    {
+      "id": "i02",
+      "category": "single_inspiration",
+      "text": "#纸鹤/创意 灵感 把纸桥与灯影结合。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "inspiration",
+          "span": "灵感 把纸桥与灯影结合。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "inspiration",
+        "scope_tag"
+      ],
+      "rationale": "以灵感开头的独立创意片段，沿既定灵感语义保存。"
+    },
+    {
+      "id": "i03",
+      "category": "single_inspiration",
+      "text": "灵感：展板能不能像翻书一样展开？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "inspiration",
+          "span": "灵感：展板能不能像翻书一样展开？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "inspiration"
+      ],
+      "rationale": "以灵感开头的独立创意片段，沿既定灵感语义保存。"
+    },
+    {
+      "id": "i04",
+      "category": "single_inspiration",
+      "text": "灵感：把 https://example.com/mock-colors 的配色用于纸塔。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "inspiration",
+          "span": "灵感：把 https://example.com/mock-colors 的配色用于纸塔。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "inspiration",
+        "link"
+      ],
+      "rationale": "以灵感开头的独立创意片段，沿既定灵感语义保存。"
+    },
+    {
+      "id": "e01",
+      "category": "edge_case",
+      "text": "#纸桥/测量\r\n怎么把纸桥的跨度测准？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "怎么把纸桥的跨度测准？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "scope_tag",
+        "crlf"
+      ],
+      "rationale": "CRLF范围标签只指定作用域，正文仍是单问。"
+    },
+    {
+      "id": "e02",
+      "category": "edge_case",
+      "text": "我想要一份五步折纸教程。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "我想要一份五步折纸教程。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous"
+      ],
+      "rationale": "想要具体教程产物，虽没有命令前缀仍属于干活。"
+    },
+    {
+      "id": "e03",
+      "category": "edge_case",
+      "text": "帮我写开场稿，是今天彩排时收到的建议，我先记下来。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "帮我写开场稿，是今天彩排时收到的建议，我先记下来。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous",
+        "reported_request"
+      ],
+      "rationale": "帮我写是转述的建议，当前请求明确为记录。"
+    },
+    {
+      "id": "e04",
+      "category": "edge_case",
+      "text": "https://example.com/mock-design#details 这里的双层结构是什么意思？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "ask",
+          "span": "https://example.com/mock-design#details 这里的双层结构是什么意思？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "link",
+        "url_fragment",
+        "ambiguous"
+      ],
+      "rationale": "链接含片段标识，整句要求解释而非自动收藏。"
+    },
+    {
+      "id": "e05",
+      "category": "edge_case",
+      "text": "能照附件做一张空白检查表吗？",
+      "has_files": true,
+      "parts": [
+        {
+          "intent": "do",
+          "span": "能照附件做一张空白检查表吗？",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "attachment",
+        "ambiguous"
+      ],
+      "rationale": "疑问句式加附件，实际要求生成表格。"
+    },
+    {
+      "id": "e06",
+      "category": "edge_case",
+      "text": "这份草图先存着。\n#纸桥/草图",
+      "has_files": true,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "这份草图先存着。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "attachment",
+        "scope_tag"
+      ],
+      "rationale": "有附件且保存指令短，只有记住意图。"
+    },
+    {
+      "id": "e07",
+      "category": "edge_case",
+      "text": "记录：纸展新主题是慢慢漂。这个主题与上次的有什么不同？",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "记录：纸展新主题是慢慢漂。",
+          "instruction": null,
+          "depends_on": []
+        },
+        {
+          "intent": "ask",
+          "span": "这个主题与上次的有什么不同？",
+          "instruction": "纸展的新主题为慢慢漂，与上次主题有什么不同？",
+          "depends_on": [
+            0
+          ]
+        }
+      ],
+      "tags": [
+        "ambiguous",
+        "dependent"
+      ],
+      "rationale": "短正文也有记录和问题两个目的，不能按末尾问号吞掉前段。"
+    },
+    {
+      "id": "e08",
+      "category": "edge_case",
+      "text": "灵感枯竭是今天制作纸塔时的感受，请只保存这段日记。",
+      "has_files": false,
+      "parts": [
+        {
+          "intent": "remember",
+          "span": "灵感枯竭是今天制作纸塔时的感受，请只保存这段日记。",
+          "instruction": null,
+          "depends_on": []
+        }
+      ],
+      "tags": [
+        "ambiguous",
+        "inspiration_word"
+      ],
+      "rationale": "灵感出现在普通陈述词组中，明确保存日记，应按记录语义判断。"
+    }
+  ]
+}

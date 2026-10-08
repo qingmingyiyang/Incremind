@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/document_revision.schema.json",
+  "title": "Document Revision",
+  "description": "Document 每次创建、用户编辑、AI patch、恢复或合并的可审计版本记录。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "document_id",
+    "revision",
+    "parent_revision",
+    "operation",
+    "author",
+    "reason",
+    "base_content_hash",
+    "new_content_hash",
+    "source_snapshot",
+    "changed_blocks",
+    "conflict",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "document_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "parent_revision": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ]
+    },
+    "operation": {
+      "type": "string",
+      "enum": [
+        "create",
+        "ai_patch",
+        "user_edit",
+        "archive",
+        "restore",
+        "merge"
+      ]
+    },
+    "author": {
+      "type": "string",
+      "enum": [
+        "user",
+        "system",
+        "migration"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base_content_hash": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      ]
+    },
+    "new_content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "source_snapshot": {
+      "$ref": "#/$defs/sourceSnapshot"
+    },
+    "changed_blocks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/blockChange"
+      }
+    },
+    "conflict": {
+      "$ref": "#/$defs/revisionConflict"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "locator"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote": {
+          "type": "string"
+        }
+      }
+    },
+    "sourceSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshot_id",
+        "snapshot_hash",
+        "source_refs",
+        "captured_at"
+      ],
+      "properties": {
+        "snapshot_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/sourceRef"
+          }
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "documentBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "block_type",
+        "origin",
+        "content",
+        "source_refs",
+        "edited_by_user",
+        "lock_policy"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "block_type": {
+          "type": "string",
+          "enum": [
+            "heading",
+            "paragraph",
+            "list",
+            "quote",
+            "code",
+            "table",
+            "metadata"
+          ]
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "ai",
+            "user",
+            "import",
+            "system"
+          ]
+        },
+        "content": {
+          "type": "string"
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourceRef"
+          }
+        },
+        "edited_by_user": {
+          "type": "boolean"
+        },
+        "lock_policy": {
+          "type": "string",
+          "enum": [
+            "none",
+            "user_edit_protected",
+            "source_required"
+          ]
+        }
+      }
+    },
+    "blockChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "block_id",
+        "block"
+      ],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "add",
+            "update",
+            "delete"
+          ]
+        },
+        "block_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "block": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/documentBlock"
+            }
+          ]
+        }
+      }
+    },
+    "revisionConflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "conflict_blocks",
+        "resolution"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "none",
+            "detected",
+            "resolved"
+          ]
+        },
+        "conflict_blocks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "resolution": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

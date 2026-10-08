@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>工作台 · 自动拆分</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500&amp;family=Noto+Serif+SC:wght@500;700&amp;family=Fira+Code:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+.app{--serif:'Noto Serif SC',serif;--sans:'Noto Sans SC',system-ui,sans-serif;--mono:'Fira Code',ui-monospace,monospace}
+.t-light{--paper:#F7F4EE;--panel:#FFFDF9;--sunk:#EFEAE1;--ink:#1C1A17;--ink2:#4E4A44;--muted:#6F6A62;--line:#E6E0D5;--line2:#D2CABC;--red:#C0282F;--mark:#F4E3AE;--onred:#FFFFFF;--shadow:rgba(28,26,23,.14)}
+.t-dark{--paper:#1A1815;--panel:#221F1B;--sunk:#2A2621;--ink:#ECE6DB;--ink2:#C4BDB1;--muted:#A39C90;--line:#332F29;--line2:#48423A;--red:#E66B6F;--mark:#5A4919;--onred:#1A1815;--shadow:rgba(0,0,0,.45)}
+.ic{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--line2);flex-shrink:0}
+.dot.on{background:var(--ink)}
+.dot.red{background:var(--red)}
+.dot.ghost{background:transparent;box-shadow:inset 0 0 0 1.5px var(--line2)}
+.dot.now{background:var(--red);animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+input,textarea{font:inherit;color:var(--ink);background:transparent;border:0;outline:none;resize:none;min-width:0}
+input::placeholder,textarea::placeholder{color:var(--muted)}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+a{color:inherit;text-decoration:none}
+mark{background:var(--mark);color:var(--ink);border-radius:2px;padding:0 1px}
+.tab{color:var(--muted);border-bottom:2px solid transparent}
+.tab.on{color:var(--ink);border-bottom-color:var(--red)}
+.flt{color:var(--muted);border-bottom:1.5px solid transparent}
+.flt.on{color:var(--ink);border-bottom-color:var(--ink)}
+.side{color:var(--ink2)}
+.side.on{color:var(--red)}
+.sel{background:var(--sunk)}
+.seg{color:var(--muted);border-bottom:2px solid transparent}
+.seg.on{color:var(--ink);border-bottom-color:var(--red)}
+.grp{color:var(--muted);border-left:2px solid transparent}
+.grp.on{color:var(--ink);border-left-color:var(--red)}
+.sw{width:40px;height:22px;border-radius:11px;background:var(--line2);position:relative;flex-shrink:0}
+.sw::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--panel)}
+.sw.on{background:var(--red)}
+.sw.on::after{left:21px}
+.tag{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 8px;border:1px solid var(--line2);border-radius:4px;font-family:var(--mono);font-size:12px;color:var(--ink2);background:var(--panel);white-space:nowrap}
+.av{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--sunk);color:var(--ink2);flex-shrink:0;box-shadow:0 0 0 1.5px var(--paper)}
+.rel{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;font-family:var(--mono);font-size:15px;color:var(--ink2);flex-shrink:0}
+.sup{vertical-align:super;font-size:11px;font-family:var(--mono);color:var(--red);padding:0 2px;line-height:1}
+.lbl{display:inline-flex;align-items:center;height:18px;padding:0 5px;border:1px solid var(--line2);border-radius:4px;font-family:var(--sans);font-size:11px;color:var(--muted);vertical-align:3px;margin:0 2px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border:1px solid var(--line2);border-radius:4px;font-size:14px;color:var(--ink);white-space:nowrap}
+.btn.pri{background:var(--red);color:var(--onred);border-color:var(--red)}
+.menu{background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:0 12px 32px var(--shadow)}
+.ctx{padding:2px 6px;border:1px solid var(--line);border-radius:4px}
+.chev.on{transform:rotate(90deg)}
+</style>
+</helmet>
+<div class="app {{themeClass}}" style="width:1440px;height:900px;position:relative;overflow:hidden;display:grid;grid-template-columns:64px minmax(0,1fr);background:var(--paper);color:var(--ink);font-family:var(--sans)">
+<nav aria-label="主导航" style="border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:16px 0;gap:4px">
+<a href="Companion.dc.html" aria-label="伙伴" title="伙伴" style="position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center;margin-bottom:20px">
+<img src="/_blob/a1342611c9d3b97bd9c8b4358f376583" alt="" style="width:34px;height:34px;border-radius:50%;background:var(--sunk);object-fit:cover">
+
+</a>
+<a href="Main.dc.html" aria-current="page" style="position:relative;width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--red)">
+<span style="position:absolute;left:0;top:16px;width:2px;height:28px;background:var(--red)"></span>
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+<span style="font-size:11px;color:var(--ink)">工作台</span>
+</a>
+<a href="Library.dc.html" style="position:relative;width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"></path><path d="M3 13l9 5 9-5"></path></svg>
+<span style="font-size:11px">资料库</span>
+</a>
+<a href="Settings.dc.html" style="position:relative;width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+<span style="font-size:11px">设置</span>
+</a>
+<div style="flex-grow:1"></div>
+<button aria-label="切换明暗" title="明暗" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg>
+</button>
+</nav>
+<div style="display:flex;flex-direction:column;min-width:0;height:900px">
+<header style="height:56px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 28px">
+<button aria-label="切换项目" style="display:flex;align-items:center;gap:8px;height:44px;font-size:14px;color:var(--ink)">
+<span style="width:6px;height:6px;border-radius:50%;background:var(--red)"></span>
+<span>身边的人</span>
+<svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color:var(--muted)"><path d="M6 9l6 6 6-6"></path></svg>
+</button>
+<span style="display:flex;align-items:center;gap:16px"><span style="font-size:13px;color:var(--muted);font-family:var(--mono)">9·30 周三</span></span>
+</header>
+<div style="flex-grow:1;min-height:0;overflow:hidden;padding:8px 28px 16px">
+<div style="max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:28px">
+<div style="align-self:flex-end;max-width:520px;background:var(--sunk);border-radius:12px;padding:10px 14px;font-size:15px;line-height:1.6;color:var(--ink2);word-break:break-all">灵感：周末去爬山</div>
+<div style="display:flex;gap:14px;align-items:flex-start">
+<span style="width:20px;display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0">
+<span aria-hidden="true" style="height:28px;display:flex;align-items:center;justify-content:center;color:var(--red)"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"></path></svg></span>
+<span style="font-family:var(--mono);font-size:11px;color:var(--muted)">规则</span>
+</span>
+<div style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;align-items:center;gap:14px;min-height:28px">
+<span style="font-size:16px;font-weight:500;color:var(--ink)">周末去爬山</span>
+<span style="display:inline-flex;gap:5px;align-items:center"><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span></span>
+<div style="flex-grow:1"></div>
+
+</div>
+
+</div>
+</div>
+<div style="align-self:flex-end;max-width:520px;background:var(--sunk);border-radius:12px;padding:10px 14px;font-size:15px;line-height:1.6;color:var(--ink2);word-break:break-all">记一下阿念最近在学露营，查查上次存的露营装备攻略推荐什么，再列个生日礼物清单</div>
+<div style="display:flex;flex-direction:column;gap:10px"><div style="display:flex;align-items:center;gap:16px;font-size:13px;color:var(--ink2)"><span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--red);display:flex"><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"></path></svg></span>记一下阿念最近在…</span><span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--red);display:flex"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="fill:currentColor"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"></path></svg></span>查查上次存的露营…</span><span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--red);display:flex"><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 4l8.5 15h-17z"></path></svg></span>再列个生日礼物清…</span><div style="flex-grow:1"></div><button aria-label="改路由" aria-expanded="true" style="width:32px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--ink);background:var(--sunk);border-radius:4px"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" style="fill:currentColor"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></button></div><div class="menu" style="padding:6px 14px 12px;display:flex;flex-direction:column">
+<div style="display:flex;align-items:center;gap:10px;min-height:44px;border-top:1px solid var(--line)">
+<span style="color:var(--red);display:flex"><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"></path></svg></span><span style="flex-grow:1;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">记一下阿念最近在学露营</span>
+<button class="seg on" style="height:28px;padding:0 6px;font-size:13px">记住</button><button class="seg" style="height:28px;padding:0 6px;font-size:13px">问</button><button class="seg" style="height:28px;padding:0 6px;font-size:13px">干活</button><span style="width:30px"></span>
+<button aria-label="删除这一部分" title="删除" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</div>
+<div style="display:flex;align-items:center;gap:10px;min-height:44px;border-top:1px solid var(--line)">
+<span style="color:var(--red);display:flex"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="fill:currentColor"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"></path></svg></span><span style="flex-grow:1;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">查查上次存的露营装备攻略推荐什么</span>
+<button class="seg" style="height:28px;padding:0 6px;font-size:13px">记住</button><button class="seg on" style="height:28px;padding:0 6px;font-size:13px">问</button><button class="seg" style="height:28px;padding:0 6px;font-size:13px">干活</button><button aria-label="与上一部分合并" title="合并" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 4v6a5 5 0 0 0 5 5h5M14 12l3 3-3 3"></path></svg></button>
+<button aria-label="删除这一部分" title="删除" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</div>
+<div style="display:flex;align-items:center;gap:10px;min-height:44px;border-top:1px solid var(--line)">
+<span style="color:var(--red);display:flex"><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 4l8.5 15h-17z"></path></svg></span><span style="flex-grow:1;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">再列个生日礼物清单</span>
+<button class="seg" style="height:28px;padding:0 6px;font-size:13px">记住</button><button class="seg" style="height:28px;padding:0 6px;font-size:13px">问</button><button class="seg on" style="height:28px;padding:0 6px;font-size:13px">干活</button><button aria-label="与上一部分合并" title="合并" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 4v6a5 5 0 0 0 5 5h5M14 12l3 3-3 3"></path></svg></button>
+<button aria-label="删除这一部分" title="删除" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</div>
+<div style="display:flex;justify-content:flex-end;padding-top:10px"><button class="btn pri" style="height:32px">保存</button></div>
+</div></div>
+<div style="display:flex;gap:14px;align-items:flex-start">
+<span style="width:20px;display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0">
+<span aria-hidden="true" style="height:28px;display:flex;align-items:center;justify-content:center;color:var(--red)"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"></path></svg></span>
+
+</span>
+<div style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;align-items:center;gap:14px;min-height:28px">
+<span style="font-size:16px;font-weight:500;color:var(--ink)">已记住</span>
+<span style="display:inline-flex;gap:5px;align-items:center"><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span></span>
+<div style="flex-grow:1"></div>
+
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><span class="tag">#身边的人/阿念</span><span style="display:inline-flex;align-items:center;gap:2px;height:34px;padding:0 4px 0 12px;border:1px solid var(--line2);border-radius:4px;font-size:14px;background:var(--panel);color:var(--ink)"><span style="padding-right:4px">阿念在学露营</span><span style="display:inline-flex"><button aria-label="确认" title="确认" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--ink2)"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></button><button aria-label="丢弃" title="丢弃" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></span></span></div>
+</div>
+</div>
+<div style="display:flex;gap:14px;align-items:flex-start">
+<span style="width:20px;display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0">
+<span aria-hidden="true" style="height:28px;display:flex;align-items:center;justify-content:center;color:var(--red)"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="fill:currentColor"><path d="M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"></path></svg></span>
+
+</span>
+<div style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;align-items:center;gap:14px;min-height:28px">
+<span style="font-size:16px;font-weight:500;color:var(--ink)"></span>
+<span style="display:inline-flex;gap:5px;align-items:center"></span>
+<div style="flex-grow:1"></div>
+
+</div>
+<p style="margin:0;font-family:var(--serif);font-size:18px;line-height:1.8">轻便小桌板和挂灯最常被推荐<button class="sup" aria-label="引用 1">1</button>，三分钟能搭好的帐篷适合新手<button class="sup" aria-label="引用 2">2</button>。</p><div style="display:flex;gap:6px;align-items:center;font-family:var(--mono);font-size:12px;color:var(--muted)"><span class="ctx">认 1</span><span class="ctx">摘 1</span><span class="ctx">原 1</span><span style="margin-left:4px">1.1k</span></div>
+</div>
+</div>
+<div style="display:flex;gap:14px;align-items:flex-start">
+<span style="width:20px;display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0">
+<span aria-hidden="true" style="height:28px;display:flex;align-items:center;justify-content:center;color:var(--red)"><svg class="ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 4l8.5 15h-17z"></path></svg></span>
+
+</span>
+<div style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;align-items:center;gap:14px;min-height:28px">
+<span style="font-size:16px;font-weight:500;color:var(--muted)">生日礼物清单</span>
+<span style="display:inline-flex;gap:5px;align-items:center"><span class="dot ghost"></span><span class="dot ghost"></span><span class="dot ghost"></span></span>
+<div style="flex-grow:1"></div>
+
+</div>
+
+</div>
+</div>
+</div>
+</div>
+<div style="flex-shrink:0;padding:0 28px 24px;position:relative">
+
+<div style="max-width:720px;margin:0 auto;background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:14px 12px 8px 18px;display:flex;flex-direction:column;gap:6px">
+<textarea aria-label="输入" rows="2" placeholder="说点什么" style="width:100%;font-size:16px;line-height:1.6;min-height:52px"></textarea>
+<div style="display:flex;align-items:center;gap:2px">
+<button aria-label="添加文件" title="文件" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+<button aria-label="录音" title="录音" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg></button>
+<span style="margin-left:8px;font-size:13px;color:var(--muted);font-family:var(--mono)">#身边的人/阿念</span>
+
+<div style="flex-grow:1"></div>
+<button class="seg on" aria-pressed="true" style="height:32px;padding:0 10px;font-size:13px">自动</button><button class="seg" aria-pressed="false" style="height:32px;padding:0 10px;font-size:13px">记住</button><button class="seg" aria-pressed="false" style="height:32px;padding:0 10px;font-size:13px">问</button><button class="seg" aria-pressed="false" style="height:32px;padding:0 10px;font-size:13px">干活</button>
+<button aria-label="发送" style="margin-left:10px;width:38px;height:38px;border-radius:50%;background:var(--red);color:var(--onred);display:flex;align-items:center;justify-content:center"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" style="stroke-width:2"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeClass: this.props.dark ? 't-dark' : 't-light' };
+  }
+}
+</script>
+</body>
+</html>

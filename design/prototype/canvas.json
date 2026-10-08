@@ -1,0 +1,378 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "Companion.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "伙伴（从小熊进入）",
+      "w": 1440,
+      "x": 0,
+      "y": 2640
+    },
+    "Library.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "资料库 · 记忆塔（可点）",
+      "w": 1440,
+      "x": 0,
+      "y": 1320
+    },
+    "LibraryDark.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "资料库 · 暖黑",
+      "w": 1440,
+      "x": 1520,
+      "y": 1320
+    },
+    "Main.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "工作台 · 空状态（可点）",
+      "w": 1440,
+      "x": 0,
+      "y": 0
+    },
+    "Mobile.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "title": "手机 · 工作台",
+      "w": 390,
+      "x": 1520,
+      "y": 2640
+    },
+    "MobileLibrary.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "title": "手机 · 资料库",
+      "w": 390,
+      "x": 1990,
+      "y": 2640
+    },
+    "Settings.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "设置",
+      "w": 1440,
+      "x": 3040,
+      "y": 1320
+    },
+    "SettingsData.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "设置 · 数据展开（可点）",
+      "w": 1440,
+      "x": 4560,
+      "y": 3960
+    },
+    "SettingsModel.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "设置 · 模型展开（可点）",
+      "w": 1440,
+      "x": 0,
+      "y": 3960
+    },
+    "SettingsPrivacy.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "设置 · 隐私展开（可点）",
+      "w": 1440,
+      "x": 1520,
+      "y": 3960
+    },
+    "SettingsProject.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "设置 · 项目与约束（可点）",
+      "w": 1440,
+      "x": 3040,
+      "y": 3960
+    },
+    "WorkbenchContext.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "工作台 · 上下文（可点）",
+      "w": 1440,
+      "x": 4560,
+      "y": 0
+    },
+    "WorkbenchDark.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "工作台 · 暖黑",
+      "w": 1440,
+      "x": 3040,
+      "y": 0
+    },
+    "WorkbenchInUse.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "title": "工作台 · 使用中（可点）",
+      "w": 1440,
+      "x": 1520,
+      "y": 0
+    },
+    "S12Pending.dc.html": {
+      "h": 900,
+      "title": "资料库 · 待确认与去处（阶段 12、15）",
+      "w": 1440,
+      "x": 0,
+      "y": 5280
+    },
+    "S12Place.dc.html": {
+      "h": 900,
+      "title": "工作台 · 记住的归属与移动（阶段 12）",
+      "w": 1440,
+      "x": 1520,
+      "y": 5280
+    },
+    "S12Inbox.dc.html": {
+      "h": 900,
+      "title": "资料库 · 收件箱新建项目（阶段 12、15）",
+      "w": 1440,
+      "x": 3040,
+      "y": 5280
+    },
+    "S13Route.dc.html": {
+      "h": 900,
+      "title": "工作台 · 自动拆分与改路由（阶段 13）",
+      "w": 1440,
+      "x": 4560,
+      "y": 5280
+    },
+    "S12Context.dc.html": {
+      "h": 900,
+      "title": "工作台 · 本次上下文：画像、补全、搜索与花费（阶段 12、14、15）",
+      "w": 1440,
+      "x": 6080,
+      "y": 5280
+    },
+    "S15Devices.dc.html": {
+      "h": 1180,
+      "title": "设置 · 设备与用户（管理员，阶段 15）",
+      "w": 1440,
+      "x": 0,
+      "y": 6600
+    },
+    "S15Shared.dc.html": {
+      "h": 900,
+      "title": "资料库 · 共享项目：成员、只看、操作记录与提取（阶段 15）",
+      "w": 1440,
+      "x": 1520,
+      "y": 6600
+    },
+    "S15Share.dc.html": {
+      "h": 900,
+      "title": "工作台 · 分享一轮对话（阶段 15）",
+      "w": 1440,
+      "x": 3040,
+      "y": 6600
+    },
+    "S15Companion.dc.html": {
+      "h": 900,
+      "title": "伙伴 · 小熊提醒（阶段 15）",
+      "w": 1440,
+      "x": 4560,
+      "y": 6600
+    },
+    "S15MobileCapture.dc.html": {
+      "h": 844,
+      "title": "手机 · 一键记与待上传（阶段 15）",
+      "w": 390,
+      "x": 6080,
+      "y": 6600
+    },
+    "S15MobileOffline.dc.html": {
+      "h": 844,
+      "title": "手机 · 离线包（阶段 15）",
+      "w": 390,
+      "x": 6550,
+      "y": 6600
+    },
+    "S15Vectors.dc.html": {
+      "h": 1240,
+      "title": "设置 · 本机向量：本机 / 外接、安装、已索引、图片开关（用户追加 V1–V3）",
+      "w": 1440,
+      "x": 7020,
+      "y": 6600
+    },
+    "S15FindImage.dc.html": {
+      "h": 900,
+      "title": "工作台 · 以文找图：引用后的缩略图（用户追加 V2）",
+      "w": 1440,
+      "x": 8540,
+      "y": 6600
+    },
+    "S16Settings.dc.html": {
+      "h": 1320,
+      "title": "设置 · 模型三档与外部 agent（阶段 15–16）",
+      "w": 1440,
+      "x": 0,
+      "y": 8220
+    },
+    "S16Executor.dc.html": {
+      "h": 900,
+      "title": "工作台 · 外部执行者干活（阶段 16）",
+      "w": 1440,
+      "x": 1520,
+      "y": 8220
+    },
+    "S16Skill.dc.html": {
+      "h": 900,
+      "title": "资料库 · 方法导出为 skill（阶段 16）",
+      "w": 1440,
+      "x": 3040,
+      "y": 8220
+    },
+    "S16ChatGPT.dc.html": {
+      "h": 900,
+      "title": "ChatGPT 里的卡片（示意，阶段 16）",
+      "w": 1440,
+      "x": 4560,
+      "y": 8220
+    },
+    "S13Steer.dc.html": {
+      "h": 900,
+      "title": "工作台 · 中途插话（阶段 13）",
+      "w": 1440,
+      "x": 7600,
+      "y": 5280
+    },
+    "S12Signals.dc.html": {
+      "h": 900,
+      "title": "工作台 · 复制与停止（阶段 12、14）",
+      "w": 1440,
+      "x": 9120,
+      "y": 5280
+    },
+    "S12Review.dc.html": {
+      "h": 900,
+      "title": "资料库 · 纠偏两栏（阶段 12）",
+      "w": 1440,
+      "x": 10640,
+      "y": 5280
+    },
+    "S12Gaps.dc.html": {
+      "h": 900,
+      "title": "资料库 · 待补（阶段 12）",
+      "w": 1440,
+      "x": 12160,
+      "y": 5280
+    },
+    "S12Data.dc.html": {
+      "h": 900,
+      "title": "设置 · 数据：使用记录与备份自检（阶段 12、14）",
+      "w": 1440,
+      "x": 13680,
+      "y": 5280
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-09-30T13:40:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "rowCompanion": {
+      "kind": "title1",
+      "maxW": 2380,
+      "text": "伙伴 · 手机",
+      "w": 240,
+      "x": 0,
+      "y": 2340
+    },
+    "rowLibrary": {
+      "kind": "title1",
+      "maxW": 4480,
+      "text": "资料库 · 设置",
+      "w": 240,
+      "x": 0,
+      "y": 1020
+    },
+    "rowSettingsDeep": {
+      "kind": "title1",
+      "maxW": 6000,
+      "text": "设置 · 展开",
+      "w": 240,
+      "x": 0,
+      "y": 3660
+    },
+    "rowWorkbench": {
+      "kind": "title1",
+      "maxW": 6000,
+      "text": "工作台 · 一个输入框",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    },
+    "rowStage12": {
+      "kind": "title1",
+      "maxW": 15120,
+      "text": "阶段 12–14 · 记忆调优、路由与花费",
+      "w": 240,
+      "x": 0,
+      "y": 4980
+    },
+    "rowStage15": {
+      "kind": "title1",
+      "maxW": 9980,
+      "text": "阶段 15 · 随身、多人与共享",
+      "w": 240,
+      "x": 0,
+      "y": 6300
+    },
+    "rowStage16": {
+      "kind": "title1",
+      "maxW": 6000,
+      "text": "阶段 16 · 接入通用 agent",
+      "w": 240,
+      "x": 0,
+      "y": 7920
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "WorkbenchInUse.dc.html",
+    "WorkbenchDark.dc.html",
+    "WorkbenchContext.dc.html",
+    "Library.dc.html",
+    "LibraryDark.dc.html",
+    "Settings.dc.html",
+    "Companion.dc.html",
+    "Mobile.dc.html",
+    "MobileLibrary.dc.html",
+    "SettingsModel.dc.html",
+    "SettingsPrivacy.dc.html",
+    "SettingsProject.dc.html",
+    "SettingsData.dc.html",
+    "S12Pending.dc.html",
+    "S12Place.dc.html",
+    "S12Inbox.dc.html",
+    "S13Route.dc.html",
+    "S12Context.dc.html",
+    "S13Steer.dc.html",
+    "S12Signals.dc.html",
+    "S12Review.dc.html",
+    "S12Gaps.dc.html",
+    "S12Data.dc.html",
+    "S15Devices.dc.html",
+    "S15Shared.dc.html",
+    "S15Share.dc.html",
+    "S15Companion.dc.html",
+    "S15MobileCapture.dc.html",
+    "S15MobileOffline.dc.html",
+    "S15Vectors.dc.html",
+    "S15FindImage.dc.html",
+    "S16Settings.dc.html",
+    "S16Executor.dc.html",
+    "S16Skill.dc.html",
+    "S16ChatGPT.dc.html"
+  ],
+  "pages": [],
+  "title": "第二大脑 · 界面原型"
+}

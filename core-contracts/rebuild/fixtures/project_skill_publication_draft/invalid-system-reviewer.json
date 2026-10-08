@@ -1,0 +1,29 @@
+{
+  "id": "project-skill-publication-draft-aaaaaaaaaaaaaaaaaaaaaaaa",
+  "schema_version": "1.0.0",
+  "target_layer": "project_skill",
+  "source_candidate_id": "candidate-alpha-001",
+  "project_id": "project-alpha",
+  "skill_id": "skill-project-alpha",
+  "expected_project_skill_revision": 0,
+  "markdown": "# Draft",
+  "review_ref": "crp://default/memory-candidates/candidate-alpha-001.json#review",
+  "reviewed_by": "system",
+  "reviewed_at": "2026-07-12T10:00:00+08:00",
+  "review_reason": "未经过用户审查。",
+  "source_refs": [
+    {
+      "source_id": "source-alpha-001",
+      "locator": "char:0-64"
+    }
+  ],
+  "evidence_refs": [
+    {
+      "source_id": "source-alpha-001",
+      "locator": "char:0-64"
+    }
+  ],
+  "draft_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "created_at": "2026-07-12T10:00:00+08:00",
+  "updated_at": "2026-07-12T10:00:00+08:00"
+}

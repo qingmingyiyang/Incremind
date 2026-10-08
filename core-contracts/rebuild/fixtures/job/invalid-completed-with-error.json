@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0.0",
+  "id": "job-invalid-completed-error",
+  "source_id": "source-text-001",
+  "job_type": "extract_memory",
+  "idempotency_key": "invalid-completed-error",
+  "status": "completed",
+  "attempt": 1,
+  "max_attempts": 3,
+  "lease": null,
+  "progress": {
+    "current": 4,
+    "total": 4,
+    "percent": 100,
+    "message": "completed"
+  },
+  "steps": [
+    {
+      "name": "extract_atom_candidates",
+      "status": "completed",
+      "attempt": 1,
+      "started_at": "2026-06-29T09:00:00+08:00",
+      "completed_at": "2026-06-29T09:00:05+08:00",
+      "progress": 100,
+      "input_refs": [
+        "crp://default/sources/source-text-001"
+      ],
+      "staged_output_refs": [],
+      "log_refs": [],
+      "error": null
+    }
+  ],
+  "error": {
+    "code": "late_error",
+    "message": "completed job must not keep error",
+    "retryable": false,
+    "failed_step": null,
+    "details": {}
+  },
+  "checkpoint": null,
+  "staged_outputs": [],
+  "published_outputs": [
+    {
+      "kind": "atom",
+      "uri": "crp://default/memory/atoms/atom-001",
+      "object_id": "atom-001",
+      "published": true
+    }
+  ],
+  "log_refs": [],
+  "created_at": "2026-06-29T09:00:00+08:00",
+  "updated_at": "2026-06-29T09:00:05+08:00"
+}

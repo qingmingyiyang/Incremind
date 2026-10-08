@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://schemas/ai/project-boundary-summary-v1",
+  "title": "Project Boundary Summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "semantics_version", "expiring_window_hours", "project_id", "boundary_profile", "capability_profile", "experience", "persistent_grants", "anonymous_grant_counts", "authorities"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "semantics_version": {"const": "boundary-summary/v1"},
+    "expiring_window_hours": {"const": 24},
+    "project_id": {"type": "string", "minLength": 1},
+    "boundary_profile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile_id", "revision", "mode", "remote_default", "denied_effects"],
+      "properties": {
+        "profile_id": {"type": "string", "minLength": 1},
+        "revision": {"type": "integer", "minimum": 1},
+        "mode": {"enum": ["open", "guarded", "sealed"]},
+        "remote_default": {"enum": ["allow", "review", "deny"]},
+        "denied_effects": {"type": "array", "uniqueItems": true, "items": {"enum": ["read", "write", "external", "platform", "delete"]}}
+      }
+    },
+    "capability_profile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile_id", "revision", "boundary_profile_id", "boundary_profile_revision"],
+      "properties": {
+        "profile_id": {"type": "string", "minLength": 1},
+        "revision": {"type": "integer", "minimum": 1},
+        "boundary_profile_id": {"type": "string", "minLength": 1},
+        "boundary_profile_revision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "experience": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tier", "description"],
+      "properties": {
+        "tier": {"enum": ["full_access", "self_review", "sensitive_denied"]},
+        "description": {"type": "string", "minLength": 1}
+      }
+    },
+    "persistent_grants": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["grant_id", "revision", "target", "actions", "destinations", "data_classes", "lifecycle_state", "static_match_eligible", "ineligible_reason", "invocation_dependent", "redaction_required", "expires_at"],
+        "properties": {
+          "grant_id": {"type": "string", "minLength": 1},
+          "revision": {"type": "integer", "minimum": 1},
+          "target": {
+            "type": "object", "additionalProperties": false,
+            "required": ["kind", "stable_id", "display_name", "source", "owner_id"],
+            "properties": {
+              "kind": {"const": "tool"},
+              "stable_id": {"type": "string", "minLength": 1},
+              "display_name": {"type": "string", "minLength": 1},
+              "source": {"enum": ["core", "platform", "plugin", "mcp", "workflow"]},
+              "owner_id": {"type": "string", "minLength": 1}
+            }
+          },
+          "actions": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["read", "write", "external", "platform", "delete"]}},
+          "destinations": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["local", "provider", "mcp", "platform"]}},
+          "data_classes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "lifecycle_state": {"enum": ["active", "expiring", "expired", "revoked"]},
+          "static_match_eligible": {"type": "boolean"},
+          "ineligible_reason": {"type": ["string", "null"]},
+          "invocation_dependent": {"const": true},
+          "redaction_required": {"type": "boolean"},
+          "expires_at": {"type": ["string", "null"], "format": "date-time"}
+        }
+      }
+    },
+    "anonymous_grant_counts": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["reason", "count"],
+        "properties": {"reason": {"const": "unmapped_target"}, "count": {"type": "integer", "minimum": 1}}
+      }
+    },
+    "authorities": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["kind", "enumerable", "scope", "revision"],
+        "properties": {
+          "kind": {"enum": ["project_boundary_profile", "project_capability_profile", "turn_approval", "session_file_proof", "global_provider_consent", "machine_mcp_approval"]},
+          "enumerable": {"type": "boolean"},
+          "scope": {"enum": ["project_persistent", "project_selection", "single_turn", "desktop_session", "global_provider", "machine_mcp"]},
+          "revision": {"type": ["integer", "null"], "minimum": 1}
+        }
+      }
+    }
+  }
+}

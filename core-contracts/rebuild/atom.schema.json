@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/atom.schema.json",
+  "title": "Atom",
+  "description": "L1 可独立引用的最小事实、观点、行动、问题或决策候选。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "source_id",
+    "content",
+    "atom_type",
+    "tags",
+    "confidence",
+    "source_refs",
+    "revision",
+    "created_at",
+    "updated_at",
+    "trust_status"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "content": {
+      "type": "string",
+      "minLength": 1
+    },
+    "atom_type": {
+      "type": "string",
+      "enum": [
+        "fact",
+        "opinion",
+        "quote",
+        "decision",
+        "action",
+        "question",
+        "preference",
+        "other"
+      ]
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "source_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/sourceRef"
+      }
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trust_status": {
+      "$ref": "#/$defs/trustStatus"
+    }
+  },
+  "$defs": {
+    "trustStatus": {
+      "type": "string",
+      "enum": [
+        "trusted",
+        "imported_unverified",
+        "user_confirmed",
+        "system_generated",
+        "failed"
+      ]
+    },
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "locator"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "页码、时间戳、字符范围、帧或其他原档定位信息。"
+        },
+        "quote": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

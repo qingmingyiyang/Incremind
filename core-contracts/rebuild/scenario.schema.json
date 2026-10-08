@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/scenario.schema.json",
+  "title": "Scenario",
+  "description": "L2 面向事件、主题或任务的可追溯场景摘要。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "summary",
+    "atom_ids",
+    "source_refs",
+    "tags",
+    "series_id",
+    "project_id",
+    "stale",
+    "stale_reason",
+    "revision",
+    "created_at",
+    "updated_at",
+    "trust_status"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "atom_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sourceRef"
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "series_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "project_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "stale": {
+      "type": "boolean"
+    },
+    "stale_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trust_status": {
+      "$ref": "#/$defs/trustStatus"
+    }
+  },
+  "anyOf": [
+    {
+      "properties": {
+        "atom_ids": {
+          "minItems": 1
+        }
+      }
+    },
+    {
+      "properties": {
+        "source_refs": {
+          "minItems": 1
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "trustStatus": {
+      "type": "string",
+      "enum": [
+        "trusted",
+        "imported_unverified",
+        "user_confirmed",
+        "system_generated",
+        "failed"
+      ]
+    },
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "locator"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-replay.local/contracts/rebuild/project_skill_publication_draft.schema.json",
+  "title": "ProjectSkillPublicationDraft",
+  "description": "经人工审查、可作为 Project Skill 五对象 aggregate 发布输入的不可变草案。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "schema_version",
+    "target_layer",
+    "source_candidate_id",
+    "project_id",
+    "skill_id",
+    "expected_project_skill_revision",
+    "structured_payload",
+    "markdown",
+    "review_ref",
+    "reviewed_by",
+    "reviewed_at",
+    "review_reason",
+    "source_refs",
+    "evidence_refs",
+    "draft_digest",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^project-skill-publication-draft-[a-f0-9]{24}$"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+[.][0-9]+[.][0-9]+$"
+    },
+    "target_layer": {
+      "const": "project_skill"
+    },
+    "source_candidate_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    },
+    "skill_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    },
+    "expected_project_skill_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "structured_payload": {
+      "$ref": "https://chriptmas-replay.local/contracts/rebuild/project_skill.schema.json"
+    },
+    "markdown": {
+      "type": "string",
+      "minLength": 1
+    },
+    "review_ref": {
+      "type": "string",
+      "pattern": "^crp://[a-z0-9][a-z0-9_-]*/memory-candidates/[A-Za-z0-9_-]+[.]json#review$"
+    },
+    "reviewed_by": {
+      "const": "user"
+    },
+    "reviewed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "review_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/sourceRef"
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/sourceRef"
+      }
+    },
+    "draft_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "locator"],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

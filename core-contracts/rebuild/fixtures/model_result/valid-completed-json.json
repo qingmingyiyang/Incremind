@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0.0",
+  "id": "model-result-completed-json-001",
+  "request_id": "model-request-local-structured-001",
+  "status": "completed",
+  "provider": {
+    "provider_id": "local-llm",
+    "mode": "local",
+    "remote": false,
+    "config_version": 1
+  },
+  "model": {
+    "name": "local-structured-small",
+    "version": "2026-06-29",
+    "capability": "structured_generation"
+  },
+  "output": {
+    "kind": "json",
+    "content": null,
+    "structured": {
+      "answer": "应先关闭剩余模型合约，再进入运行时闭环。",
+      "citations": ["source-text-001:char:0-80"]
+    },
+    "output_refs": []
+  },
+  "usage": {
+    "input_tokens": 1600,
+    "output_tokens": 240,
+    "total_tokens": 1840,
+    "cost_usd": 0,
+    "currency": "none"
+  },
+  "latency": {
+    "started_at": "2026-06-29T16:00:00+08:00",
+    "completed_at": "2026-06-29T16:00:02+08:00",
+    "elapsed_ms": 2000,
+    "timed_out": false
+  },
+  "error": null,
+  "safety": {
+    "blocked": false,
+    "categories": [],
+    "redaction_applied": false,
+    "output_truncated": false
+  },
+  "created_at": "2026-06-29T16:00:02+08:00"
+}

@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chriptmas-os.local/contracts/desktop/loopback-session.schema.json",
+  "title": "Desktop Loopback Session",
+  "description": "Electron main and its Python sidecar establish a one-launch, fail-closed loopback session. Renderer code never receives the session secret.",
+  "oneOf": [
+    { "$ref": "#/$defs/sessionManifest" },
+    { "$ref": "#/$defs/healthResponse" },
+    { "$ref": "#/$defs/sessionError" }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{22,128}$"
+    },
+    "randomSecret": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43,256}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sessionManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "schema_version",
+        "protocol_version",
+        "mode",
+        "instance_id",
+        "nonce",
+        "secret",
+        "secret_transport",
+        "auth_header",
+        "host",
+        "requested_port",
+        "port",
+        "origin",
+        "port_allocation",
+        "child_pid",
+        "issued_at",
+        "expires_at",
+        "renderer_secret_access",
+        "secret_exposure"
+      ],
+      "properties": {
+        "kind": { "const": "desktop_loopback_session" },
+        "schema_version": { "const": "1.0.0" },
+        "protocol_version": { "const": "desktop-loopback/1" },
+        "mode": { "enum": ["desktop_production", "desktop_development"] },
+        "instance_id": { "$ref": "#/$defs/identifier" },
+        "nonce": { "$ref": "#/$defs/randomSecret" },
+        "secret": { "$ref": "#/$defs/randomSecret" },
+        "secret_transport": { "enum": ["environment", "anonymous_pipe"] },
+        "auth_header": { "const": "X-Chriptmas-Desktop-Session" },
+        "host": { "const": "127.0.0.1" },
+        "requested_port": { "const": 0 },
+        "port": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+        "origin": {
+          "type": "string",
+          "pattern": "^http://127\\.0\\.0\\.1:[1-9][0-9]{3,4}$"
+        },
+        "port_allocation": { "const": "os_ephemeral" },
+        "child_pid": { "type": "integer", "minimum": 1 },
+        "issued_at": { "$ref": "#/$defs/timestamp" },
+        "expires_at": { "$ref": "#/$defs/timestamp" },
+        "renderer_secret_access": { "const": false },
+        "secret_exposure": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["command_line", "url", "logs", "crash_report"],
+          "properties": {
+            "command_line": { "const": false },
+            "url": { "const": false },
+            "logs": { "const": false },
+            "crash_report": { "const": false }
+          }
+        }
+      }
+    },
+    "healthResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "schema_version",
+        "protocol_version",
+        "instance_id",
+        "nonce",
+        "child_pid",
+        "status",
+        "auth_required",
+        "renderer_secret_access",
+        "session_fingerprint",
+        "observed_at",
+        "session_expires_at"
+      ],
+      "properties": {
+        "kind": { "const": "desktop_loopback_health" },
+        "schema_version": { "const": "1.0.0" },
+        "protocol_version": { "const": "desktop-loopback/1" },
+        "instance_id": { "$ref": "#/$defs/identifier" },
+        "nonce": { "$ref": "#/$defs/randomSecret" },
+        "child_pid": { "type": "integer", "minimum": 1 },
+        "status": { "enum": ["ready", "starting", "failed", "stopping"] },
+        "auth_required": { "const": true },
+        "renderer_secret_access": { "const": false },
+        "session_fingerprint": { "$ref": "#/$defs/randomSecret" },
+        "observed_at": { "$ref": "#/$defs/timestamp" },
+        "session_expires_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "sessionError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "protocol_version", "code", "retryable", "message"],
+      "properties": {
+        "kind": { "const": "desktop_loopback_error" },
+        "schema_version": { "const": "1.0.0" },
+        "protocol_version": { "const": "desktop-loopback/1" },
+        "code": {
+          "enum": [
+            "desktop_session_config_invalid",
+            "desktop_session_unauthorized",
+            "desktop_session_expired",
+            "desktop_session_health_mismatch",
+            "desktop_session_child_exited",
+            "desktop_session_origin_rejected"
+          ]
+        },
+        "retryable": { "type": "boolean" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 240 }
+      }
+    }
+  }
+}

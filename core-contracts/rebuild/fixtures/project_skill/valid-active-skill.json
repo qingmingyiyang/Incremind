@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0.0",
+  "id": "skill-project-alpha",
+  "project_id": "project-alpha",
+  "name": "Alpha 项目 Skill",
+  "purpose": "固定 Alpha 项目的目标、必读上下文和输出结构。",
+  "markdown_uri": "crp://default/projects/project-alpha/project-skill.md",
+  "json_uri": "crp://default/projects/project-alpha/project-skill.json",
+  "markdown_revision": 2,
+  "json_revision": 2,
+  "required_context": [
+    {
+      "context_id": "ctx-series-alpha",
+      "kind": "series_memory",
+      "object_id": "series-memory-alpha",
+      "uri": "crp://default/memory/series/series-memory-alpha.json",
+      "reason": "作为项目问答和文档生成的 L3 总览。",
+      "stale": false
+    },
+    {
+      "context_id": "ctx-document-alpha",
+      "kind": "document",
+      "object_id": "document-project-001",
+      "uri": "crp://default/documents/project-alpha/document-project-001.md",
+      "reason": "作为项目当前输出结构。",
+      "stale": false
+    }
+  ],
+  "output_rules": [
+    {
+      "rule_id": "rule-structure",
+      "origin": "user",
+      "rule": "后续更新优先 patch 既有结构，不重新生成一套目录。",
+      "priority": "must",
+      "source_refs": [],
+      "locked_by_user": true
+    },
+    {
+      "rule_id": "rule-evidence",
+      "origin": "ai",
+      "rule": "生成文档必须保留可追溯 source refs。",
+      "priority": "must",
+      "source_refs": [
+        {
+          "source_id": "source-text-001",
+          "locator": "char:0-80"
+        }
+      ],
+      "locked_by_user": false
+    }
+  ],
+  "style_preferences": {
+    "voice": "直接、具体、可执行",
+    "format_defaults": ["Markdown", "分节标题", "来源引用"]
+  },
+  "update_rules": {
+    "patch_strategy": "patch_existing_first",
+    "user_edit_policy": "user_wins",
+    "allowed_auto_updates": ["append_low_risk_context", "refresh_stale_refs"]
+  },
+  "source_refs": [
+    {
+      "source_id": "source-text-001",
+      "locator": "char:0-80"
+    }
+  ],
+  "evidence_refs": [
+    {
+      "source_id": "source-text-001",
+      "locator": "char:0-80"
+    }
+  ],
+  "decision_log": [
+    {
+      "decision_id": "decision-skill-alpha-r2",
+      "reason": "用户确认项目输出结构需要沿用。",
+      "actor": "user",
+      "created_at": "2026-06-29T14:10:00+08:00"
+    }
+  ],
+  "conflict": {
+    "status": "none",
+    "conflict_refs": [],
+    "resolution": null
+  },
+  "revision": 2,
+  "status": "active",
+  "trust_status": "user_confirmed",
+  "created_at": "2026-06-29T14:00:00+08:00",
+  "updated_at": "2026-06-29T14:20:00+08:00"
+}
