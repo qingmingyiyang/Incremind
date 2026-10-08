@@ -1,5 +1,7 @@
 <div align="center">
 
+[简体中文](README.md) · [English](README.en.md)
+
 <img src="design/prototype/assets/bear-head-ready.webp" width="96" alt="Incremind 的小熊" />
 
 # Incremind · 积微
@@ -213,6 +215,7 @@ cd src/frontend; npm test; npm run build                       # 前端测试与
 
 - 改提示词或算法：在 `v2/policies/` 登记新版本，离线对比后，单独一次提交切换 `ACTIVE`。
 - 前端只用 `src/frontend/src/styles.css` 里的设计 token 和 `shared/ui/` 组件。
+- 更新项目介绍、功能状态或使用说明时，同步维护 `README.md` 和 `README.en.md`。
 - 提交前钩子 `tools/task_guard.py` 会检查疑似密钥、误提交的数据目录和新增的跳过标记；新克隆后运行一次 `.\.venv\Scripts\python.exe tools/task_guard.py --install` 安装。
 
 ## 已知限制
