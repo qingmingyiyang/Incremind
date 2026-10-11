@@ -8,12 +8,17 @@ new recognition lifecycle.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict
 from threading import RLock
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
+
+# LiteLLM otherwise downloads its price table from GitHub on import (~5 s, and an
+# undisclosed request); costs here come from model_costs, not from that table.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -121,7 +126,9 @@ def create_app(
     models = model_configuration or ModelConfiguration(records, root, secrets=server_secrets, internal_local_key_provider=internal_provider,
         local_models_root=server_context.resources.model_root if server_context is not None else None)
     from .v2.embedding_settings import EmbeddingSettings, vector_policy
-    embeddings = EmbeddingSettings(records, getattr(models, '_local_models_root', root / 'data' / 'models'))
+    embeddings = EmbeddingSettings(records, getattr(models, '_local_models_root', root / 'data' / 'models'),
+        shared=server_context is not None, device=getattr(server_context, 'vector_device', 'cpu'),
+        shared_on_ready=getattr(server_context, 'vector_on_ready', None))
     application.state.memory_embedding_settings = embeddings
     if isinstance(models, ModelConfiguration):
         models.bind_embedding(embeddings.project, vector_policy)

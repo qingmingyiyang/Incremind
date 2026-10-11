@@ -641,6 +641,8 @@ class ModelConfiguration:
             result = {**payload, "api_key": key, "revision": record.revision}
             if purpose == 'embedding' and self._embedding_projection is not None:
                 result.update(mode=selected['mode'], mode_revision=selected['mode_revision'])
+                if selected['mode'] == 'server':
+                    result['model_key'] = selected['model_key']
             return result
 
     def search(self, query, *, parameters, messages_factory, normalize_results, validate_current, wire_attempt_sink):
@@ -1103,6 +1105,9 @@ class ModelConfiguration:
                 raise ValueError('provider_background_adapter_invalid')
             transport_options = {'capabilities': native.capabilities,
                 'background_options': background_options}
+        from .v2.policies import get
+        capacity = getattr(get('ladder'), 'context_window', None)
+        context_window = capacity(cfg['provider'], cfg['model'], cfg['base_url']) if callable(capacity) else 16000
         return self._gateway_factory(
             provider=cfg["provider"], model=cfg["model"], base_url=cfg["base_url"],
             api_key=None, api_key_provider=lambda: (
@@ -1112,7 +1117,7 @@ class ModelConfiguration:
             egress_guard=self._generation_egress_guard(dict(cfg), validate_current=validate_current),
             egress_purpose="memory_generation",
             egress_categories=("instructions", "source_excerpt"),
-            context_window_tokens=16000, reserved_output_tokens=2000,
+            context_window_tokens=context_window, reserved_output_tokens=2000,
             completion_fn=_validated_generation_completion(native,
                 preserve_responses=background_options is not None),
             **transport_options,

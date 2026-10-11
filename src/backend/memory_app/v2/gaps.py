@@ -26,9 +26,14 @@ def _frozen_coverage(group, answer, question, project, policy):
     try:
         wire = group['answer_input']
         messages = wire['messages']
+        reviewed = group['request'].get('policy_versions', {}).get('compose') in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}
+        partitioned = group['request'].get('policy_versions', {}).get('compose') in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}
+        lengths = ((2, 3, 4) if partitioned else (3, 4) if group['request'].get('policy_versions', {}).get('compose') in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}
+                   else (4, 5)) if reviewed else (2, 3)
         if (wire.get('purpose') != 'primary' or not isinstance(messages, list)
-                or len(messages) not in (2, 3) or messages[-1].get('role') != 'user'
-                or any(message.get('role') != 'system' for message in messages[:-1])):
+                or len(messages) not in lengths or messages[-1].get('role') != 'user'
+                or (reviewed and not partitioned and messages[-2].get('role') != 'user')
+                or (not partitioned and any(message.get('role') != 'system' for message in (messages[:-2] if reviewed else messages[:-1])))):
             return None
         content = messages[-1]['content']
         suffix = _QUESTION + question
@@ -68,25 +73,42 @@ def _frozen_coverage(group, answer, question, project, policy):
             framed.append({**candidate, 'id': identity, 'title': title, 'excerpt': '',
                 'supplemented': entry.get('supplemented', False)})
         compose_version = group['request']['policy_versions']['compose']
-        headers = get('compose', version=compose_version)(_source_texts, framed, operation='sources')
-        markers = list(re.finditer(r'^\[(\d+)\][^\n]*', sources, re.MULTILINE))
-        if (len(markers) != len(chosen) or [int(marker[1]) for marker in markers] != list(range(1, len(chosen) + 1))
-                or len(headers) != len(chosen) or any(sources.count(header) != 1 for header in headers)):
-            return None
-        positions = [sources.index(header) for header in headers]
-        if positions[0] != 0 or positions != sorted(positions):
-            return None
-        excerpts = []
-        for index, header in enumerate(headers):
-            end = positions[index + 1] - 2 if index + 1 < len(headers) else len(sources)
-            if index + 1 < len(headers) and sources[end:positions[index + 1]] != '\n\n':
+        if partitioned:
+            import json
+            from .answer_evidence import catalog_source_excerpts, validate_partition
+            payload = json.loads(sources)
+            expected_keys = ({'evidence_catalog', 'date_provenance', 'untrusted_first_fact_plan', 'first_fact_positions'}
+                if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else {'evidence_catalog', 'untrusted_first_partition'})
+            if compose_version in {'@25', '@26', '@27', '@28', '@29', '@30'}:
+                expected_keys = expected_keys | {'first_fact_diagnostics'}
+            if set(payload) != expected_keys:
                 return None
-            excerpt = sources[positions[index] + len(header):end]
-            if not excerpt.strip():
+            catalog = payload['evidence_catalog']
+            from .answer_evidence import first_fact_partition
+            validate_partition(first_fact_partition(payload['untrusted_first_fact_plan'], catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else payload['untrusted_first_partition'], catalog)
+            if [row['source_number'] for row in catalog['sources']] != list(range(1, len(chosen) + 1)):
                 return None
-            excerpts.append(excerpt)
-        if '\n\n'.join(header + excerpt for header, excerpt in zip(headers, excerpts)) != sources:
-            return None
+            excerpts = catalog_source_excerpts(catalog)
+        else:
+            headers = get('compose', version=compose_version)(_source_texts, framed, operation='sources')
+            markers = list(re.finditer(r'^\[(\d+)\][^\n]*', sources, re.MULTILINE))
+            if (len(markers) != len(chosen) or [int(marker[1]) for marker in markers] != list(range(1, len(chosen) + 1))
+                    or len(headers) != len(chosen) or any(sources.count(header) != 1 for header in headers)):
+                return None
+            positions = [sources.index(header) for header in headers]
+            if positions[0] != 0 or positions != sorted(positions):
+                return None
+            excerpts = []
+            for index, header in enumerate(headers):
+                end = positions[index + 1] - 2 if index + 1 < len(headers) else len(sources)
+                if index + 1 < len(headers) and sources[end:positions[index + 1]] != '\n\n':
+                    return None
+                excerpt = sources[positions[index] + len(header):end]
+                if not excerpt.strip():
+                    return None
+                excerpts.append(excerpt)
+            if '\n\n'.join(header + excerpt for header, excerpt in zip(headers, excerpts)) != sources:
+                return None
         seen = set()
         for citation in answer['citations']:
             number = citation['n']
@@ -172,6 +194,11 @@ class Gaps:
                 continue
             if answer.get('no_match') is not True:
                 group = groups.get(row.object_id)
+                if store:
+                    from ..answer_proof import read_answer_input
+                    selected_input = read_answer_input(store, row.object_id)
+                    if selected_input is None or group is None or group.get('answer_input') != selected_input[1]:
+                        continue
                 if (group is None or group.get('request') != request or group.get('answer') != result[1]
                         or not group.get('answer_input')
                         or not any(call.get('status') == 'completed' and call.get('model_call_purpose') == 'primary'

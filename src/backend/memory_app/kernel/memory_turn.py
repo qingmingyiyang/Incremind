@@ -149,6 +149,9 @@ class MemoryTurn:
                 public = selected.public()[owner.purpose]
                 # Only public route fields may enter kernel payloads.
                 route = {k: public.get(k) for k in ("provider", "model", "base_url", "revision", "allow_remote")}
+                if owner.purpose != 'generation':
+                    # 辅助 Turn 的 kind 可复用，实际用途必须随原路由冻结供回执投影。
+                    route['purpose'] = owner.purpose
                 route_ref = owner.store.get_or_create_immutable_payload(owner.turn_id, "memory-model-route-v1", route)
                 call = None
                 if owner.purpose == 'generation' and invoke is None:
@@ -275,15 +278,17 @@ class MemoryTurn:
         raise RecognitionConflict("memory_proposal_pending_recovery")
 
 
-def embedding_request(records, models, project, materials, key, validate, transport, request, *, turn_factory):
-    """Observe one embedding wire with the same auxiliary Turn persistence."""
+def embedding_request(records, models, project, materials, key, validate, transport, request, *, turn_factory, purpose='embedding'):
+    """用同一辅助 Turn 记录向量或重排的真实调用与费用。"""
+    if purpose not in {'embedding', 'rerank'}:
+        raise ValueError('invalid_retrieval_wire_purpose')
     from pydantic import RootModel
     turn = turn_factory(records, models, kind="memory.link_suggest", project=project,
-        key=key, materials=materials, validate=validate, purpose="embedding")
+        key=key, materials=materials, validate=validate, purpose=purpose)
     def invoke(control, current):
         current()
         wrap = getattr(models, 'price_wire_sink', None)
-        sink = (wrap(control, purpose='embedding', configuration=models.public()['embedding'])
+        sink = (wrap(control, purpose=purpose, configuration=models.public()[purpose])
                 if callable(wrap) else control)
         attempt = sink.begin_model_wire_attempt()
         def wire():

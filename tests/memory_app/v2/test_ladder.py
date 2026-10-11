@@ -155,7 +155,8 @@ def test_forgotten_and_private_projects_are_excluded(env):
     assert env.query.prepare_ask("alpha", "alpha beta gamma?")["chosen"] == []
 
 
-def test_public_query_terms_keeps_legacy_alias_and_ladder_total_budget():
+@pytest.mark.parametrize('version,total', [('@1', 9), ('@2', 11)])
+def test_public_query_terms_keeps_legacy_alias_and_ladder_total_budget(version, total):
     from core.search_and_recall.evidence_windows import query_terms, _terms
     from backend.memory_app.v2.ladder import plan_ladder
     assert query_terms is _terms
@@ -163,8 +164,9 @@ def test_public_query_terms_keeps_legacy_alias_and_ladder_total_budget():
                   for i, layer in enumerate(["L3"]*5 + ["L2"]*4 + ["L1"]*4 + ["L0"]*4)]
     candidates += [{"id": "persona"+str(i), "layer": "L3", "score": 9, "excerpt": "alpha beta gamma " + chr(65+i)*12,
                     "persona": True} for i in range(4)]
-    result = plan_ladder(candidates, "alpha beta gamma?")
-    assert len(result["chosen"]) == 9
+    with override(ladder=version):
+        result = plan_ladder(candidates, "alpha beta gamma?")
+    assert len(result["chosen"]) == total
     assert sum(t["selected"] for t in result["trace"]) == len(result["chosen"])
     assert len([c for c in result["chosen"] if c.get("persona")]) == 0
     assert [t["layer"] for t in result["trace"]] == ["L3", "L2", "L1", "L0"]

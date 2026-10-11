@@ -34,6 +34,8 @@ export const settingsApi = {
     { mode, expected_revision: expectedRevision }, 'PATCH'),
   saveEmbeddingMode: ({ mode, expectedRevision }) => settingsRequest('settings/embedding-mode',
     { mode, expected_revision: expectedRevision }, 'PATCH'),
+  loadEmbedding: revision => settingsRequest('settings/embedding/load', { expected_revision: revision }, 'POST'),
+  unloadEmbedding: revision => settingsRequest('settings/embedding/unload', { expected_revision: revision }, 'POST'),
   installEmbedding: revision => settingsRequest('settings/embedding/install', { expected_revision: revision }, 'POST'),
   saveFastModel: ({ model, expectedRevision, expectedGenerationRevision, expectedModeRevision }) => settingsRequest('settings/fast-model',
     { model, expected_revision: expectedRevision, expected_generation_revision: expectedGenerationRevision, expected_mode_revision: expectedModeRevision }, 'PATCH'),

@@ -6,10 +6,14 @@ from itertools import groupby
 from backend.recognition import WorkScope, RecognitionConflict
 from backend.recognition_retrieval import SQLiteEmbeddingCache
 from backend.recognition_retrieval.cache_invalidation import chunk_cache_namespace, chunk_cache_id
+from core.storage_provider.connection_scope import connection_scope
+from core.storage_provider.source_retrieval_index import COLLECTION as SOURCES, namespace_projection
 from ..retrieval_models import configured_adapter, _public_identity
 from ..source_egress import SourceEgressService
+from ..recall_state import is_recall_excluded
 from .embedding_settings import vector_policy
 from .memory_turn import embedding_request
+from .usage import recall_weight
 
 
 class EmbeddingIndex:
@@ -17,36 +21,65 @@ class EmbeddingIndex:
         self.query = query
         self.records, self.models = query.records, query.models
         self.lock = Lock()
+        self.again = False
 
     def _work(self, configured):
         authority = SourceEgressService(self.records)
         projects = {row.object_id for row in self.records.list('v2_projects')}
         projects.update(row.payload.get('scope', {}).get('project_id') for row in self.records.list('recognitions'))
         projects.update(row.payload.get('project_id') for row in self.records.list('documents'))
+        for row in self.query.retrieval_index.source_records.list(SOURCES):
+            source = namespace_projection(row, self.query.source_store.namespace_id)
+            if source:
+                projects.add(source.get('project_id'))
         for project in sorted(value for value in projects if isinstance(value, str) and value):
             scope = WorkScope('local-user', project)
             for entry in self.query.service.retrieval_entries(scope=scope):
+                if is_recall_excluded(self.records, scope, entry['id']):
+                    continue
                 snapshot = authority.snapshot(scope, [{'type': 'recognition', 'id': entry['id'],
                                                         'revision': entry['revision']}])
                 cache_entry = SimpleNamespace(project_id=project, id=entry['id'], revision=entry['revision'])
                 yield project, cache_entry, entry['content'], snapshot, None
-            entries, _, documents, _, _ = self.query.retrieval_index.indexed_entries(project)
+            entries, _, documents, sources, originals = self.query.retrieval_index.indexed_entries(project)
             for entry in entries:
-                if entry['kind'] != 'document' or entry['id'] not in documents:
+                if not self._recallable(project, entry):
                     continue
                 snapshot = self.query.original_snapshot(scope, entry, authority)
                 if snapshot is None:
                     continue
-                projection = documents[entry['id']]
+                if entry['kind'] == 'document':
+                    projection = documents[entry['id']]
+                    summary = projection['summary']
+                    spans = [(span['layer'], span['chunks']) for span in projection['spans']]
+                    original = originals.get(entry.get('item_id'))
+                    if original and original['length']:
+                        spans.append(('L0', original['chunks']))
+                else:
+                    source = next(value for value in sources if value['source_id'] == entry['id'])
+                    summary = ''
+                    spans = [('L0', source['chunks'])]
                 namespace = chunk_cache_namespace(project, entry)
-                for slot, span in enumerate(projection['spans']):
-                    if span['layer'] == 'L2':
+                for slot, (layer, chunks) in enumerate(spans):
+                    # 保持查询端的完整 span 顺序，摘要占用 slot，但不单独编码。
+                    if layer == 'L2':
                         continue
-                    for index, chunk in enumerate(span['chunks']):
-                        identity = chunk_cache_id(entry, span['layer'], slot, index)
-                        text = entry['title'] + '\n' + projection['summary'][:120] + '\n' + chunk['text']
+                    for index, chunk in enumerate(chunks):
+                        identity = chunk_cache_id(entry, layer, slot, index)
+                        # 整理稿与原文共享标题和摘要前 120 字，独立原件的摘要为空。
+                        text = entry['title'] + '\n' + summary[:120] + '\n' + chunk['text']
                         cache_entry = SimpleNamespace(project_id=namespace, id=identity, revision=entry['revision'])
-                        yield project, cache_entry, text, snapshot, entry
+                        yield project, cache_entry, text, snapshot, (entry, layer)
+
+    def _recallable(self, project, entry):
+        if entry['kind'] == 'document':
+            identities = [entry['id']]
+        else:
+            identities = [row.object_id for row in self.records.list_matching('documents', project_id=project)
+                          if any(ref.get('source_id') == entry['id'] for ref in row.payload.get('source_refs', [])
+                                 if isinstance(ref, dict))]
+        return not identities or not all(recall_weight(self.records, 'document', identity) == 0
+                                         for identity in identities)
 
     def _progress(self, done, total, model_key, *, oversized=0, reason_code=None):
         with self.records.begin() as tx:
@@ -58,10 +91,30 @@ class EmbeddingIndex:
             tx.commit()
             return saved.revision
 
+    def run_scoped(self):
+        # A pass reads every entry; reuse connections like a request does.
+        with connection_scope():
+            return self.run()
+
     def run(self):
+        computed = 0
+        while True:
+            if not self.lock.acquire(blocking=False):
+                # The running pass listed its work earlier; ask it for one more pass
+                # so material remembered meanwhile is not left until the next startup.
+                self.again = True
+                return computed
+            try:
+                self.again = False
+                computed += self._pass()
+            finally:
+                self.lock.release()
+            if not self.again:
+                return computed
+
+    def _pass(self):
         configured = self.models.public().get('embedding', {})
-        if (configured.get('mode') != 'local' or not configured.get('configured')
-                or not self.lock.acquire(blocking=False)):
+        if configured.get('mode') != 'local' or not configured.get('configured') or not configured.get('enabled'):
             return 0
         cache = None
         done, total, oversized = 0, 0, 0
@@ -89,6 +142,10 @@ class EmbeddingIndex:
                     self._progress(done, len(work), model_key, oversized=oversized)
             return computed
         except Exception:
+            if (self.models.public().get('embedding', {}).get('runtime_revision')
+                    != configured.get('runtime_revision')
+                    or not self.models.public().get('embedding', {}).get('enabled')):
+                return computed if 'computed' in locals() else 0
             # 中断不补成功数；下次按真实四键缓存接着补算。
             self._progress(done, total, model_key, oversized=oversized,
                 reason_code='embedding_index_interrupted')
@@ -96,7 +153,6 @@ class EmbeddingIndex:
         finally:
             if cache is not None:
                 cache.close()
-            self.lock.release()
 
     def _encode_batch(self, cache, provider, configured, project, batch, run_revision):
         authority = SourceEgressService(self.records)
@@ -104,11 +160,16 @@ class EmbeddingIndex:
             if _public_identity(self.models.public().get('embedding', {})) != _public_identity(configured):
                 raise RecognitionConflict('embedding_index_configuration_changed')
             scope = WorkScope('local-user', project)
-            for _, _, _, snapshot, parent in batch:
+            for _, cache_entry, _, snapshot, parent in batch:
                 authority.validate_snapshot(scope, snapshot)
+                if parent is None and is_recall_excluded(self.records, scope, cache_entry.id):
+                    raise RecognitionConflict('embedding_index_recognition_forgotten')
                 if parent is not None:
-                    fresh = self.query.retrieval_index.vector_material(project, parent, 'L1')
-                    if fresh is None or fresh[0]['revision'] != parent['revision']:
+                    entry, layer = parent
+                    fresh = self.query.retrieval_index.vector_material(project, entry, layer)
+                    if (fresh is None or any(fresh[0].get(key) != entry.get(key)
+                                             for key in ('revision', 'title', 'item_id', 'item_revision'))
+                            or not self._recallable(project, entry)):
                         raise RecognitionConflict('embedding_index_parent_changed')
         validate()
         # 批次资格也在真实编码请求两侧校验，使变更进入原失败回执。
@@ -116,9 +177,10 @@ class EmbeddingIndex:
         materials = {}
         for _, _, _, snapshot, parent in batch:
             roots = [{**root, 'project_id': project} for root in snapshot['roots']]
-            if parent is not None:
-                roots.insert(0, {'type': 'document', 'id': parent['id'],
-                                'revision': parent['revision'], 'project_id': project})
+            if parent is not None and parent[0]['kind'] == 'document':
+                entry, _ = parent
+                roots.insert(0, {'type': 'document', 'id': entry['id'],
+                                'revision': entry['revision'], 'project_id': project})
             for root in roots:
                 materials[(root['type'], root['id'], root['revision'], root['project_id'])] = root
         request = {'endpoint': provider.endpoint, 'payload': {

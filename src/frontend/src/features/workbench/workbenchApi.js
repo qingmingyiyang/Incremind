@@ -2,15 +2,20 @@ import { productFetch as fetch, userStorageKey } from '../../shared/api/deviceTr
 import { readResponseJson } from '../../shared/lib/responseJson';
 import { libraryBackendUrl } from '../rebuild/libraryOverviewTransport';
 import { readStoredJson, writeStoredJson, removeStoredItem } from '../../shared/lib/browserStorage';
+import { remoteRestriction } from '../../shared/lib/privacyMessages';
 
 const messages = {
   intent_not_ready: '此意图暂不可用 · 选择记住', project_tag_not_found: '项目未找到 · 修改标签',
-  ambiguous_project_tag: '项目重名 · 使用项目编号', private_project_remote_blocked: '项目为私密 · 查看设置',
-  remote_disabled: '模型外发已关闭 · 查看设置', turn_in_progress: '回答仍在生成 · 稍后重接',
+  ambiguous_project_tag: '项目重名 · 使用项目编号', turn_in_progress: '回答仍在生成 · 稍后重接',
   turn_interrupted: '回答已中断 · 重新发送', source_changed_retry: '资料已变化 · 重新发送',
   stream_disconnected: '连接已中断 · 重接回答', answer_generation_failed: '回答未完成 · 重试',
+  interrupted: '处理已中断 · 重试',
 };
-function failure(code) { const error = new Error(messages[code] || '操作未完成 · 重试'); error.code = code; return error; }
+export function workbenchErrorMessage(value, fallback = '操作未完成 · 重试') {
+  const code = typeof value === 'string' ? value : value?.code;
+  return remoteRestriction(value)?.message || (Object.hasOwn(messages, code) ? messages[code] : null) || value?.message || fallback;
+}
+function failure(code) { const error = new Error(workbenchErrorMessage(code)); error.code = code; return error; }
 const pendingKeys = new Map();
 function submission(body, action = '') {
   let storage; try { storage = globalThis.sessionStorage; } catch { storage = null; }

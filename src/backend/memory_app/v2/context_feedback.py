@@ -111,7 +111,8 @@ def install_context_feedback_routes(application, *, records):
 
     def read_model_input(identity):
         store = getattr(application.state, 'ai_turn_store', None)
-        payload = store.get_immutable_payload(identity, 'answer-model-input-answer') if store is not None else None
+        from ..answer_proof import read_answer_input
+        payload = read_answer_input(store, identity) if store is not None else None
         return payload[1] if payload is not None else None
 
     @router.get('/{turn_id}/context-feedback')

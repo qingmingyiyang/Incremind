@@ -1,5 +1,5 @@
 """Bind durable product decisions while the unchanged kernel executes a Turn."""
-from contextlib import nullcontext
+from contextlib import contextmanager
 
 from core.ai_kernel import SynchronousAIRuntime, validate_turn_action
 from core.ai_kernel.runtime import AIKernelRuntimeError
@@ -7,6 +7,7 @@ from core.ai_kernel.tool_invocation import ToolInvocationOutcome
 
 from ..v2.policies import get, override
 from ..v2.policies.pipelines import TURN_PIPELINES, interfaces_for_turn
+from .answer_contract import answer_contract_scope
 
 
 def retry_policy_for(request=None):
@@ -23,10 +24,13 @@ class ProductPolicyRuntime(SynchronousAIRuntime):
     def run_accepted_turn(self, turn_id, run_lease=None):
         return super().run_accepted_turn(turn_id, run_lease=run_lease)
 
+    @contextmanager
     def _policy_scope(self, turn_id):
         request = self._state.get_request(turn_id)
         if request is None:
-            return nullcontext()
+            with answer_contract_scope(None):
+                yield
+            return
         selections = request.get('policy_versions')
         if selections is None:
             recipe = TURN_PIPELINES.get(request.get('desired_outcome'))
@@ -35,7 +39,8 @@ class ProductPolicyRuntime(SynchronousAIRuntime):
             # Missing retry on an existing frozen recipe is historical @1,
             # never the ACTIVE selection at recovery time. Do not rewrite it.
             selections = {'retry': '@1', **selections}
-        return override(**selections)
+        with override(**selections), answer_contract_scope(request):
+            yield
 
     def _run_accepted_turn(self, turn_id):
         with self._policy_scope(turn_id):

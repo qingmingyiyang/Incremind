@@ -35,6 +35,8 @@ _POLICY_INTERFACES = frozenset({
     "organize", "place", "extract", "route", "steer", "scope", "retrieve", "rank",
     "strength", "forget", "enough", "compose", "trigger", "consolidate", "search", "nudge", "handoff", "image_read", "retry",
     "skill_export", "skill_author",
+    # Product policies read during ask/do and learning turns (user 2026-10-09).
+    "ladder", "vector", "rerank", "elsewhere", "continuation", "style", "gap", "reask", "review", "outcome_correction",
 })
 
 

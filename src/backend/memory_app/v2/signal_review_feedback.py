@@ -56,7 +56,8 @@ def _ask(records, turns, groups, identity, project, owners, proofs, memo, visite
     terminal = [event for event in turns.events_after(identity)
         if event.get('type') in {'turn.completed', 'turn.failed', 'turn.cancelled'}]
     result = turns.get_immutable_payload(identity, 'product-answer-result-v2')
-    wire = turns.get_immutable_payload(identity, 'answer-model-input-answer')
+    from ..answer_proof import read_answer_input
+    wire = read_answer_input(turns, identity)
     if (request is None or request.get('turn_id') != identity
             or request.get('scope', {}).get('project_id') != project
             or request.get('desired_outcome') != 'project.answer'

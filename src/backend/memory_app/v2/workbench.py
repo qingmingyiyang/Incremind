@@ -364,6 +364,10 @@ def install_workbench_routes(application, *, records, models, documents, service
         finally:
             save(turn_id, receipt, run_id=run_id)
             running.discard(turn_id)
+            start_index = getattr(application.state, "start_vector_index", None)
+            if memory.get("state") == "done" and start_index is not None:
+                # 本机向量模式下，新资料不必等下次启动才有向量（用户 2026-10-09）。
+                start_index()
 
     @with_connection_scope
     async def process(turn_id, project, item_id, run_id, timing=None):
@@ -1310,7 +1314,8 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
     retrieval_question = rewritten["question"] or cleaned
     collected = query.collect_candidates(project, retrieval_question, scene=scene,
         **({'situation':situation} if situation is not None else {}))
-    gap = collected['policy_versions']['retrieve'] == '@4'
+    retrieval = get('retrieve', version=collected['policy_versions']['retrieve'])
+    gap = getattr(retrieval, 'drilldown', False) is True
     prepare = query.prepare_drilldown if gap else query.prepare_ask
     plan = prepare(project, cleaned, scene=scene, collected=collected,
         retrieval_question=retrieval_question, history=history["text"], situation=situation, part_context=part_context)
@@ -1382,6 +1387,20 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         navigation_coverage = get('elsewhere', version=elsewhere_version)(operation='coverage',
             coverage_questions=wordings, terms_for=query_terms,
             evidence='\n'.join(c['excerpt'] for c in plan['chosen'] if not c.get('persona')))
+    redirect, routed = None, False
+    if elsewhere_version is not None and project == 'default' and not tagged and not part_context:
+        has_hits = any(not c.get('persona') for c in chosen)
+        if not (has_hits and (navigation_coverage or 0) >= .6):
+            # 日常里没找到时先定该去哪个项目问；页面会转过去重问，不必先生成一句"没有资料"（用户 2026-10-09）。
+            routed = True
+            from .elsewhere import suggest_elsewhere
+            redirect = suggest_elsewhere(query, project, cleaned, coverage=navigation_coverage,
+                has_hits=has_hits, tagged=tagged, policy_version=elsewhere_version)
+            if redirect is None:
+                from .auto_place import ask_home
+                redirect = await run_in_threadpool(ask_home, records, query.documents, query.models, project, cleaned, turn_id)
+            if redirect is not None:
+                has_context, chosen = False, ()
     preview_id = query.store_ask_preview(plan) if has_context else None
     authority = None
     if parent_turn_id:
@@ -1418,9 +1437,15 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
             on_delta(text)
     interrupted = False
     try:
-        result = (await query.execute_ask(preview_id, project, cleaned, True,
-            on_delta=streamed if on_delta is not None else None, on_retry=frames.retry) if has_context
-                  else query.public_ask_preview('', plan))
+        if has_context:
+            result = await query.execute_ask(preview_id, project, cleaned, True,
+                on_delta=streamed if on_delta is not None else None, on_retry=frames.retry)
+        elif redirect is not None:
+            # This turn only points to the project the page re-asks in.
+            result = {"no_match": True, "answer": "", "sources": [], "model_used": False,
+                      "excluded_sources": plan["excluded_sources"]}
+        else:
+            result = query.public_ask_preview('', plan)
         interrupted = 'interruption' in result
     finally:
         frames.close(completed=not interrupted)
@@ -1446,7 +1471,10 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         if partial:
             result['model_usage']['observed_only'] = True
         receipt['model_usage'] = result['model_usage']
-    if elsewhere_version is not None:
+    if routed:
+        if redirect is not None:
+            receipt['elsewhere'] = redirect
+    elif elsewhere_version is not None:
         from .elsewhere import suggest_elsewhere
         hint = suggest_elsewhere(query, project, cleaned, coverage=navigation_coverage,
             has_hits=any(not c.get('persona') for c in chosen), tagged=tagged,

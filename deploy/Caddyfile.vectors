@@ -1,0 +1,8 @@
+# 将示例域名换成实际域名，再加入服务器现有的 Caddy 配置。
+# 请求体与服务端保持同一上限，管理接口另需管理密钥。
+vectors.example.com {
+    request_body {
+        max_size 12353536
+    }
+    reverse_proxy 127.0.0.1:8002
+}

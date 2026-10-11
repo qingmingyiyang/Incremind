@@ -786,8 +786,10 @@ def create_app(container: ApiContainer | None = None) -> FastAPI:
                 )
             )
         application.state.effect_recovery_coordinator = effect_recovery
+        # Each pass runs a dozen legacy recovery/backfill scans; every second it
+        # took about a third of a core and slowed foreground work. Recovery only.
         effect_recovery_service = EffectRecoveryService(
-            effect_recovery, interval_seconds=1.0, clock=time.time,
+            effect_recovery, interval_seconds=5.0, clock=time.time,
         )
         application.state.effect_recovery_service = effect_recovery_service
         companion_scheduler_runtime = CompanionSchedulerRuntime(root_dir, clock=build_companion_clock())

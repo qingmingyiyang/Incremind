@@ -68,6 +68,22 @@ class JsonObjectStoreRecord:
     payload_bytes: bytes
 
 
+_LEGACY_SEEN: set[tuple[str, str]] = set()
+_WRITES = [0]
+_WRITES_GUARD = Lock()
+
+
+def _note_write() -> None:
+    # Counted after the files change: a reader that saw the old count re-reads.
+    with _WRITES_GUARD:
+        _WRITES[0] += 1
+
+
+def object_store_writes() -> int:
+    """In-process count of JSON object writes and deletes, for cache stamps."""
+    return _WRITES[0]
+
+
 @dataclass(frozen=True, slots=True)
 class _ObjectPaths:
     payload_path: Path
@@ -170,10 +186,13 @@ class JsonObjectStore:
         if collection == 'sources':
             from .source_retrieval_index import invalidate_source
             invalidate_source(source_tx, self, object_id)
-        if paths.payload_path.exists():
-            paths.payload_path.unlink()
-        if paths.meta_path.exists():
-            paths.meta_path.unlink()
+        try:
+            if paths.payload_path.exists():
+                paths.payload_path.unlink()
+            if paths.meta_path.exists():
+                paths.meta_path.unlink()
+        finally:
+            _note_write()
         return existed
 
     def write(
@@ -194,6 +213,12 @@ class JsonObjectStore:
             return self._write_object(collection, object_id, payload, expected_revision)[0]
 
     def _write_object(self, collection, object_id, payload, expected_revision, *, source_tx=None):
+        try:
+            return self._write_object_files(collection, object_id, payload, expected_revision, source_tx=source_tx)
+        finally:
+            _note_write()
+
+    def _write_object_files(self, collection, object_id, payload, expected_revision, *, source_tx=None):
         if expected_revision is not None and expected_revision < 0:
             raise ObjectStoreRevisionError("expected_revision must be non-negative")
         paths = self._object_paths(collection, object_id, for_write=True)
@@ -292,6 +317,11 @@ class JsonObjectStore:
             meta_path=directory / f"{object_id}.meta.json",
             uses_short_name=False,
         )
+        # An object found in the legacy layout stays there; re-checking all four
+        # paths (and the short-name file) on every read dominated egress checks.
+        seen = (str(directory), object_id)
+        if seen in _LEGACY_SEEN and (legacy.payload_path.exists() or legacy.meta_path.exists()):
+            return legacy
         short_stem = _short_object_file_stem(object_id)
         short = _ObjectPaths(
             payload_path=directory / f"{short_stem}.json",
@@ -306,6 +336,9 @@ class JsonObjectStore:
             _validate_short_object_layout(short, object_id)
             return short
         if legacy_exists:
+            if len(_LEGACY_SEEN) >= 100_000:
+                _LEGACY_SEEN.clear()
+            _LEGACY_SEEN.add(seen)
             return legacy
         if not for_write or _paths_fit_windows_budget(legacy):
             return legacy

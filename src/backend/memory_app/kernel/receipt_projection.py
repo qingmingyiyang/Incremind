@@ -230,7 +230,10 @@ def _calls(connection, identity, project, tables, *, remote_only, records=None, 
             if not isinstance(config, dict) or config.get('model') != call['model_id']:
                 continue
             if config.get('allow_remote') is True and type(config.get('revision')) is int:
-                purpose = {'media.image_read':'vision', 'web.search':'search'}.get(turn_kind, 'generation')
+                # 新辅助路由记录真实用途；旧回执沿用原 kind 映射。
+                purpose = config.get('purpose', {'media.image_read':'vision', 'web.search':'search'}.get(turn_kind, 'generation'))
+                if not isinstance(purpose, str) or purpose not in {'generation', 'embedding', 'rerank', 'asr', 'vision', 'search'}:
+                    continue
                 value = {'model': call['model_id'], 'consent_scope': 'global_setting',
                     'settings_revision': {purpose: config['revision']}}
                 if _revision(snapshot) == latest['routing_snapshot_revision']:
@@ -314,7 +317,11 @@ def kernel_call_groups(runtime_root, *, turn_id=None, project=None, remote_only=
                     if include_no_wire_answers:
                         group['terminal'] = terminal
                     if include_answer_input:
-                        group['answer_input'] = immutable.get('answer-model-input-answer')
+                        from ..answer_proof import REVIEW_KEY, select_answer_input
+                        group['answer_input'] = select_answer_input(root_request, group['answer'],
+                            immutable.get('answer-model-input-answer'), immutable.get('answer-model-result-answer'),
+                            immutable.get('answer-model-input-' + REVIEW_KEY), immutable.get('answer-model-result-' + REVIEW_KEY),
+                            capsule=immutable.get('answer-continuation-plan-v1'))
             for group in selected.values():
                 fresh = []
                 for call in group['calls']:

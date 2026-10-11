@@ -7,7 +7,8 @@ import { answerWithoutCitationMarks } from '../../shared/ui/CitedAnswer';
 import { createConversationSnapshot } from '../../shared/lib/conversationSnapshot';
 import { sendSignal, signalEpoch } from '../../shared/signalsApi';
 import { recognitionApi } from '../../shared/api/recognitionApi';
-import { workbenchApi } from './workbenchApi';
+import { remoteRestriction } from '../../shared/lib/privacyMessages';
+import { workbenchApi, workbenchErrorMessage } from './workbenchApi';
 import { libraryApi } from '../library/libraryApi';
 import { ContextPanel } from './ContextPanel';
 import { CitationBody } from './CitationBody';
@@ -72,9 +73,19 @@ const REDO_LABELS = { remember: '换成记住', ask: '换成问', do: '换成干
 const busyReceipt = receipt => receipt.remember?.state === 'processing'
   || ['researching', 'preparing', 'running'].includes(receipt.do?.state)
   || (receipt.parts || []).some(part => ['waiting', 'running'].includes(part.state) || busyReceipt(part.receipt || {}));
-const WorkbenchTurn = memo(function WorkbenchTurn({ turn, turnId, projectId, scope, reviewing, continuing, streamText, streamStatus, actions }) {
+function WorkbenchError({ error, fallback, projectId, onSettings }) {
+  if (!error) return null;
+  const restriction = remoteRestriction(error);
+  const message = fallback && typeof error === 'string' && error !== 'interrupted'
+    ? fallback : workbenchErrorMessage(error, fallback);
+  return <div role="alert" className="workbench-error" title={restriction?.title}>
+    {restriction ? <><span>{restriction.reason}</span><span aria-hidden="true"> · </span><button type="button" disabled={!onSettings}
+      onClick={() => onSettings?.(restriction.section, projectId)}>查看设置</button></> : message}
+  </div>;
+}
+const WorkbenchTurn = memo(function WorkbenchTurn({ turn, turnId, projectId, errorProjectId = projectId, scope, reviewing, continuing, streamText, streamStatus, actions }) {
   const { review, retry, continueTurn, openOutput, openCitation, openShare, redoOutput, chooseOutput, closeOutput, closeCitation,
-    setTracePanel, setDraftPanel, setSession, onNavigate, askElsewhere, redoAs, projects, sending, refreshPlacement, setError } = actions;
+    setTracePanel, setDraftPanel, setSession, onNavigate, openSettings, askElsewhere, redoAs, projects, sending, refreshPlacement, setError } = actions;
   const [copied, setCopied] = useState(false), copyTimer = useRef(null), currentScope = useRef(scope), alive = useRef(true);
   const [more, setMore] = useState(false), moreButton = useRef(null);
   currentScope.current = scope;
@@ -101,8 +112,8 @@ const WorkbenchTurn = memo(function WorkbenchTurn({ turn, turnId, projectId, sco
         return <article key={turn.id} id={`workbench-${turn.id}`} tabIndex={-1} className={turn.id === turnId ? 'is-target' : ''}>{turn.user_text && <div className="workbench-bubble">{turn.user_text}</div>}
           <div className="workbench-parts" aria-label="拆分">{parts.map(part => <span key={part.index} title={part.span}><Icon name={part.intent} size={12}/>{part.span.length > 12 ? part.span.slice(0, 12) + '…' : part.span}</span>)}{!!redoItems.length && moreMenu(redoItems)}</div>
           {parts.map(part => part.turn_id && part.receipt && Object.keys(part.receipt).length
-            ? <WorkbenchTurn key={part.index} turn={{ ...turn, id: part.turn_id, intent: part.intent, user_text: null, receipt: part.receipt }} turnId={turnId} projectId={projectId} scope={scope} reviewing={reviewing} continuing={continuing} actions={actions}/>
-            : <Receipt key={part.index} kind={part.intent}><StatusDot state={['failed', 'not_started'].includes(part.state) ? 'failed' : part.state === 'running' ? 'processing' : 'pending'}/></Receipt>)}
+            ? <WorkbenchTurn key={part.index} turn={{ ...turn, id: part.turn_id, intent: part.intent, user_text: null, receipt: part.receipt }} turnId={turnId} projectId={projectId} errorProjectId={part.project_id || errorProjectId} scope={scope} reviewing={reviewing} continuing={continuing} actions={actions}/>
+            : <Receipt key={part.index} kind={part.intent}><StatusDot state={['failed', 'not_started'].includes(part.state) ? 'failed' : part.state === 'running' ? 'processing' : 'pending'}/>{remoteRestriction(part.error) && <WorkbenchError error={part.error} projectId={part.project_id || errorProjectId} onSettings={openSettings}/>}</Receipt>)}
         </article>;
       }
       const memory = turn.receipt.remember, inspiration = turn.receipt.inspiration, ask = turn.receipt.ask, task = turn.receipt.do;
@@ -116,7 +127,7 @@ const WorkbenchTurn = memo(function WorkbenchTurn({ turn, turnId, projectId, sco
         || Boolean(memory?.state === 'done' && memory.document_id)
         || Boolean(['done', 'partial'].includes(task?.state) && task.document_id);
       const shareMenu = moreMenu(<><button type="button" role="menuitem" disabled={!shareable} title={shareable ? undefined : '完成后分享'} onClick={() => { setMore(false); moreButton.current?.focus(); openShare(turn); }}>分享</button>{redoItems}</>);
-      return <article key={turn.id} id={`workbench-${turn.id}`} tabIndex={-1} className={turn.id === turnId ? 'is-target' : ''}>{turn.user_text && <div className="workbench-bubble">{turn.user_text}</div>}<Receipt kind={turn.intent}>{memory ? <><div className="workbench-receipt-title"><StatusDot state={memory.state}/><span className="workbench-memory-title" title={memory.title}>{memory.title}</span><ProgressDots {...memory.progress} running={memory.state === 'processing'} title="原件 · 正文 · 整理 · 入库"/>{memory.document_id && <button type="button" aria-label="打开整理稿" onClick={() => { closeOutput(); closeCitation(); setTracePanel(null); setDraftPanel({ scope, documentId: memory.document_id, itemId: memory.item_id }); }}>↗</button>}{memory.state === 'failed' && <button type="button" onClick={() => retry(turn)}>重试</button>}</div><DocumentPlacement projectId={projectId} projects={projects} row={{...memory,revision:memory.document_revision}} onChanged={refreshPlacement} onError={setError}/><div className="workbench-insights">{memory.insights.map(insight => chip(insight, memory.filing?.state === 'filed' ? memory.filing.target_project_id : undefined))}{!!memory.related.length && <span className="workbench-related-count" title={memory.related.map(entry => entry.text).join('\n')}>∞ {memory.related.length}</span>}</div>{memory.error && <div className="workbench-error">{({ remote_disabled: '模型外发已关闭 · 查看设置', private_project_remote_blocked: '项目为私密 · 查看设置', interrupted: '处理已中断 · 重试' })[memory.error] || '整理未完成 · 重试'}</div>}</> : ask ? <><CitedAnswer answer={ask.answer ?? ask.partial ?? ''} citations={ask.citations} onOpenCitation={openCitation} citationHref="#workbench-citation" onCopyAnswer={() => recordCopy()}/><div className="workbench-ask-layers"><LayerBadges layers={ask.layers} onOpenTrace={() => { closeOutput(); closeCitation(); setTracePanel({ scope, ask }); }}/>{hint && <span className="ui-layer-badges workbench-elsewhere"><button type="button" title={`在 ${hintLabel} 里问`} aria-label={`在 ${hintLabel} 里问`} disabled={sending} onClick={() => askElsewhere(turn, hint)}>→ {hintLabel}</button></span>}<button type="button" className="workbench-answer-copy" aria-label="复制回答" title="复制" onClick={copyAnswer}><Icon name={copied ? 'check' : 'copy'} size={14}/></button></div></> : task ? <><div className="workbench-receipt-title"><StatusDot state={['researching', 'preparing', 'running'].includes(task.state) ? 'processing' : task.state === 'waiting_approval' ? 'pending' : task.state}/><span className="workbench-memory-title" title={task.title}>{task.title}</span><button type="button" className="workbench-context-open" aria-label="本次上下文" onClick={() => { closeOutput(); closeCitation(); setTracePanel({ scope, ask: task, kind: "do" }); }}>◯ {contextPercent(task.context)}</button><ProgressDots {...task.progress} running={['researching', 'preparing', 'running'].includes(task.state)} title={task.kernel_turn_id ? '拆活 · 干活 · 汇总' : task.research_turn_id ? '研究 · 准备 · 批准 · 成果' : '准备 · 批准 · 成果'}/><OutcomeVersion version={task.continues?.version}/>{task.fallback_new && <span className="ui-count" aria-label="已新写一篇">新写一篇</span>}{['done','partial'].includes(task.state) && task.document_id && <OutcomeReceiptChoices turn={turn} onNew={() => redoOutput(turn, null)} onOther={() => chooseOutput(turn)}/>}{['done','partial'].includes(task.state) && task.document_id && <button type="button" aria-label="打开成果" onClick={() => openOutput(task)}>↗</button>}</div>{task.kernel_turn_id && <TaskDivision key={`${projectId}:${turn.id}`} project={projectId} turnId={turn.id} task={task} onReference={reference => onNavigate?.('workbench', reference)} onRedo={result => setSession(current => current.project === projectId ? { ...current, id: result.thread_id, turns: [...current.turns, result.turn] } : current)}/>}{!task.kernel_turn_id && !!task.experts?.length && <div className="workbench-experts">{task.experts.map((expert, index) => <span key={index} role="img" aria-label={expert.role} title={expert.role}><StatusDot aria-hidden="true" state={expert.state === 'running' ? 'processing' : expert.state}/></span>)}</div>}</> : inspiration?.insight ? <>{chip(inspiration.insight)}{inspiration.placement && projects.some(project=>project.id===inspiration.placement.project_id) && <InboxFiling key={`${scope}:${inspiration.insight.id}:${inspiration.insight.revision}`} row={inspiration.insight} targetProjectId={inspiration.placement.project_id} scenes={projects.find(project=>project.id===inspiration.placement.project_id)?.scenes || []} suggestion={inspiration.placement.scene} onFiled={refreshPlacement} onError={setError}/>}</> : null}{task && interrupted && <><RetryCountdown status={streamStatus}/><CitedAnswer answer={streamText ?? task.partial ?? ''}/></>} {interrupted && <div className="workbench-interrupted"><span>{interruption === 'sleep' ? '电脑休眠' : '连接中断'}</span>{canContinue && <><span aria-hidden="true">·</span><button type="button" disabled={continuing} onClick={() => continueTurn(turn)}>继续</button></>}</div>}</Receipt>{shareMenu}</article>;
+      return <article key={turn.id} id={`workbench-${turn.id}`} tabIndex={-1} className={turn.id === turnId ? 'is-target' : ''}>{turn.user_text && <div className="workbench-bubble">{turn.user_text}</div>}<Receipt kind={turn.intent}>{memory ? <><div className="workbench-receipt-title"><StatusDot state={memory.state}/><span className="workbench-memory-title" title={memory.title}>{memory.title}</span><ProgressDots {...memory.progress} running={memory.state === 'processing'} title="原件 · 正文 · 整理 · 入库"/>{memory.document_id && <button type="button" aria-label="打开整理稿" onClick={() => { closeOutput(); closeCitation(); setTracePanel(null); setDraftPanel({ scope, documentId: memory.document_id, itemId: memory.item_id }); }}>↗</button>}{memory.state === 'failed' && <button type="button" onClick={() => retry(turn)}>重试</button>}</div><DocumentPlacement projectId={projectId} projects={projects} row={{...memory,revision:memory.document_revision}} onChanged={refreshPlacement} onError={setError}/><div className="workbench-insights">{memory.insights.map(insight => chip(insight, memory.filing?.state === 'filed' ? memory.filing.target_project_id : undefined))}{!!memory.related.length && <span className="workbench-related-count" title={memory.related.map(entry => entry.text).join('\n')}>∞ {memory.related.length}</span>}</div><WorkbenchError error={memory.error} fallback="整理未完成 · 重试" projectId={errorProjectId} onSettings={openSettings}/></> : ask ? <><CitedAnswer answer={ask.answer ?? ask.partial ?? ''} citations={ask.citations} onOpenCitation={openCitation} citationHref="#workbench-citation" onCopyAnswer={() => recordCopy()}/><div className="workbench-ask-layers"><LayerBadges layers={ask.layers} onOpenTrace={() => { closeOutput(); closeCitation(); setTracePanel({ scope, ask }); }}/>{hint && <span className="ui-layer-badges workbench-elsewhere"><button type="button" title={`在 ${hintLabel} 里问`} aria-label={`在 ${hintLabel} 里问`} disabled={sending} onClick={() => askElsewhere(turn, hint)}>→ {hintLabel}</button></span>}<button type="button" className="workbench-answer-copy" aria-label="复制回答" title="复制" onClick={copyAnswer}><Icon name={copied ? 'check' : 'copy'} size={14}/></button></div></> : task ? <><div className="workbench-receipt-title"><StatusDot state={['researching', 'preparing', 'running'].includes(task.state) ? 'processing' : task.state === 'waiting_approval' ? 'pending' : task.state}/><span className="workbench-memory-title" title={task.title}>{task.title}</span><button type="button" className="workbench-context-open" aria-label="本次上下文" onClick={() => { closeOutput(); closeCitation(); setTracePanel({ scope, ask: task, kind: "do" }); }}>◯ {contextPercent(task.context)}</button><ProgressDots {...task.progress} running={['researching', 'preparing', 'running'].includes(task.state)} title={task.kernel_turn_id ? '拆活 · 干活 · 汇总' : task.research_turn_id ? '研究 · 准备 · 批准 · 成果' : '准备 · 批准 · 成果'}/><OutcomeVersion version={task.continues?.version}/>{task.fallback_new && <span className="ui-count" aria-label="已新写一篇">新写一篇</span>}{['done','partial'].includes(task.state) && task.document_id && <OutcomeReceiptChoices turn={turn} onNew={() => redoOutput(turn, null)} onOther={() => chooseOutput(turn)}/>}{['done','partial'].includes(task.state) && task.document_id && <button type="button" aria-label="打开成果" onClick={() => openOutput(task)}>↗</button>}</div>{task.kernel_turn_id && <TaskDivision key={`${projectId}:${turn.id}`} project={projectId} turnId={turn.id} task={task} onReference={reference => onNavigate?.('workbench', reference)} onRedo={result => setSession(current => current.project === projectId ? { ...current, id: result.thread_id, turns: [...current.turns, result.turn] } : current)}/>}{!task.kernel_turn_id && !!task.experts?.length && <div className="workbench-experts">{task.experts.map((expert, index) => <span key={index} role="img" aria-label={expert.role} title={expert.role}><StatusDot aria-hidden="true" state={expert.state === 'running' ? 'processing' : expert.state}/></span>)}</div>}</> : inspiration?.insight ? <>{chip(inspiration.insight)}{inspiration.placement && projects.some(project=>project.id===inspiration.placement.project_id) && <InboxFiling key={`${scope}:${inspiration.insight.id}:${inspiration.insight.revision}`} row={inspiration.insight} targetProjectId={inspiration.placement.project_id} scenes={projects.find(project=>project.id===inspiration.placement.project_id)?.scenes || []} suggestion={inspiration.placement.scene} onFiled={refreshPlacement} onError={setError}/>}</> : null}{!memory && remoteRestriction((ask || task)?.error) && <WorkbenchError error={(ask || task).error} projectId={errorProjectId} onSettings={openSettings}/>} {task && interrupted && <><RetryCountdown status={streamStatus}/><CitedAnswer answer={streamText ?? task.partial ?? ''}/></>} {interrupted && <div className="workbench-interrupted"><span>{interruption === 'sleep' ? '电脑休眠' : '连接中断'}</span>{canContinue && <><span aria-hidden="true">·</span><button type="button" disabled={continuing} onClick={() => continueTurn(turn)}>继续</button></>}</div>}</Receipt>{shareMenu}</article>;
 });
 
 export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, threadId, turnId, onNavigate, draft, onDraft, handoff, onHandoff, onProjectCreated, onProjectsStale }) {
@@ -124,7 +135,19 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
   const [session, setSession] = useState({ scope: threadId || turnId ? null : scope, project: projectId, threads: [], id: null, turns: [] });
   const sessionReady = session.scope === scope && session.project === projectId;
   const visible = sessionReady ? session : { threads: [], id: null, turns: [] };
-  const [error, setError] = useState(''), [busy, setBusy] = useState(false), [reviewing, setReviewing] = useState(null);
+  const [errorState, setErrorState] = useState(null), [busy, setBusy] = useState(false), [reviewing, setReviewing] = useState(null);
+  const error = errorState?.scope === scope ? errorState : null;
+  const setError = useCallback((failure, targetProject = projectId) => {
+    if (!gate.isScopeCurrent(scope)) return;
+    // 保留原错误码和请求项目，普通文字提示仍可沿用这个入口。
+    const value = typeof failure === 'string' ? { message: failure } : failure;
+    setErrorState(failure ? { scope, projectId: targetProject, code: value?.code,
+      message: workbenchErrorMessage(value) } : null);
+  }, [gate, scope, projectId]);
+  const openSettings = useCallback((section, targetProject = projectId) => {
+    if (gate.isScopeCurrent(scope) && ['privacy', 'model'].includes(section))
+      onNavigate?.('settings', { section, project_id: targetProject });
+  }, [gate, scope, projectId, onNavigate]);
   const [retrying, setRetrying] = useState(false);
   const [recording, setRecording] = useState(false);
   const [tracePanel, setTracePanel] = useState(null);
@@ -165,7 +188,7 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
         }
         setSession({ scope, project: projectId, threads, id, turns: detail.turns });
         if (id) writeStoredJson(cacheKey, id);
-      } catch (failure) { if (gate.isCurrent(request)) setError(failure.message); }
+      } catch (failure) { if (gate.isCurrent(request)) setError(failure); }
     }
     load();
     return () => gate.invalidate('thread');
@@ -197,7 +220,7 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
         if (!gate.isCurrent(request)) return;
         if (result.thread_id !== id) throw new Error('读取未完成 · 重试');
         setSession(current => ({ ...current, turns: current.turns.map(old => old.id === turn.id ? result.turn : old) }));
-      } catch (failure) { if (gate.isCurrent(request)) setError(failure.message); }
+      } catch (failure) { if (gate.isCurrent(request)) setError(failure); }
       finally {
         if (streamController.current === controller) streamController.current = null;
         if (gate.isCurrent(request)) { setBusy(false); setStreaming(null); }
@@ -218,7 +241,7 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
         if (cancelled || !gate.isCurrent(request)) return;
         setSession(current => ({ ...current, turns: detail.turns }));
         if (detail.turns.some(turn => busyReceipt(turn.receipt))) timer = setTimeout(poll, 1500);
-      } catch (failure) { if (!cancelled && gate.isCurrent(request)) { setError(failure.message); timer = setTimeout(poll, 1500); } }
+      } catch (failure) { if (!cancelled && gate.isCurrent(request)) { setError(failure); timer = setTimeout(poll, 1500); } }
     }
     timer = setTimeout(poll, 1500);
     return () => { cancelled = true; clearTimeout(timer); gate.invalidate('poll'); };
@@ -265,8 +288,10 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
     gate.invalidate('thread'); gate.invalidate('poll');
     setBusy(true); setError(''); setUnknownProject(null);
     const controller = new AbortController(); streamController.current = controller;
+    let attemptedProject = projectId;
     try {
       const project = createdProject || targetProject(text, intent, projectId, projects);
+      attemptedProject = project;
       const threadCacheKey = userStorageKey(`chriptmas-v2-thread:${project}`);
       let id = project === projectId ? visible.id : null;
       const images = files.length > 1 && files.every(file => /\.(png|jpe?g|bmp|tiff?|webp)$/i.test(file.name));
@@ -297,7 +322,7 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
       if (project !== projectId || id !== visible.id) onNavigate?.('workbench', { project_id: project, thread_id: id });
       return true;
     } catch (failure) { if (gate.isCurrent(request)) {
-      setError(failure.message);
+      setError(failure, attemptedProject);
       if (failure.projectTag) setUnknownProject({ scope, name: failure.projectTag, input: { text, files, intent } });
     } return false; }
     finally { if (streamController.current === controller) streamController.current = null; if (gate.isCurrent(request)) { setBusy(false); setStreaming(null); } }
@@ -339,7 +364,7 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
         if (accepted) setComposerRevision(value => value + 1);
         else setUnknownProject({ ...retained, project });
       }
-    } catch (failure) { if (gate.isCurrent(request)) setError(failure.message); }
+    } catch (failure) { if (gate.isCurrent(request)) setError(failure); }
     finally { if (gate.isCurrent(request)) { creatingProject.current = false; setBusy(false); } }
   }
   const refreshPlacement = useCallback(async () => {
@@ -348,7 +373,7 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
     try {
       const detail = await workbenchApi.thread(projectId, visible.id);
       if (gate.isCurrent(request)) setSession(current => ({ ...current, turns: detail.turns }));
-    } catch (failure) { if (gate.isCurrent(request)) setError(failure.message); }
+    } catch (failure) { if (gate.isCurrent(request)) setError(failure); }
   }, [gate, scope, projectId, visible.id]);
   const review = useCallback(async (insight, action, project = projectId) => {
     if (reviewing) return;
@@ -358,7 +383,7 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
       const updated = await workbenchApi.insight(project, insight, action);
       if (!gate.isCurrent(request)) return;
       setSession(current => ({ ...current, turns: current.turns.map(turn => !turn.receipt.remember && !turn.receipt.inspiration ? turn : ({ ...turn, receipt: turn.receipt.remember ? { remember: { ...turn.receipt.remember, insights: turn.receipt.remember.insights.flatMap(old => old.id !== insight.id ? [old] : action === 'drop' ? [] : [updated]) } } : { inspiration: { insight: turn.receipt.inspiration.insight?.id === insight.id ? (action === 'drop' ? null : updated) : turn.receipt.inspiration.insight } } })) }));
-    } catch (failure) { if (gate.isCurrent(request)) setError(failure.message); }
+    } catch (failure) { if (gate.isCurrent(request)) setError(failure); }
     finally { if (gate.isCurrent(request)) setReviewing(null); }
   }, [reviewing, gate, scope, projectId]);
   const retry = useCallback(async (turn) => {
@@ -366,7 +391,7 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
     const request = gate.issue('retry', scope);
     gate.invalidate('thread'); gate.invalidate('poll'); setRetrying(true);
     try { const updated = await workbenchApi.retry(projectId, turn.id); if (gate.isCurrent(request)) setSession(current => ({ ...current, turns: current.turns.map(old => old.id === turn.id ? updated : old) })); }
-    catch (failure) { if (gate.isCurrent(request)) setError(failure.message); }
+    catch (failure) { if (gate.isCurrent(request)) setError(failure); }
     finally { if (gate.isCurrent(request)) setRetrying(false); }
   }, [retrying, gate, scope, projectId]);
   const continueTurn = useCallback(async (turn) => {
@@ -378,7 +403,7 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
       const updated = await workbenchApi.continue(projectId, turn.id, { signal: controller.signal });
       if (gate.isCurrent(request)) setSession(current => ({ ...current,
         turns: current.turns.map(old => old.id === turn.id ? updated : old) }));
-    } catch (failure) { if (gate.isCurrent(request)) setError(failure.message); }
+    } catch (failure) { if (gate.isCurrent(request)) setError(failure); }
     finally {
       if (streamController.current === controller) streamController.current = null;
       if (gate.isCurrent(request)) setBusy(false);
@@ -453,7 +478,7 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
       if (!gate.isCurrent(token)) return;
       const result = await workbenchApi.redo(projectId, turn.id, division.revision, { continue_from: selection });
       if (gate.isCurrent(token)) { gate.invalidate('outcome-choices'); setChoicePanel(null); setSession(current => ({ ...current, id: result.thread_id, turns: [...current.turns, result.turn] })); }
-    } catch (failure) { if (gate.isCurrent(token)) setError(failure.message); }
+    } catch (failure) { if (gate.isCurrent(token)) setError(failure); }
     finally { if (outcomeRedoPending.current === token) outcomeRedoPending.current = null; if (gate.isCurrent(token)) setRetrying(false); }
   }, [gate, scope, projectId, retrying]);
   const chooseOutput = useCallback(async (turn) => {
@@ -510,14 +535,14 @@ export function Workbench({ projectId = 'default', projects = EMPTY_PROJECTS, th
   const turnActions = useMemo(() => ({ review, retry, continueTurn, openOutput, openCitation, openShare, redoOutput, chooseOutput, closeOutput, closeCitation,
     setTracePanel: value => { if (value) closeShare(); setTracePanel(value); },
     setDraftPanel: value => { if (value) closeShare(); setDraftPanel(value); },
-    setSession, onNavigate, askElsewhere, redoAs, projects, refreshPlacement, setError, sending: busy || !sessionReady }),
-  [review, retry, continueTurn, openOutput, openCitation, openShare, redoOutput, chooseOutput, closeOutput, closeCitation, closeShare, onNavigate, askElsewhere, redoAs, projects, refreshPlacement, busy, sessionReady]);
+    setSession, onNavigate, openSettings, askElsewhere, redoAs, projects, refreshPlacement, setError, sending: busy || !sessionReady }),
+  [review, retry, continueTurn, openOutput, openCitation, openShare, redoOutput, chooseOutput, closeOutput, closeCitation, closeShare, onNavigate, openSettings, askElsewhere, redoAs, projects, refreshPlacement, setError, busy, sessionReady]);
   const currentStream = streaming?.scope === scope ? streaming : null;
   const empty = !visible.turns.length && !currentStream;
   return <div className="workbench-layout"><main className={`workbench ${empty ? 'is-empty' : ''}`} aria-label="工作台">
     {!!visible.threads.length && <div className="workbench-history"><select aria-label="对话" value={visible.id || ''} onChange={event => onNavigate?.('workbench', { thread_id: event.target.value })}>{!visible.id && <option value="">新对话</option>}{visible.threads.map(thread => <option key={thread.id} value={thread.id}>{thread.title}</option>)}</select><button type="button" aria-label="新对话" title="新对话" disabled={busy || Boolean(reviewing) || retrying} onClick={() => { gate.invalidate('thread'); gate.invalidate('poll'); setTracePanel(null); closeCitation(); closeOutput(); closeShare(); setDraftPanel(null); setSession(current => ({ ...current, id: null, turns: [] })); }}>＋</button></div>}
     {empty ? <h1>今天想记住什么？</h1> : <div className="workbench-thread">{visible.turns.filter(turn => !(currentStream?.id === turn.id && turn.intent === 'ask')).map(turn => <WorkbenchTurn key={turn.id} turn={turn} turnId={turnId} projectId={projectId} scope={scope} reviewing={reviewing} continuing={busy || retrying || Boolean(reviewing)} streamText={currentStream?.id === turn.id && turn.intent === 'do' ? currentStream.answer : undefined} streamStatus={currentStream?.id === turn.id ? currentStream.status : null} actions={turnActions}/>)}{currentStream && !visible.turns.some(turn => turn.id === currentStream.id && turn.intent === 'do') && <article aria-busy="true">{currentStream.user_text && <div className="workbench-bubble">{currentStream.user_text}</div>}<Receipt kind={currentStream.intent || "ask"}><StatusDot state="processing"/><RetryCountdown status={currentStream.status}/>{currentStream.intent !== 'multi' && <CitedAnswer answer={currentStream.answer}/>}</Receipt></article>}</div>}
-    <div className="workbench-composer">{error && <p role="alert" className="workbench-error">{error}</p>}{unknownProject?.scope === scope && <button type="button" disabled={busy || !sessionReady} onClick={createUnknownProject}>{unknownProject.project ? '重发到' : '新建'} #{unknownProject.name}</button>}<Composer key={`${projectId}:${composerRevision}`} draft={draft} onDraft={onDraft} handoff={handoff} onHandoff={onHandoff} projectTag={projects.find(project => project.id === projectId)?.name || ({ default: '日常', inbox: '收件箱', me: '我' })[projectId] || projectId} onSend={send} prefill={continuation?.scope === scope ? continuation : null} onRecord={record} recording={recording} disabled={busy || !sessionReady}/></div>
+    <div className="workbench-composer"><WorkbenchError error={error} projectId={error?.projectId} onSettings={onNavigate ? openSettings : undefined}/>{unknownProject?.scope === scope && <button type="button" disabled={busy || !sessionReady} onClick={createUnknownProject}>{unknownProject.project ? '重发到' : '新建'} #{unknownProject.name}</button>}<Composer key={`${projectId}:${composerRevision}`} draft={draft} onDraft={onDraft} handoff={handoff} onHandoff={onHandoff} projectTag={projects.find(project => project.id === projectId)?.name || ({ default: '日常', inbox: '收件箱', me: '我' })[projectId] || projectId} onSend={send} prefill={continuation?.scope === scope ? continuation : null} onRecord={record} recording={recording} disabled={busy || !sessionReady}/></div>
   </main>{sharePanel?.scope === scope && <ConversationSharePreview scope={scope} snapshot={sharePanel.snapshot} loading={sharePanel.loading} error={sharePanel.error} onClose={closeShare} onRetry={() => openShare(sharePanel.turn)}/>} {draftPanel?.scope === scope && tracePanel?.scope !== scope && <WorkbenchDraftPanel key={`${projectId}:${draftPanel.documentId}`} projectId={projectId} documentId={draftPanel.documentId} itemId={draftPanel.itemId} onClose={() => setDraftPanel(null)}/>} {outputPanel?.scope === scope && <WorkbenchOutcomePanel projectId={projectId} documentId={outputPanel.documentId} document={outputPanel.document} loading={outputPanel.loading} error={outputPanel.error} task={outputPanel.task} qualified={outputPanel.qualified} previous={outputPanel.previous} onRetryPrevious={reloadOutputPrevious} onContinue={continueOutput} onClose={closeOutput}/>}{tracePanel?.scope === scope && citationPanel?.scope !== scope && <ContextPanel kind={tracePanel.kind || "ask"} receipt={tracePanel.ask} onClose={() => setTracePanel(null)} onOpenCitation={openCitation}/>} {citationPanel?.scope === scope && <ContextCitation panel={citationPanel} onClose={closeCitation} onRetry={() => openCitation(citationPanel.citation)}/>}{choicePanel?.scope === scope && <FocusPanel title="成果" onClose={() => { gate.invalidate('outcome-choices'); setChoicePanel(null); }}>{choicePanel.loading ? <StatusDot state="processing"/> : choicePanel.error ? <button type="button" onClick={() => chooseOutput(choicePanel.turn)}>读取未完成 · 重试</button> : (choicePanel.items ?? []).map(row => <Row key={row.document_id} title={row.title} meta={`v${row.version}`} onOpen={() => redoOutput(choicePanel.turn, row.document_id)}/>)}</FocusPanel>}</div>;
 }
 

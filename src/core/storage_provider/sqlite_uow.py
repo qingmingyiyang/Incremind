@@ -63,6 +63,20 @@ class SQLiteStructuredRecordStore:
             connection.close()
             raise
 
+    def begin_read(self) -> SQLiteStructuredRecordUnitOfWork:
+        """One consistent WAL read snapshot that never takes the write lock.
+
+        Read-only checks (egress snapshots, filing views) used ``begin()`` and so
+        queued behind, and blocked, every writer. Writes through this unit raise.
+        """
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN")
+            return SQLiteStructuredRecordUnitOfWork(connection, read_only=True)
+        except Exception:
+            connection.close()
+            raise
+
     @timed_stage("read_records")
     def read(self, collection: str, object_id: str) -> SQLiteStructuredRecord | None:
         _require_segment("collection", collection)
@@ -259,6 +273,21 @@ class SQLiteStructuredRecordStore:
         finally:
             connection.close()
 
+    def change_stamp(self) -> int:
+        """A number that grows with every committed record change in this database.
+
+        Generations only increase (insert/update/delete triggers), so equal
+        stamps mean no record changed in between.
+        """
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT total(generation) FROM crp_collection_generations"
+            ).fetchone()
+            return int(row[0])
+        finally:
+            connection.close()
+
     @timed_stage("read_records")
     def generation_token(self, collections: tuple[str, ...]) -> str:
         """Return a durable token advanced by committed collection mutations."""
@@ -337,10 +366,11 @@ class SQLiteStructuredRecordStore:
 class SQLiteStructuredRecordUnitOfWork:
     """One short transaction for ordered structured-record mutations."""
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: sqlite3.Connection, *, read_only: bool = False) -> None:
         self._connection = connection
         self._records: list[SQLiteStructuredRecord] = []
         self._closed = False
+        self._read_only = read_only
 
     @property
     def closed(self) -> bool:
@@ -401,6 +431,7 @@ class SQLiteStructuredRecordUnitOfWork:
     def delete(self, collection: str, object_id: str, *, expected_revision: int) -> SQLiteStructuredRecord:
         """Stage one mandatory-CAS delete in the current transaction."""
         self._require_open()
+        self._require_writable()
         try:
             record = self.read(collection, object_id)
             actual_revision = record.revision if record is not None else 0
@@ -447,6 +478,7 @@ class SQLiteStructuredRecordUnitOfWork:
     ) -> SQLiteStructuredRecord:
 
         self._require_open()
+        self._require_writable()
         try:
             _require_segment("collection", collection)
             _require_segment("object_id", object_id)
@@ -522,11 +554,26 @@ class SQLiteStructuredRecordUnitOfWork:
         if self._closed:
             raise SQLiteUnitOfWorkError("SQLite Unit of Work is closed")
 
+    def _require_writable(self) -> None:
+        if self._read_only:
+            raise SQLiteUnitOfWorkError("SQLite read snapshot cannot write")
+
     def _close(self) -> None:
         if self._closed:
             return
         self._connection.close()
         self._closed = True
+
+
+def begin_read(records):
+    """A read snapshot on a plain record store; any wrapper keeps its own ``begin()``.
+
+    Wrappers (server audit, caller-owned transactions) may check access in
+    ``begin()``, so only the exact store type gets the lock-free snapshot.
+    """
+    if isinstance(records, SQLiteStructuredRecordStore):
+        return records.begin_read()
+    return records.begin()
 
 
 def _initialize_schema(connection: sqlite3.Connection) -> None:

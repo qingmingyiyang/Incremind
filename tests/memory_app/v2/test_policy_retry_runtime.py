@@ -81,14 +81,16 @@ def test_every_actual_model_recipe_freezes_registered_retry(kind):
         'header_timeout': 180, 'idle_timeout': 20, 'total_timeout': 600}
 
 
-def test_contract_adds_only_retry_to_existing_eighteen_interface_names():
+def test_contract_lists_exactly_the_recorded_interface_names():
     previous = {'organize', 'place', 'extract', 'route', 'steer', 'scope', 'retrieve',
         'rank', 'strength', 'forget', 'enough', 'compose', 'trigger', 'consolidate',
         'search', 'nudge', 'handoff', 'image_read'}
+    added = {'retry', 'skill_export', 'skill_author', 'ladder', 'vector', 'rerank', 'elsewhere', 'continuation',
+        'style', 'gap', 'reask', 'review', 'outcome_correction'}
     schema = json.loads((Path(__file__).resolve().parents[3] /
         'core-contracts/ai/turn-request.schema.json').read_text(encoding='utf-8'))
-    assert _POLICY_INTERFACES == previous | {'retry'}
-    assert set(schema['properties']['policy_versions']['propertyNames']['enum']) == previous | {'retry'}
+    assert _POLICY_INTERFACES == previous | added
+    assert set(schema['properties']['policy_versions']['propertyNames']['enum']) == previous | added
 
 
 @pytest.mark.parametrize('saved_map', [None, {'rank': '@1'}, {'retry': '@1'}])

@@ -1,5 +1,6 @@
 """Read the original external delivery facts without creating a runtime/store."""
 from contextlib import contextmanager
+from functools import lru_cache
 import json
 from pathlib import Path
 import sqlite3
@@ -18,6 +19,13 @@ def source_store(reader):
     path = getattr(reader, 'database_path', None)
     if path is None:
         path = next(row[2] for row in reader.connection.execute('PRAGMA database_list') if row[1] == 'main')
+    return _source_store(str(path))
+
+
+@lru_cache(maxsize=32)
+def _source_store(path):
+    # The store holds only resolved paths; building it resolves them again on
+    # every egress snapshot node, which dominated snapshot time on Windows.
     parent = Path(path).parent
     root = parent if parent.name == '.rebuild-data' else parent / '.rebuild-data'
     # The established legacy Document authority pairs this database with the

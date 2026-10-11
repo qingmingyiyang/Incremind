@@ -5,7 +5,9 @@ import re
 from threading import RLock
 
 ACTIVE = {
+    'rerank': '@2',
     'vector': '@1',
+    'ladder': '@15',
     'retry': '@1',
     'image_read': '@1',
     'organize': '@1',
@@ -13,12 +15,12 @@ ACTIVE = {
     'extract': '@5',
     'route': '@1',
     'scope': '@2',
-    'retrieve': '@3',
-    'rank': '@2',
+    'retrieve': '@5',
+    'rank': '@4',
     'strength': '@1',
     'forget': '@1',
     'enough': '@1',
-    'compose': '@3',
+    'compose': '@30',
     'trigger': '@2',
     'consolidate': '@2',
     'handoff': '@1',
@@ -123,6 +125,7 @@ for _module in (organize, place, extract, route, scope, retrieve, rank, strength
 
 register('scope', '@2')(scope.v2)
 register('rank', '@2')(rank.v2)
+register('rank', '@3')(rank.v3)
 register('handoff', '@2')(handoff.v2)
 register('extract', '@2')(extract.v2)
 register('extract', '@3')(extract_comments.v3)
@@ -172,3 +175,12 @@ from . import skill_author
 
 from . import vector
 register('vector', '@1')(vector.v1)
+
+from . import ladder
+register('ladder', '@1')(ladder.v1)
+register('ladder', '@2')(ladder.v2)
+register('ladder', '@3')(ladder.v3)
+register('ladder', '@4')(ladder.v4)
+
+from . import rerank
+register('rerank', '@1')(rerank.v1)

@@ -22,14 +22,14 @@ class RemoteModel(Model):
                                "allow_remote": self.allowed, "enabled": True},
                 "generation_mode": {"revision": self.mode_revision}}
 
-    def complete(self, messages, *, max_tokens, validate_current=None):
+    def complete(self, messages, *, max_tokens, validate_current=None, retry_policy=None):
         self.calls += 1
         if self.before_wire:
             self.before_wire()
         if validate_current:
             validate_current()
         self.wire_calls += 1
-        return super().complete(messages, max_tokens=max_tokens)
+        return super().complete(messages, max_tokens=max_tokens, retry_policy=retry_policy)
 
 
 def text_item(http):

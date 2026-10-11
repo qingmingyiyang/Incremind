@@ -100,7 +100,8 @@ def install_local_model_routes(
             status = (413 if code == 'local_vector_input_too_large' else
                       429 if code == 'local_vector_queue_full' else
                       503 if code in {'local_vector_not_installed', 'local_vector_dependencies_missing',
-                                      'local_vector_worker_closed'} else 400)
+                                      'local_vector_worker_closed', 'local_vector_not_loaded',
+                                      'local_vector_unloading', 'local_vector_runtime_changed'} else 400)
             raise HTTPException(status, code) from None
 
     application.include_router(router)

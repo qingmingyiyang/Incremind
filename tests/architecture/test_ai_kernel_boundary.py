@@ -77,7 +77,7 @@ def test_ai_kernel_persists_and_reuses_a_turn_capability_manifest() -> None:
 def test_tool_execution_records_intent_before_provider_and_outcome_after_provider() -> None:
     runtime = (KERNEL_ROOT / "runtime.py").read_text(encoding="utf-8")
     intent = runtime.index('"tool.intent.recorded"')
-    provider = runtime.index("result = self._dispatcher.dispatch(")
+    provider = runtime.index("self._dispatcher.dispatch(provider, request, observer)")
     outcome = runtime.index('"tool.outcome.recorded"')
     assert intent < provider < outcome
     assert '"tool_call_id": intent.invocation_id' in runtime
@@ -86,7 +86,7 @@ def test_tool_execution_records_intent_before_provider_and_outcome_after_provide
 
     dispatcher = (KERNEL_ROOT / "dispatcher.py").read_text(encoding="utf-8")
     assert "class SynchronousToolDispatcher" in dispatcher
-    assert "self._gate.acquire(request.execution_mode, context.checkpoint)" in dispatcher
+    assert "gate.acquire(request.execution_mode, context.checkpoint)" in dispatcher
     assert "def request_cancel" in dispatcher
     assert 'provider_request["execution_context"] = context' in dispatcher
     assert "class ToolProviderFailure" in dispatcher
@@ -130,7 +130,8 @@ def test_production_ai_runtime_injects_project_profile_resolvers() -> None:
     assert "application_skills=skill_snapshots" in composition
     assert "execution_boundary = AIToolExecutionBoundary(" in composition
     assert composition.count("execution_boundary=execution_boundary") >= 2
-    assert "binding_guard=TurnCapabilityBindingGuard(" in composition
+    assert "turn_binding_guard = TurnCapabilityBindingGuard(" in composition
+    assert "binding_guard=turn_binding_guard" in composition
 
 
 def test_production_context_composition_is_project_aware_and_budgeted() -> None:
@@ -243,12 +244,13 @@ def test_ai_http_router_is_a_thin_adapter_over_ai_runtime() -> None:
 
 
 def test_default_workbench_question_uses_turn_api_without_provider_bypass() -> None:
-    frontend = (ROOT / "src" / "frontend" / "src" / "features" / "rebuild" / "workbenchIntakeApi.js").read_text(encoding="utf-8")
+    frontend = (ROOT / "src" / "frontend" / "src" / "features" / "workbench" / "workbenchApi.js").read_text(encoding="utf-8")
+    workbench = (ROOT / "src" / "backend" / "memory_app" / "v2" / "workbench.py").read_text(encoding="utf-8")
     legacy = (ROOT / "src" / "backend" / "api" / "routes" / "product" / "workbench_compat.py").read_text(encoding="utf-8")
     composition = (ROOT / "src" / "backend" / "api" / "workbench_ai_runtime.py").read_text(encoding="utf-8")
-    assert 'AI_TURN_ENDPOINT = "/api/ai/turns"' in frontend
-    assert 'desired_outcome: "workbench.question.answer"' in frontend
+    assert "'/api/v2/workbench/turns'" in frontend
     assert 'WORKBENCH_DIRECT_QUESTION_ENDPOINT' not in frontend
+    assert "workspace.query.answer_turns.run(" in workbench
     assert "_resolve_workbench_answer_provider" not in legacy
     assert "_resolve_workbench_project_reranker" not in legacy
     assert "Legacy DTO adapter" in legacy

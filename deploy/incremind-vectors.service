@@ -1,0 +1,28 @@
+[Unit]
+Description=Incremind private text vector service
+After=network.target
+
+[Service]
+Type=simple
+User=incremind-vectors
+Group=incremind-vectors
+WorkingDirectory=/opt/incremind
+Environment=PYTHONPATH=/opt/incremind/src
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=CHRIPTMAS_VECTOR_ROOT=/var/lib/incremind-vectors
+Environment=CHRIPTMAS_VECTOR_DEVICE=cpu
+Environment=CHRIPTMAS_VECTOR_AUTOLOAD=1
+LoadCredential=vector-api-key:/etc/incremind-vectors/api-key
+Environment=CHRIPTMAS_VECTOR_API_KEY_FILE=%d/vector-api-key
+ExecStart=/opt/incremind/.venv/bin/python -m backend.memory_app.v2.vector_server --host 127.0.0.1 --port 8002
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/incremind-vectors
+
+[Install]
+WantedBy=multi-user.target

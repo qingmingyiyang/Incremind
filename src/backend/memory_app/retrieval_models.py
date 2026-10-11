@@ -63,20 +63,29 @@ class LocalVectorTransport(ConfiguredTransport):
         self._check_current()
         if endpoint != 'http://127.0.0.1:8001/local-model/v1/embeddings':
             raise RecognitionRetrievalError('local_vector_endpoint_invalid')
-        if payload.get('input_type') in {'query', 'document'}:
-            result = encode_request(self.directory, payload, policy=self.policy)
-        else:
-            texts = payload['input']
-            query = encode_request(self.directory, {**payload, 'input': texts[:1], 'input_type': 'query'}, policy=self.policy)
-            self._check_current()
-            documents = (encode_request(self.directory, {**payload, 'input': texts[1:], 'input_type': 'document'}, policy=self.policy)
-                         if len(texts) > 1 else {'data': [], 'usage': {'prompt_tokens': 0}})
-            vectors = [*query['data'], *documents['data']]
-            tokens = query['usage']['prompt_tokens'] + documents['usage']['prompt_tokens']
-            result = {**query, 'data': [{**item, 'index': index} for index, item in enumerate(vectors)],
-                      'usage': {'prompt_tokens': tokens, 'total_tokens': tokens}}
+        result = encode_request(self.directory, _role_payload(payload), policy=self.policy)
         self._check_current()
         return result
+
+
+def _role_payload(payload):
+    """旧检索批次首项是问题；显式资料批次保持原角色。"""
+    if 'input_type' in payload or 'input_types' in payload:
+        return dict(payload)
+    texts = payload.get('input')
+    count = 1 if isinstance(texts, str) else len(texts) if isinstance(texts, list) else 0
+    return {**payload, 'input_types': ['query', *(['document'] * max(0, count - 1))]}
+
+
+class SelfHostedVectorTransport(ConfiguredTransport):
+    """自建服务每个批次仅有一次 wire，并显式携带混合角色。"""
+    def __init__(self, key, validate_current, *, model, profile):
+        super().__init__(key, validate_current)
+        self.model, self.profile = model, profile
+
+    def post_json(self, *, endpoint, payload):
+        return super().post_json(endpoint=endpoint, payload={**_role_payload(payload),
+            'model': self.model, 'embedding_profile': self.profile})
 
 
 def configured_adapter(models, purpose, *, validate_current: Callable[[], None] | None = None):
@@ -103,10 +112,12 @@ def configured_adapter(models, purpose, *, validate_current: Callable[[], None] 
     if not endpoint.endswith("/" + suffix):
         endpoint += "/" + suffix
     transport = (LocalVectorTransport(models._local_models_root, check_current, policy=policy) if local else
+                 SelfHostedVectorTransport(cfg['api_key'], check_current, model=cfg['model'], profile=cfg['model_key'])
+                 if purpose == 'embedding' and cfg.get('mode') == 'server' else
                  ConfiguredTransport(cfg["api_key"], check_current))
     if purpose == "embedding":
         return HttpEmbeddingProvider(transport, endpoint, cfg.get('model_key', cfg['model']),
-            config_revision=(f"{cfg['revision']}:{cfg['mode_revision']}" if local else str(cfg['revision'])))
+            config_revision=(f"{cfg['revision']}:{cfg['mode_revision']}" if cfg.get('mode') in {'local', 'server'} else str(cfg['revision'])))
     if purpose == "rerank":
         return HttpReranker(transport, endpoint, cfg["model"])
     raise RecognitionRetrievalError("unsupported retrieval purpose")
@@ -242,18 +253,22 @@ def _public_from_snapshot(cfg: Mapping[str, object], purpose: str) -> dict[str, 
     }
     if purpose == 'embedding' and 'mode_revision' in cfg:
         public.update(mode=cfg['mode'], mode_revision=cfg['mode_revision'])
+        if cfg['mode'] == 'server':
+            public['model_key'] = cfg['model_key']
         if cfg['mode'] == 'local':
-            public.update(configured=cfg['configured'], has_api_key=False, model_key=cfg['model_key'])
+            public.update(configured=cfg['configured'], has_api_key=False, model_key=cfg['model_key'],
+                          runtime_revision=cfg.get('runtime_revision'))
     return public
 
 
 def _public_identity(value: Mapping[str, object]) -> tuple[object, ...]:
-    return tuple(value.get(key) for key in (
+    identity = tuple(value.get(key) for key in (
         "purpose", "provider", "base_url", "model", "allow_remote", "enabled",
         "revision", "configured", "has_api_key",
         'mode', 'mode_revision',
         'model_key',
     ))
+    return (*identity, value.get('runtime_revision')) if value.get('mode') == 'local' else identity
 
 
 def _enabled_remote_public(models) -> dict[str, tuple[object, ...]]:

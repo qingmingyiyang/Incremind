@@ -22,9 +22,13 @@ def _identity(candidate):
 
 def fuse_candidates(lists):
     candidates, scores = {}, {}
-    for rows in lists:
+    for list_index, rows in enumerate(lists):
         seen, rank = set(), 0
         for row in rows:
+            if getattr(get('ladder'), 'semantic_rerank', False):
+                # 第一列表是原问题结果；辅助检索的分数不能升级为原问题种子。
+                row = {**row, '_original_vector_spans': row.get('_original_vector_spans',
+                    row.get('_vector_spans', ())) if list_index == 0 else ()}
             identity = _identity(row)
             if identity in candidates:
                 previous = candidates[identity]
@@ -34,6 +38,18 @@ def fuse_candidates(lists):
                     windows = {(w.start, w.end, w.text): w for w in previous["windows"] + row["windows"]}
                     merged = tuple(sorted(windows.values(), key=lambda w: (w.start, w.end)))
                     previous = {**previous, "windows": merged, "excerpt": "\n…\n".join(w.text for w in merged)}
+                    if getattr(get('ladder'), 'merge_vector_seeds', False):
+                        # 同修订同坐标只合并真实完整种子，窗口合并不创造任何新分数。
+                        spans = tuple(dict.fromkeys((*previous.get('_vector_spans', ()), *row.get('_vector_spans', ()))))
+                        spans = tuple((start, end, score) for start, end, score in spans
+                            if any(window.start <= start < end <= window.end for window in merged))
+                        previous.pop('vector_score', None)
+                        previous.pop('_vector_spans', None)
+                        if spans:
+                            previous.update(_vector_spans=spans, vector_score=max(value[2] for value in spans))
+                    if getattr(get('ladder'), 'semantic_rerank', False):
+                        previous['_original_vector_spans'] = tuple(dict.fromkeys((
+                            *previous.get('_original_vector_spans', ()), *row['_original_vector_spans'])))
                 candidates[identity] = {
                     **previous,
                     "expansion_only": bool(previous.get("expansion_only") and row.get("expansion_only")),
@@ -61,7 +77,13 @@ async def expand_plan(query, project, question, plan, collected, *, turn_id, sce
     fixed = input_tokens([], plan["question"], reserve_refutes=True, history=plan.get("history", "")) + plan.get(
         "prompt_overhead", 0
     )
-    if fixed > plan["budget"] or (plan["chosen"] and plan["trace"][-1]["coverage"] >= 0.6):
+    selections = plan.get('policy_versions')
+    retrieval = get('retrieve', version=selections['retrieve']) if selections else get('retrieve')
+    if getattr(retrieval, 'demand_based', False):
+        sufficient = not retrieval(None, plan, operation='gap_needed', semantic_anchors=(question,))
+    else:
+        sufficient = plan['chosen'] and plan['trace'][-1]['coverage'] >= 0.6
+    if fixed > plan["budget"] or sufficient:
         return plan, observation, rewrite
     messages = [
         {
@@ -93,6 +115,9 @@ async def expand_plan(query, project, question, plan, collected, *, turn_id, sce
             lists.append(result["candidates"])
             excluded.extend(result["excluded_sources"])
         fused = {"candidates": fuse_candidates(lists), "excluded_sources": excluded[:20]}
+        if '_rerank_state' in plan:
+            # 重写后仍属于同一轮问题，不重试已调用的层或已失败的重排。
+            fused['_rerank_state'] = plan['_rerank_state']
         fused.update({key: collected[key] for key in ('policy_versions', 'rank_reference') if key in collected})
         if 'method_candidates' in collected:
             # A rewrite never changes the original task situation or its scope.

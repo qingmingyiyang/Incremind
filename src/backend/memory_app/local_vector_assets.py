@@ -23,11 +23,16 @@ class VectorInstallError(ValueError):
     pass
 
 
-def _safe_path(path):
+def _safe_path(path, *, checked=None):
     path = Path(path).absolute()
     for part in (path, *path.parents):
+        # 一次资产探测内共用父目录，下一次探测仍重新检查所有路径。
+        if checked is not None and part in checked:
+            continue
         if part.is_symlink() or part.is_junction():
             raise VectorInstallError('embedding_asset_link_forbidden')
+        if checked is not None:
+            checked.add(part)
     return path
 
 
@@ -42,7 +47,8 @@ def _digest(path):
 
 def installed_assets(directory, *, model):
     try:
-        directory = _safe_path(directory)
+        checked = set()
+        directory = _safe_path(directory, checked=checked)
         manifest = json.loads((directory / 'embedding-manifest.json').read_text(encoding='utf-8'))
         if not isinstance(manifest, dict) or not isinstance(manifest.get('files'), dict):
             return False
@@ -51,7 +57,7 @@ def installed_assets(directory, *, model):
                 and manifest['tensor_count'] == TEXT_PARAMETERS
                 and set(manifest['files']) == {*FILES, 'model.safetensors'}
                 and all(isinstance(info, dict) and type(info.get('size')) is int and info['size'] > 0
-                        and _safe_path(directory / name).stat().st_size == info['size']
+                        and _safe_path(directory / name, checked=checked).stat().st_size == info['size']
                         for name, info in manifest['files'].items()))
     except (OSError, ValueError, KeyError, TypeError):
         return False

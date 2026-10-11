@@ -4,6 +4,7 @@ import re
 
 from backend.recognition.experience_origins import COPY_ID, ExperienceOriginError, read_experience_origin
 from core.document_engine.runtime import _blocks_from_markdown
+from core.storage_provider.sqlite_uow import begin_read
 
 COLLECTION = 'v2_document_filings'
 _ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$')
@@ -180,7 +181,7 @@ def filing_experience(reader, scope, document_id, *, _trail=()):
     Callers send this root through the existing SourceEgress/Recognition owners.
     """
     if hasattr(reader, '_connect'):
-        with reader.begin() as tx:
+        with begin_read(reader) as tx:
             return filing_experience(tx, scope, document_id, _trail=_trail)
     marker = reader.read(COLLECTION, document_id)
     if marker is None:

@@ -1,15 +1,21 @@
 """Reentrant process and thread locks for JSON object CAS operations."""
 from contextlib import contextmanager, nullcontext
-from functools import wraps
+from functools import lru_cache, wraps
+from pathlib import Path
 from threading import RLock, Lock, local
 
 _guard = Lock()
 _locks = {}
 _owned = local()
 
+@lru_cache(maxsize=4096)
+def _lock_key(path):
+    # Path.resolve() opens the file on Windows; one lookup per path is enough.
+    return str(Path(path).resolve()).casefold()
+
 @contextmanager
 def object_lock(path):
-    key = str(path.resolve()).casefold()
+    key = _lock_key(str(path))
     with _guard:
         lock = _locks.setdefault(key, RLock())
     with lock:

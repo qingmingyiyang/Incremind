@@ -125,7 +125,10 @@ def _receipts(records, limit, *, runtime_root=None):
         if usage and usage.get('observed_only'):
             usage = None
         models = sorted({call['model_id'] for call in calls if call.get('model_id')})
-        result.append(_receipt(max(call['completed_at'] for call in calls), PURPOSES[group['kind']],
+        # 辅助 Turn 可复用同一 kind，外发记录按冻结路由中的实际用途显示。
+        purposes = {purpose for call in calls for purpose in (call.get('egress') or {}).get('settings_revision', {})}
+        label = {'rerank': '重排', 'embedding': '向量'}.get(next(iter(purposes)), PURPOSES[group['kind']]) if len(purposes) == 1 else PURPOSES[group['kind']]
+        result.append(_receipt(max(call['completed_at'] for call in calls), label,
             {'model': ' · '.join(models) or None}, usage=usage,
             duration=sum(call['duration_ms'] for call in calls) / 1000, model_cost=aggregate_cost(calls)))
     for calls in groups:
@@ -243,11 +246,15 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
     provider_store = ProviderStoreSettings(records, models)
     embeddings = getattr(application.state, 'memory_embedding_settings', None)
     if embeddings is None:
-        embeddings = EmbeddingSettings(records, getattr(models, '_local_models_root', runtime_root / 'data' / 'models'))
+        context = getattr(application.state, 'server_context', None)
+        embeddings = EmbeddingSettings(records, getattr(models, '_local_models_root', runtime_root / 'data' / 'models'),
+            shared=context is not None, device=getattr(context, 'vector_device', 'cpu'),
+            shared_on_ready=getattr(context, 'vector_on_ready', None))
         application.state.memory_embedding_settings = embeddings
     if isinstance(models, ModelConfiguration):
         models.bind_embedding(embeddings.project, vector_policy)
     index_tasks = set()
+    application.state.memory_embedding_index_tasks = index_tasks
 
     async def index_local_vectors():
         jobs = getattr(application.state, 'memory_daily_jobs', None)
@@ -255,17 +262,23 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
         if jobs is not None and index is not None:
             try:
                 # 仍由原调度器承担服务器队列与用户配额，不另建后台队列。
-                await jobs._run_callback(index.run)
+                await jobs._run_callback(index.run_scoped)
             except Exception as error:
                 logging.getLogger(__name__).warning('local_vector_index_failed exception_type=%s', type(error).__name__)
 
     def start_vector_index():
+        if embeddings.closed:
+            return
         task = asyncio.create_task(index_local_vectors())
         index_tasks.add(task)
         task.add_done_callback(index_tasks.discard)
 
+    # 记住完成后也用同一入口补算这一份的向量（用户 2026-10-09）。
+    application.state.start_vector_index = start_vector_index
+
     @application.on_event('shutdown')
     async def close_vector_install():
+        embeddings.begin_close()
         await run_in_threadpool(embeddings.close)
         # 安装线程刚投递的索引任务先进入本应用的生命周期，再等待终态。
         await asyncio.sleep(0)
@@ -319,6 +332,23 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
         except EmbeddingSettingsError as error:
             raise HTTPException(409 if str(error) == 'embedding_mode_revision_conflict' else 400, str(error)) from None
         return JSONResponse(status_code=202, content=result)
+    @router.post('/embedding/{action}')
+    async def settings_embedding_runtime(action: str, request: Request):
+        authorize_vector_install(request)
+        if action not in {'load', 'unload'}:
+            raise HTTPException(404, 'embedding_runtime_action_unknown')
+        body = await _json(request)
+        if set(body) != {'expected_revision'}:
+            raise HTTPException(400, 'embedding_runtime_invalid')
+        loop = asyncio.get_running_loop()
+        try:
+            result = embeddings.change_runtime(models.public()['embedding'], action=action, **body,
+                on_ready=lambda: loop.call_soon_threadsafe(start_vector_index))
+        except EmbeddingSettingsError as error:
+            raise HTTPException(409 if str(error) in {'embedding_runtime_revision_conflict',
+                'local_vector_unloading'} else 400, str(error)) from None
+        return JSONResponse(status_code=202, content=result)
+
     # Reuse the installed legacy safe projection, without importing backend.api.
     asr_endpoint = next((route.endpoint for route in application.routes
         if getattr(route, "path", None) == "/api/rebuild/settings/cloud-asr-provider"

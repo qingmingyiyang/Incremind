@@ -624,7 +624,7 @@
       "type": "object",
       "minProperties": 1,
       "propertyNames": {
-        "enum": ["organize", "place", "extract", "route", "steer", "scope", "retrieve", "rank", "strength", "forget", "enough", "compose", "trigger", "consolidate", "search", "nudge", "handoff", "image_read", "retry", "skill_export", "skill_author"]
+        "enum": ["organize", "place", "extract", "route", "steer", "scope", "retrieve", "rank", "strength", "forget", "enough", "compose", "trigger", "consolidate", "search", "nudge", "handoff", "image_read", "retry", "skill_export", "skill_author", "ladder", "vector", "rerank", "elsewhere", "continuation", "style", "gap", "reask", "review", "outcome_correction"]
       },
       "additionalProperties": {
         "type": "string",

@@ -6,7 +6,10 @@ ASK_DO = ('route', 'scope', 'retrieve', 'rank', 'enough', 'compose')
 LEARN = ('strength', 'forget', 'trigger', 'consolidate')
 PIPELINES = {'remember': REMEMBER, 'ask_do': ASK_DO, 'learn': LEARN, 'search': ('search',)}
 # These are real helpers and front-door decisions around the main recipe.
-DEPENDENCIES = {'remember': ('route', 'scope', 'retry'), 'ask_do': ('strength', 'place', 'retry'), 'learn': ('retry',), 'search': ()}
+# Recorded with each turn so a replay or continuation uses the versions that ran.
+DEPENDENCIES = {'remember': ('route', 'scope', 'retry'),
+                'ask_do': ('strength', 'place', 'retry', 'ladder', 'vector', 'rerank', 'elsewhere', 'continuation', 'style'),
+                'learn': ('retry', 'vector', 'rerank'), 'search': ()}
 TURN_PIPELINES = {
     'media.image_read': 'remember',
     'memory.organize': 'remember',
@@ -27,7 +30,9 @@ def interfaces_for_turn(kind):
     if kind == 'memory.skill_export':
         return ('scope', 'skill_export', 'skill_author')
     if kind == 'external.context':
-        return tuple(sorted(set((*ASK_DO[:-1], 'handoff', *DEPENDENCIES['ask_do']))))
+        # 外部 agent 上下文不调用重排，保留原有冻结策略键集合。
+        return tuple(sorted(set((*ASK_DO[:-1], 'handoff',
+            *(name for name in DEPENDENCIES['ask_do'] if name != 'rerank')))))
     if kind == 'media.image_read':
         return ('image_read', 'retry')
     try:

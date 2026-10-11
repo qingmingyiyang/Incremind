@@ -20,6 +20,9 @@ from backend.recognition.external_turn_facts import source_is_committed
 from backend.recognition.external_evidence_json import encoded
 from backend.recognition_retrieval.cache_invalidation import VectorCacheInvalidator, chunk_cache_parent
 from core.search_and_recall.vector_cache_invalidation import vector_cache_path
+from copy import deepcopy
+from core.storage_provider.runtime import object_store_writes
+from core.storage_provider.sqlite_uow import SQLiteStructuredRecordStore, begin_read
 from .transaction_records import TransactionRecords
 from backend.recognition.artifact_dependencies import ArtifactDependencyError, read_artifact_dependencies
 from backend.recognition.experience_origins import ExperienceOriginError, read_experience_origin
@@ -49,6 +52,15 @@ POLICY_COLLECTIONS = {
 }
 _PURPOSES = ("generation", "embedding", "rerank")
 _MAX_NODES = 256
+# Results of full egress graph walks; one remember repeated the same walk hundreds
+# of times, each re-reading every source file. See SourceEgressService._walk_key.
+_WALKS: dict[tuple, object] = {}
+
+
+def _remember_walk(key, value):
+    if len(_WALKS) >= 4096:
+        _WALKS.clear()
+    _WALKS[key] = value
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$")
 
 
@@ -119,7 +131,7 @@ class SourceEgressService:
         return is_private_project(self._records,scope.project_id)
 
     def policy(self, scope, source_type, source_id):
-        with self._records.begin() as uow:
+        with begin_read(self._records) as uow:
             source = _source(uow,scope,source_type,source_id)
             nodes = {}
             effective = self._effective(uow,scope,source_type,source_id,nodes,(),None)
@@ -131,7 +143,29 @@ class SourceEgressService:
                 "allowed_purposes":sorted(effective),"inherited":inherited}
 
     def snapshot(self, scope: WorkScope, refs: Sequence[Mapping[str, object]]) -> dict[str, object]:
-        return self._snapshot(scope, refs, (), set())
+        stamp, key = self._walk_key('snapshot', scope, refs)
+        hit = _WALKS.get(key) if key is not None else None
+        if hit is not None and hit[0] == stamp:
+            return deepcopy(hit[1])
+        result = self._snapshot(scope, refs, (), set())
+        if key is not None:
+            _remember_walk(key, (stamp, deepcopy(result)))
+        return result
+
+    def _walk_key(self, kind, scope, value):
+        """Cache key for a full graph walk, valid only while nothing was written.
+
+        Every record write advances the database stamp (SQLite triggers) and every
+        source file write advances the object-store count; privacy state lives in
+        records. Read before walking, so a write during the walk forces a re-walk.
+        """
+        if self._memo is not None or not isinstance(self._records, SQLiteStructuredRecordStore):
+            return None, None
+        try:
+            key = (kind, str(self._records.database_path), encoded(_scope(scope)), encoded(value))
+        except (TypeError, ValueError):
+            return None, None
+        return (self._records.change_stamp(), object_store_writes()), key
 
     def _snapshot(self, scope, refs, trail, budget, memo=None):
         memo = self._memo if memo is None else memo
@@ -139,7 +173,7 @@ class SourceEgressService:
         roots = _refs(refs)
         nodes: dict[tuple[str, str], dict[str, object]] = {}
         closures: dict[tuple[str, str], set[tuple[str, str]]] = {}
-        with self._records.begin() as uow:
+        with begin_read(self._records) as uow:
             current_privacy_revision = privacy_revision(uow)
             for source_type, source_id, wanted_revision in roots:
                 source = _source(uow, scope, source_type, source_id)
@@ -153,7 +187,7 @@ class SourceEgressService:
     def snapshot_original_content(self, scope, identity, *, span, input_binding=None):
         """Freeze only an admitted original's immutable input and its authority."""
         from .original_sources import original_content_identity
-        with self._records.begin() as reader:
+        with begin_read(self._records) as reader:
             content = original_content_identity(reader, scope, identity, span, input_binding=input_binding)
             source = original(reader, scope, 'original_item', identity)
             policy = reader.read(POLICY_COLLECTIONS['original_item'], identity)
@@ -176,7 +210,7 @@ class SourceEgressService:
         frozen = content['identity']['source_text']
         binding = content.get('input_binding')
         span = content['span'] if binding is not None else frozen[content['start']:content['end']]
-        with self._records.begin() as reader:
+        with begin_read(self._records) as reader:
             identity = snapshot['id']
             if original_content_identity(reader, scope, identity, span, input_binding=binding) != content:
                 raise RecognitionConflict('original input identity changed')
@@ -196,6 +230,14 @@ class SourceEgressService:
             self.require(current, purpose)
 
     def validate_snapshot(self, scope: WorkScope, snapshot: Mapping[str, object]) -> None:
+        stamp, key = self._walk_key('validate', scope, snapshot)
+        if key is not None and _WALKS.get(key) == stamp:
+            return
+        self._validate_snapshot(scope, snapshot)
+        if key is not None:
+            _remember_walk(key, stamp)
+
+    def _validate_snapshot(self, scope: WorkScope, snapshot: Mapping[str, object]) -> None:
         if not isinstance(snapshot, Mapping) or snapshot.get("schema_version") != 1 or snapshot.get("scope") != _scope(scope):
             raise RecognitionConflict("source egress snapshot is invalid")
         raw_nodes = snapshot.get("nodes")
@@ -205,7 +247,7 @@ class SourceEgressService:
         expected_privacy_revision = snapshot.get("privacy_revision")
         if type(expected_privacy_revision) is not int or expected_privacy_revision < 0:
             raise RecognitionConflict("source egress snapshot is invalid")
-        with self._records.begin() as uow:
+        with begin_read(self._records) as uow:
             if privacy_revision(uow) != expected_privacy_revision:
                 raise RecognitionConflict("source egress snapshot conflicted")
             for raw in raw_nodes:

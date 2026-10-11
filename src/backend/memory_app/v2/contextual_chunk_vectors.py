@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
+from functools import wraps
 from urllib.parse import urlsplit
 
 from backend.recognition import RecognitionConflict
@@ -12,11 +13,50 @@ from backend.recognition_retrieval.cache_invalidation import chunk_cache_namespa
 from ..retrieval_models import configured_adapter, _public_identity
 from ..source_egress import SourceEgressService
 from ..workspace_contracts import _COLLECTION
+from .embedding_settings import local_vectors_ready
 from .memory_turn import embedding_request
 from .privacy import egress_allowed, is_private_project, privacy_revision
 
 
 _INPUT_VALIDATION = ContextVar('embedding_input_validation', default=None)
+_QUESTION_VECTORS = ContextVar('question_vectors', default=None)
+
+
+def with_question_vectors(function):
+    """One ask encodes its question once; every candidate in it reuses the vector."""
+    @wraps(function)
+    def scoped(*args, **kwargs):
+        if _QUESTION_VECTORS.get() is not None:
+            return function(*args, **kwargs)
+        token = _QUESTION_VECTORS.set({})
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _QUESTION_VECTORS.reset(token)
+    return scoped
+
+
+class ReusedQuestion:
+    """Answer a repeated question-only encode from this ask's memory.
+
+    Each governed encode costs a Turn of about 3 s, once per candidate layer.
+    A reused vector sends nothing, so it needs no turn or receipt. Requests
+    that also carry material text still go through the governed provider.
+    """
+    def __init__(self, provider):
+        self.provider = provider
+        self.cache_identity = provider.cache_identity
+
+    def embed(self, texts):
+        memory = _QUESTION_VECTORS.get()
+        if memory is None or not texts:
+            return self.provider.embed(texts)
+        key = (self.cache_identity, texts[0])
+        if len(texts) == 1 and key in memory:
+            return (memory[key],)
+        vectors = self.provider.embed(texts)
+        memory[key] = vectors[0]
+        return vectors
 
 
 @contextmanager
@@ -55,6 +95,9 @@ def chunk_vector_scores(query, project, entry, scope, snapshot, chunks, *,
         remote = urlsplit(str(configured.get('base_url', ''))).hostname not in {
             'localhost', '127.0.0.1', '::1'}
         local_vectors = configured.get('mode') == 'local' and configured.get('provider') == 'local'
+        if local_vectors and not local_vectors_ready(query.models):
+            # Loading takes about a minute; this question stays keyword-only meanwhile.
+            return {}
         authority = SourceEgressService(query.records)
         frozen_privacy = privacy_revision(query.records)
         prefix = str(summary)[:120]
@@ -109,11 +152,12 @@ def chunk_vector_scores(query, project, entry, scope, snapshot, chunks, *,
                      **({'mode_revision': configured['mode_revision']} if local_vectors else {})},
                     validate, original, request)
 
-        provider = replace(provider, client=ObservedTransport())
+        provider = ReusedQuestion(replace(provider, client=ObservedTransport()))
         namespace = chunk_cache_namespace(project, entry)
         def chunk_id(own_layer, own_slot, index):
             return chunk_cache_id(entry, own_layer, own_slot, index)
 
+        # Same text the background index embeds (T12.1): title + summary[:120] + block.
         projected = [{'id': chunk_id(layer, span_slot, index),
                       'project_id': project, 'revision': entry['revision'], 'source_refs': [],
                       'content': entry['title'] + '\n' + prefix + '\n' + chunk.text}

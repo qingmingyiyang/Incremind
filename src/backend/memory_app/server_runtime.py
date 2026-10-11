@@ -1,10 +1,12 @@
 """Explicit user roots and lifetimes; no per-request process environment changes."""
 from contextlib import asynccontextmanager
+from contextvars import Context
 from dataclasses import dataclass
 import asyncio
 import inspect
 import time
 import logging
+import os
 import re
 from dataclasses import field
 
@@ -17,6 +19,7 @@ from backend.security.device_auth import ServerDeviceAuth, install_device_authen
 from backend.security.file_attribution import file_attribution
 from backend.security.user_context import USER_ACCESS, UserError, authorize_user, user_context
 from backend.shared.server_resources import SharedResources, resource_context
+from .local_vectors import model_directory, unload
 from .server_audit import AdminAudit
 from .server_jobs import ServerJobScheduler, QuotaError, retain_until_finished
 from .v2.devices import DeviceRegistry, install_device_routes
@@ -46,6 +49,8 @@ class ServerContext:
     resources: object
     jobs: object
     pool: object = field(default=None)
+    vector_device: str = 'cpu'
+    vector_on_ready: object = None
 
 
 def _route_path(application, scope):
@@ -154,6 +159,9 @@ class _UserDispatcher:
 
 
 def create_server_application(layout, *, child_factory, port=8001, concurrency=1, clock=time.monotonic):
+    vector_device = os.environ.get('CHRIPTMAS_VECTOR_DEVICE', 'cpu')
+    if vector_device not in {'cpu', 'cuda', 'auto'}:
+        raise ValueError('local_vector_device_invalid')
     registry = DeviceRegistry(layout.server_root / 'server')
     users = ServerUsers(layout.server_root, records=registry.records)
     auth = ServerDeviceAuth(registry, port=port)
@@ -161,7 +169,7 @@ def create_server_application(layout, *, child_factory, port=8001, concurrency=1
     resources = SharedResources(layout.server_root)
     # 在发布资源和创建用户池前，绑定原供应商配置留痕工厂。
     resources.provider_file_attribution_factory = file_attribution
-    context = ServerContext(layout, users, registry, auth, resources, jobs)
+    context = ServerContext(layout, users, registry, auth, resources, jobs, vector_device=vector_device)
     pool = UserApplicationPool(users, factory=lambda root, user: child_factory(root, user, context), clock=clock,pending_jobs=jobs.pending_for)
     context.pool = pool
     jobs.execution_lease = pool.job_lease
@@ -169,6 +177,24 @@ def create_server_application(layout, *, child_factory, port=8001, concurrency=1
 
     @asynccontextmanager
     async def lifetime(application):
+        loop = asyncio.get_running_loop()
+        accepting_vectors = True
+
+        def broadcast():
+            if accepting_vectors:
+                with user_context(None), resource_context(resources):
+                    pool.start_vector_indexes()
+
+        def vector_ready():
+            if accepting_vectors:
+                try:
+                    # 不继承发起加载的管理员上下文，自动任务仍归各用户自己的调度器。
+                    loop.call_soon_threadsafe(broadcast, context=Context())
+                except RuntimeError:
+                    LOGGER.warning('server_vector_index_loop_unavailable')
+
+        context.vector_on_ready = vector_ready
+
         async def maintain():
             while True:
                 await asyncio.sleep(60)
@@ -177,10 +203,18 @@ def create_server_application(layout, *, child_factory, port=8001, concurrency=1
         try:
             yield
         finally:
+            accepting_vectors = False
+            context.vector_on_ready = None
             maintenance.cancel()
             await asyncio.gather(maintenance, return_exceptions=True)
-            await jobs.close()
-            await pool.close()
+            try:
+                await jobs.close()
+            finally:
+                try:
+                    await pool.close()
+                finally:
+                    # 用户应用只释放自己的任务，宿主最终统一释放共享权重。
+                    await asyncio.to_thread(unload, model_directory(resources.model_root), wait=True)
 
     application = FastAPI(lifespan=lifetime)
     application.state.deployment = layout
@@ -222,6 +256,9 @@ class UserApplicationPool:
     def _pending_work(self, app, *, detached_only=False):
         """Observe actual executors; durable Turn status is never completion."""
         tasks = [] if detached_only else list(getattr(app.state, 'workbench_tasks', ()))
+        if not detached_only:
+            # 索引从 create_task 起就保留应用；job lease 内不反向等待调用任务。
+            tasks.extend(getattr(app.state, 'memory_embedding_index_tasks', ()))
         turns = getattr(app.state, 'workbench_turn_execution', None)
         if turns is not None and not detached_only:
             tasks.extend(turns.tasks.values())
@@ -313,6 +350,23 @@ class UserApplicationPool:
             child.touched = self.clock()
             self._changed.set()
 
+    def start_vector_indexes(self):
+        """只通知已存在的用户应用，不为加载权重创建或扫描其它空间。"""
+        if self._closing:
+            return
+        for child in tuple(self._children.values()):
+            state = child.application.state
+            embeddings = getattr(state, 'memory_embedding_settings', None)
+            models = getattr(state, 'recognition_models', None)
+            start = getattr(state, 'start_vector_index', None)
+            if child.retiring is not None or embeddings is None or embeddings.closed or models is None or start is None:
+                continue
+            try:
+                if models.public()['embedding'].get('mode') == 'local':
+                    start()
+            except Exception as error:
+                LOGGER.warning('server_vector_index_schedule_failed exception_type=%s', type(error).__name__)
+
     async def collect_idle(self):
         unloaded = []
         for user_id in tuple(self._children):
@@ -328,6 +382,9 @@ class UserApplicationPool:
 
     async def _retire(self, user_id, child):
         try:
+            embeddings = getattr(child.application.state, 'memory_embedding_settings', None)
+            if embeddings is not None:
+                embeddings.begin_close()
             daily = getattr(child.application.state,'memory_daily_jobs',None)
             if daily is not None:
                 await daily.stop()
@@ -354,18 +411,37 @@ class UserApplicationPool:
 
     async def close(self):
         self._closing = True
+        for child in tuple(self._children.values()):
+            embeddings = getattr(child.application.state, 'memory_embedding_settings', None)
+            if embeddings is not None:
+                embeddings.begin_close()
         while any(child.active for child in self._children.values()):
             self._changed.clear()
             await self._changed.wait()
+        failure = None
         for user_id in tuple(self._children):
-            async with self._locks[user_id]:
-                child = self._children.get(user_id)
-                if child is None:
-                    continue
-                retiring = child.retiring
-                if retiring is None:
-                    child.retiring = asyncio.get_running_loop().create_future()
-            if retiring is not None:
-                await retain_until_finished(retiring)
-            else:
-                await retain_until_finished(self._retire(user_id, child))
+            child = None
+            try:
+                async with self._locks[user_id]:
+                    child = self._children.get(user_id)
+                    if child is None:
+                        continue
+                    retiring = child.retiring
+                    if retiring is None:
+                        child.retiring = asyncio.get_running_loop().create_future()
+                if retiring is not None:
+                    await retain_until_finished(retiring)
+                else:
+                    await retain_until_finished(self._retire(user_id, child))
+            except BaseException as error:
+                # 保留第一个故障，但其它用户的安装线程仍须全部收口。
+                if failure is None:
+                    failure = error
+                embeddings = getattr(child.application.state, 'memory_embedding_settings', None) if child else None
+                if embeddings is not None:
+                    try:
+                        await retain_until_finished(asyncio.to_thread(embeddings.close))
+                    except BaseException as close_error:
+                        LOGGER.error('server_vector_install_close_failed exception_type=%s', type(close_error).__name__)
+        if failure is not None:
+            raise failure

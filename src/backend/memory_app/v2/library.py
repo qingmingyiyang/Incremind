@@ -1,8 +1,8 @@
 """The workbench's explicit user confirmation and dismissal actions."""
-from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Query
 from starlette.concurrency import run_in_threadpool
 from .turn_timings import turn_timing
-from core.storage_provider.connection_scope import with_connection_scope
+from core.storage_provider.connection_scope import connection_scope, with_connection_scope
 
 from backend.recognition import RecognitionConflict, RecognitionError, WorkScope
 from ..workspace_contracts import _json, _project
@@ -16,6 +16,12 @@ from core.storage_provider import SQLiteUnitOfWorkConflict
 from .usage import safe_record_usage, initialize_usage
 from .request_reads import DocumentReadSet
 from .outcomes import hidden_outcome_ids, versions as outcome_versions, candidates as outcome_candidates
+
+
+def _scoped(function, *args):
+    # Work deferred past the reply reuses connections like the request did.
+    with connection_scope():
+        function(*args)
 
 
 class LibraryRead:
@@ -480,7 +486,8 @@ def install_library_routes(application, *, records, service, documents=None, wor
                 document_id=_project(document_id) if document_id is not None else None,
                 source_id=_project(source_id) if source_id is not None else None)
 
-    async def act(insight_id, request, *, confirm):
+    @with_connection_scope
+    async def act(insight_id, request, *, confirm, background=None):
         insight_id = _project(insight_id)
         body = await _json(request)
         if set(body) != {"project_id", "expected_revision"}:
@@ -508,8 +515,10 @@ def install_library_routes(application, *, records, service, documents=None, wor
                     await run_in_threadpool(
                         InsightLinks(records, service).propose_candidate_hint,
                         scope.project_id, row.object_id, saved.id)
+                    # The model's supports/refutes suggestion takes seconds; reply first, suggest after.
+                    later = (lambda *args: background.add_task(_scoped, *args)) if background is not None else None
                     await run_in_threadpool(
-                        InsightLinks(records, service, models).discover, scope.project_id, saved.id)
+                        InsightLinks(records, service, models).discover, scope.project_id, saved.id, later=later)
                 except Exception:
                     # Publication stays committed; derived connections can be recomputed.
                     import logging
@@ -524,8 +533,8 @@ def install_library_routes(application, *, records, service, documents=None, wor
             raise HTTPException(400, "insight_invalid") from None
 
     @router.post("/insights/{insight_id}/confirm")
-    async def confirm(insight_id: str, request: Request):
-        return await act(insight_id, request, confirm=True)
+    async def confirm(insight_id: str, request: Request, background: BackgroundTasks):
+        return await act(insight_id, request, confirm=True, background=background)
 
     @router.post("/insights/{insight_id}/drop")
     async def drop(insight_id: str, request: Request):

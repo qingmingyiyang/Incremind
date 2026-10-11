@@ -112,3 +112,108 @@ v2.decorate = decorate
 v2.rescore = rescore
 v2.instruction = instruction
 v2.profile_instruction = profile_instruction
+
+
+# Not yet calibrated on real EmbeddingGemma 2 scores (V0 did not record the
+# similarity distribution); calibrate with memory_eval's synonym questions.
+MIN_SIMILARITY = 0.55
+
+
+def meaning(keyword, similarity):
+    """Recall score for an insight or a document's selected passages, or None.
+
+    Keyword hits stay first: a hit scores its matched term count plus the
+    similarity as a fraction, so meaning orders hits with equal counts.
+    Without a keyword hit, material whose similarity reaches MIN_SIMILARITY
+    is recalled below every keyword hit, ordered by similarity. Without
+    vectors (similarity None) the score is the keyword count alone.
+    """
+    if similarity is None:
+        return keyword or None
+    similarity = max(0.0, min(float(similarity), 0.999))
+    if keyword:
+        return keyword + similarity
+    return similarity if similarity >= MIN_SIMILARITY else None
+
+
+def v3(request: RankInput) -> float:
+    """Version two's insight ranking, plus keyword-and-meaning recall."""
+    return v2(request)
+
+
+for _name in ('freshness', 'adjust', 'describe', 'decorate', 'rescore', 'instruction', 'profile_instruction'):
+    setattr(v3, _name, getattr(v2, _name))
+v3.meaning = meaning
+
+
+_FUNCTION_WORDS = frozenset('a an are as at be been being by can could did do from had has have her his how in into is it its of on or s she should that their them they this to was were when where which who why will with would'.split())
+
+
+def contextual(chunks, terms, title, summary, vectors, max_chars, trim):
+    """按实义词稀缺性和语义排序，保留同主题的互补原文窗口。"""
+    from dataclasses import replace
+    from math import log
+    def contains(term, text):
+        if not term.isascii():
+            return term in text
+        # 只处理简单单复数，不让 art 误命中 started，同时允许 park/parks。
+        stem = term[:-1] if len(term) > 3 and term.endswith('s') and not term.endswith(('ss', 'us')) else term
+        word = re.escape(stem) + (r's?' if stem.isalpha() and len(stem) > 2 else '')
+        return bool(re.search(r'(?<!\w)' + word + r'(?!\w)', text))
+    terms = [(term, weight) for term, weight in terms if term not in _FUNCTION_WORDS]
+    bodies = [chunk.text.casefold() for chunk in chunks]
+    # 在一份资料中重复出现的人名和主题词不应压倒只出现一次的事实词。
+    weights = {term: weight * (1 + log((len(chunks) + 1) / (1 + sum(contains(term, body) for body in bodies))))
+               for term, weight in terms}
+    total = sum(weights.values()) or 1
+    prefix = (title + '\n' + summary[:120]).casefold()
+    ranked = []
+    for index, (chunk, body) in enumerate(zip(chunks, bodies)):
+        body_hit = sum(weight for term, weight in weights.items() if contains(term, body))
+        prefix_hit = sum(weight for term, weight in weights.items() if contains(term, prefix) and not contains(term, body))
+        lexical = (body_hit + .2 * prefix_hit) / total
+        similarity = max(0.0, min(float(vectors.get(index, 0)), 1.0))
+        if not body_hit and not prefix_hit and similarity < MIN_SIMILARITY:
+            continue
+        score = .45 * lexical + .55 * similarity if vectors else lexical
+        ranked.append((score, body_hit, -index, chunk))
+    selected, used, best_score = [], 0, 0.0
+    for score, body_hit, _index, chunk in sorted(ranked, key=lambda row: row[:3], reverse=True):
+        if len(selected) == 3:
+            break
+        if selected and (score < best_score * .5 or not body_hit and not vectors):
+            continue
+        # 分块自带末句重叠；只去掉重复交集，互补事实不必带来新的问题词。
+        segments = [(chunk.start, chunk.end)]
+        for old in selected:
+            segments = [(a, min(b, old.start)) for a, b in segments if a < old.start] + [
+                (max(a, old.end), b) for a, b in segments if b > old.end]
+        for start, end in segments:
+            room = max_chars - used - (3 if selected else 0)
+            if room <= 0 or end <= start:
+                continue
+            text = chunk.text[start-chunk.start:end-chunk.start]
+            piece = replace(chunk, start=start, end=end, text=text)
+            if len(text) > room:
+                piece = trim(piece, room)
+            if piece is None or not piece.text.strip():
+                continue
+            selected.append(piece)
+            used += len(piece.text) + (3 if len(selected) > 1 else 0)
+            best_score = max(best_score, score)
+            if len(selected) == 3:
+                break
+    selected.sort(key=lambda window: window.start)
+    return selected, best_score, 'content' if selected else 'none'
+
+
+def v4(request: RankInput) -> float:
+    """认识排序保持原规则，文段使用可独立对照的新排序。"""
+    return v3(request)
+
+
+for _name in ('freshness', 'adjust', 'describe', 'decorate', 'rescore', 'instruction', 'profile_instruction', 'meaning'):
+    setattr(v4, _name, getattr(v3, _name))
+v4.contextual = contextual
+from . import register
+register('rank', '@4')(v4)

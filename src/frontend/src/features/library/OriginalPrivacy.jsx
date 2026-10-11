@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Row, Switch } from '../../shared/ui';
 import { libraryApi } from './libraryApi';
+import { PRIVATE_MATERIAL_HINT } from '../../shared/lib/privacyMessages';
 
 export function OriginalPrivacy({ projectId, sourceId, api = libraryApi }) {
   const [state, setState] = useState(null);
@@ -36,6 +37,7 @@ export function OriginalPrivacy({ projectId, sourceId, api = libraryApi }) {
     }
   }
   return <><Row readOnly title="私密" trailing={<Switch label="私密"
+    title={`${state?.inherited ? '已继承项目或来源的私密限制。' : ''}${PRIVATE_MATERIAL_HINT}`}
     checked={state?.allowed_purposes?.length === 0} disabled={busy || !state || state.inherited}
     onChange={toggle}/>}/>{error && <p role="alert">{error}</p>}</>;
 }

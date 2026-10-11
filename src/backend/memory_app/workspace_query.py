@@ -7,7 +7,7 @@ import logging
 import re
 import time
 from functools import partial
-from .v2.policies import get, override
+from .v2.policies import get, override, version
 from .v2.policies.pipelines import versions_for_turn
 from .v2.policies.types import RankInput, ScopeInput
 from .v2.policies.scope import prefer_scene_ties, scene_priority
@@ -21,6 +21,8 @@ from fastapi import HTTPException
 from starlette.concurrency import run_in_threadpool
 from .model_config import ModelConfigurationError
 from .structured_generation import AskOutput
+from .answer_proof import REVIEW_KEY, review_messages, review_input_tokens, select_answer_input, quote_answer_messages
+from .v2.answer_evidence import EvidenceFirstAskOutput, SourceQuoteExtraction, verified_quote_bundle, answer_response_model, accept_evidence_structure, final_response_model, render_coverage, EvidencePartitionOutput, build_evidence_catalog, build_partition_messages, validate_partition, partition_output_tokens, render_partition, GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, FirstFactsOutput, ReviewedScopeAnswerOutput, FirstReferencedFactsOutput, ReviewedReferencedScopeOutput, FocusedReferencedFactsOutput, FocusedReviewedScopeOutput, first_fact_empty, first_fact_partition, validate_first_facts, reviewed_scope_answer, first_facts_output_minimum, grounded_usage_answer, grounded_scope_answer, grounded_output_minimum, grounded_output_limit, render_grounded_answer
 from .kernel.answer_turns import ACTIVE_ANSWER, generate_answer
 from .kernel.answer_turns import answer_observation
 from backend.shared.llm.model_transport import ModelInterrupted
@@ -33,7 +35,7 @@ from .v2.projects import scene_of
 from .v2.layers import summary_of
 from .v2.request_reads import DocumentReadSet
 from .v2.contextual_chunks import select_indexed_contextual_windows
-from .v2.contextual_chunk_vectors import chunk_vector_scores
+from .v2.contextual_chunk_vectors import chunk_vector_scores, with_question_vectors
 from .v2.ladder import candidate_order, plan_ladder
 from .v2.budget import WINDOW_SCAN_CHARS, structured_prompt_overhead, ask_instruction, source_texts as format_source_texts, user_text as _ask_user_text
 from backend.recognition import RecognitionError, RecognitionConflict, WorkScope
@@ -64,8 +66,15 @@ def _record_elapsed(name, started):
         logging.getLogger(__name__).warning("timing_elapsed_observer_failed")
 
 
-def _ask_context(chosen, source_texts, messages, budget, history="", history_count=0, profile=None, part_context=None):
+def _ask_context(chosen, source_texts, messages, budget, history="", history_count=0, profile=None, part_context=None, *, review_base=None):
     """Attribute the exact sent fragments; schema and framing belong to instructions."""
+    if review_base is not None:
+        # 来源及历史沿原输入归因，额外审核说明和不可信草稿统一计入指令。
+        result = _ask_context(chosen, source_texts, review_base, budget, history, history_count, profile, part_context)
+        if not isinstance(budget, dict):
+            instruction = next(part for part in result['parts'] if part['key'] == 'instruction')
+            instruction['tokens'] += _estimate_input_tokens(messages) - _estimate_input_tokens(review_base)
+        return result
     result = _empty_ask_context()
     parts = {part["key"]: part for part in result["parts"]}
     if any(candidate.get('inspiration') for candidate in chosen):
@@ -307,6 +316,7 @@ class WorkspaceQuery:
             **({"subscription_binding": generation["subscription_binding"]} if generation.get("subscription_binding") else {}),
         }
 
+    @with_question_vectors
     def collect_candidates(self, project_id: str, question: str, *, scene=None, situation=None, local_only=False, rank_reference=None, external_client=None) -> dict:
         if type(local_only) is not bool:
             raise ValueError('local_only_must_be_bool')
@@ -325,6 +335,7 @@ class WorkspaceQuery:
         validate_external()
         return {**result, 'policy_versions': selections}
 
+    @with_question_vectors
     def collect_lower_candidates(self, project_id: str, question: str, *, scene=None,
                                  policy_versions=None, time_scope=None, time_documents=None,
                                  time_candidates=(), rank_reference=None) -> dict:
@@ -385,6 +396,8 @@ class WorkspaceQuery:
             if time_scope:
                 question = time_scope['query']
         authority = SourceEgressService(self.records)
+        dynamic_policy = get('ladder') if callable(getattr(get('ladder'), 'demand', None)) else None
+        dynamic_budget = self.ask_budget()[1] if dynamic_policy is not None else None
         candidates, methods = [], []
         excluded = []
         entries, prepared, indexed_documents, indexed_sources, indexed_originals = self.retrieval_index.indexed_entries(project_id)
@@ -455,18 +468,28 @@ class WorkspaceQuery:
                 spans.append(('L0', 0, source['length'], 'source_content_v1',
                               tuple(EvidenceWindow(**value) for value in source['chunks'])))
             layers = {}
+            layer_vectors = {}
+            layer_discovery = {}
+            current = hydrated = None
+            def current_text(coordinates):
+                if coordinates == 'document_markdown_v1':
+                    return hydrated.markdown[entry['id']]
+                if coordinates == 'workspace_source_text_v1':
+                    item = hydrated.items.get(entry['item_id'])
+                    return str(item.payload.get('source_text') or '') if item else ''
+                return current['content']
             chunk_inventory = [(layer, slot, chunks) for slot, (layer, _, _, _, chunks) in enumerate(spans)
                                if layer != 'L2']
             for span_slot, (layer, start, end, coordinates, chunks) in enumerate(spans):
                 if only_layers is not None and layer not in only_layers:
                     continue
-                if layer == "L2":
+                if layer == "L2" and dynamic_policy is None:
                     selection = _timed_evidence_windows(context_summary, question,
                         title=entry["title"], max_chars=WINDOW_SCAN_CHARS)
                 else:
                     vectors = {}
                     with stage("vector"):
-                        if not local_only and external_client is None:
+                        if layer != 'L2' and not local_only and external_client is None:
                             vectors = chunk_vector_scores(self, project_id, entry, scope, snapshot, chunks,
                                 layer=layer, span_start=start, span_slot=span_slot,
                                 summary=context_summary, question=question, chunk_inventory=chunk_inventory)
@@ -484,25 +507,49 @@ class WorkspaceQuery:
                             layers.clear()
                             break
                     with stage("keyword"):
-                        selection = select_indexed_contextual_windows(end-start, question,
-                            title=entry["title"], summary=context_summary, chunks=chunks,
-                            vector_scores=vectors, max_chars=WINDOW_SCAN_CHARS)
+                        if dynamic_policy is None:
+                            selection = select_indexed_contextual_windows(end-start, question,
+                                title=entry["title"], summary=context_summary, chunks=chunks,
+                                vector_scores=vectors, max_chars=WINDOW_SCAN_CHARS)
+                        else:
+                            from .v2.contextual_chunks import dynamic_contextual_windows
+                            from .v2.budget import text_tokens
+                            # 摘要投影没有分块；原摘要本身就是其唯一真实种子。
+                            seeds = chunks or ((EvidenceWindow(0, end-start, context_summary),)
+                                if layer == 'L2' and end > start else ())
+                            if not dynamic_policy.seed_order(seeds, question, entry['title'], context_summary, vectors):
+                                continue
+                            if current is None:
+                                current, hydrated = self.retrieval_index.hydrate(project_id, entry)
+                                if current is None or any(current.get(key) != entry.get(key) for key in
+                                        ('revision', 'item_revision', 'title', 'item_id')):
+                                    self.retrieval_index.schedule(entry['kind'], entry['id'])
+                                    layers.clear()
+                                    break
+                            # 层边界来自既有投影，先切真实父正文，再恢复全局坐标。
+                            parent = current_text(coordinates)[start:end]
+                            if getattr(dynamic_policy, 'bounded_discovery', False):
+                                from .v2.policies.ladder import discover_chains_v14
+                                layer_discovery.setdefault(layer, []).extend(discover_chains_v14(
+                                    parent, question, seeds, vectors, title=entry['title'], summary=context_summary,
+                                    offset=start, span_slot=span_slot))
+                            selection = dynamic_contextual_windows(parent, question, title=entry['title'],
+                                summary=context_summary, chunks=seeds, vector_scores=vectors,
+                                admission=lambda value: text_tokens(value.excerpt) <= dynamic_budget)
                 if selection.score:
                     windows = tuple(EvidenceWindow(w.start+start, w.end+start, w.text) for w in selection.windows)
                     layers.setdefault(layer, []).append((selection, windows, coordinates))
+                    if dynamic_policy is not None and layer != 'L2':
+                        layer_vectors.setdefault(layer, []).extend((chunk.start+start, chunk.end+start, vectors[index])
+                            for index, chunk in enumerate(chunks) if index in vectors
+                            and any(window.start <= chunk.start and chunk.end <= window.end for window in selection.windows))
             if layers:
-                current, hydrated = self.retrieval_index.hydrate(project_id, entry)
+                if current is None:
+                    current, hydrated = self.retrieval_index.hydrate(project_id, entry)
                 if current is None or any(current.get(key) != entry.get(key) for key in
                         ('revision', 'item_revision', 'title', 'item_id')):
                     self.retrieval_index.schedule(entry['kind'], entry['id'])
                     continue
-                def current_text(coordinates):
-                    if coordinates == 'document_markdown_v1':
-                        return hydrated.markdown[entry['id']]
-                    if coordinates == 'workspace_source_text_v1':
-                        item = hydrated.items.get(entry['item_id'])
-                        return str(item.payload.get('source_text') or '') if item else ''
-                    return current['content']
                 if any(current_text(coordinates)[window.start:window.end] != window.text
                        for selections in layers.values() for _, windows, coordinates in selections for window in windows):
                     self.retrieval_index.schedule(entry['kind'], entry['id'])
@@ -511,7 +558,7 @@ class WorkspaceQuery:
                     continue
                 entry = current
             for layer, selections in layers.items():
-                # Keep a single bounded candidate per object/layer, preserving exact slices.
+                # 同一对象和层只合并真实窗口；动态版的范围由问题及预算决定。
                 windows = []
                 for selection, pieces, coordinates in sorted(selections, key=lambda value: -value[0].score):
                     for window in pieces:
@@ -529,32 +576,64 @@ class WorkspaceQuery:
                                    "layer": layer, "scope": scope, "scene": assigned_scene,
                                    "sort_time": sort_times.get(layer),
                                    "document_id": entry.get("document_id"),
-                                   "document_ids": [identity for identity, _ in linked], "coordinate_space": coordinates})
+                                   "document_ids": [identity for identity, _ in linked], "coordinate_space": coordinates,
+                                   **({'vector_score': max(value[2] for value in layer_vectors[layer]),
+                                       '_vector_spans': tuple(layer_vectors[layer])} if layer_vectors.get(layer) else {})})
+                if layer_discovery.get(layer):
+                    from .v2.policies.ladder import _DiscoveryChains, source_identity_v14
+                    row = candidates[-1]
+                    row['_discovery_chains'] = _DiscoveryChains(question, source_identity_v14(row), layer_discovery[layer])
+
         recognition_entries, time_documents = [], {}
         for own_scope in (() if project_id == "me" or (only_layers is not None and 'L3' not in only_layers) else (scope,)):
             if local_only or not is_private_project(self.records, own_scope.project_id):
                 recognition_entries.extend((entry, own_scope) for entry in self.service.retrieval_entries(scope=own_scope))
         from .v2.links import InsightLinks
-        anchors = {entry['id'] for entry, _ in recognition_entries
-                   if _timed_evidence_windows(entry['content'], question, max_chars=1800).score}
+        # 先按状态、遗忘和场景筛选，避免不合资格的认识成为连接扩展的锚点。
+        def qualified_insight(entry, own_scope):
+            if is_recall_excluded(self.records, own_scope, entry['id']):
+                return None
+            view = insight_view(self.records, own_scope, entry['id'], service=self.service)
+            if view is not None and view['state'] == 'active' and get('scope')(ScopeInput(scene, view['scene'])):
+                return view
+            return None
+        recognition_entries = [(entry, own_scope) for entry, own_scope in recognition_entries
+                               if qualified_insight(entry, own_scope) is not None]
+        insight_vectors = {}
+        # rank@3 adds keyword-and-meaning recall; earlier versions stay keyword-only.
+        meaning = getattr(rank_policy, 'meaning', None)
+        if meaning is not None and recognition_entries and not local_only and external_client is None:
+            from .v2.insight_vectors import insight_vector_scores
+            with stage("vector"):
+                insight_vectors = insight_vector_scores(self, project_id, scope,
+                    [entry for entry, _ in recognition_entries], question)
+        # 编码期间可能改变遗忘或场景；来源快照不覆盖这些旁路状态，扩展前重新读取。
+        recognition_entries = [(entry, own_scope) for entry, own_scope in recognition_entries
+                               if qualified_insight(entry, own_scope) is not None]
+        selections = {entry['id']: _timed_evidence_windows(entry['content'], question, max_chars=1800)
+                      for entry, _ in recognition_entries}
+        recalls = {identity: (meaning(selection.score, insight_vectors.get(identity)) if meaning is not None
+                             else selection.score or None) for identity, selection in selections.items()}
+        # 语义命中的认识与关键词命中的认识沿同一条相关、支持、矛盾连接扩展。
+        anchors = {identity for identity, recall in recalls.items() if recall}
         expansion_ids = (InsightLinks(self.records, self.service).expansion_ids(project_id, anchors)
                          if only_layers is None or 'L3' in only_layers else set())
         for entry, own_scope in recognition_entries:
             scope = own_scope
-            if is_recall_excluded(self.records, scope, entry["id"]):
-                continue
-            view = insight_view(self.records, scope, entry["id"], service=self.service)
-            if view is None or view["state"] != "active" or not get('scope')(ScopeInput(scene, view['scene'])):
+            view = qualified_insight(entry, own_scope)
+            if view is None:
                 continue
             if time_scope:
                 for identity in view['document_ids']:
                     time_documents.setdefault(identity, []).append(entry['id'])
-            selection = _timed_evidence_windows(entry["content"], question, max_chars=1800)
+            selection = selections[entry['id']]
+            # Keyword hits lead; meaning orders ties and recalls insights no keyword reached.
+            recall = recalls[entry['id']]
             from .v2.policies.retrieve import condition_score
             method_score = (condition_score(entry['conditions'], method_query)
                             if method_query and ((local_only or egress_allowed(self.records, self.models, project_id, 'generation'))
                                 if external_client is None else external_egress_allowed(self.records, project_id, external_client)) else 0)
-            if not selection.score and entry["id"] not in expansion_ids and not method_score:
+            if not recall and entry["id"] not in expansion_ids and not method_score:
                 continue
             try:
                 snapshot = authority.snapshot(scope, [{"type": "recognition", "id": entry["id"],
@@ -577,19 +656,21 @@ class WorkspaceQuery:
                                      "reason": "recognition_source_evidence_incomplete"})
                 continue
             record = self.records.read("recognitions", entry["id"])
-            rank_input = RankInput(selection.score, recall_weight(self.records, 'insight', entry['id']),
+            rank_input = RankInput(recall or 0, recall_weight(self.records, 'insight', entry['id']),
                                    conditions=entry['conditions'], reference=rank_reference)
             candidate = {"score": rank_policy(rank_input), "kind": "recognition", "id": entry["id"],
                                "sort_time": (record.payload.get("updated_at") or record.payload.get("created_at")) if record else None,
                                "title": "已发布认识", "excerpt": excerpt,
                                "windows": (EvidenceWindow(0, len(entry["content"]), entry["content"]),),
-                               "match_in": selection.match_in,
+                               "match_in": selection.match_in if selection.score or not recall else "content",
                                "href": f"#view=recognition&project_id={scope.project_id}",
                                "entry": entry, "snapshot": snapshot,
                                "scope": scope, "layer": "L3", "scene": view["scene"],
                                "document_ids": view["document_ids"], "document_id": None,
                                "persona": scope.project_id == "me" and project_id != "me",
-                               "expansion_only": not bool(selection.score)}
+                               "expansion_only": not recall}
+            if dynamic_policy is not None and entry['id'] in insight_vectors:
+                candidate['vector_score'] = insight_vectors[entry['id']]
             if callable(getattr(rank_policy, 'decorate', None)):
                 candidate = rank_policy.decorate(candidate, rank_input)
             if time_scope:
@@ -597,7 +678,7 @@ class WorkspaceQuery:
                 candidate.update(validity=read_validity(self.records, entry['id']) or {},
                     time_match_score=selection.score,
                     validity_revision=(marker.revision if (marker := self.records.read(COLLECTION, entry['id'])) else 0))
-            if selection.score or entry['id'] in expansion_ids:
+            if recall or entry['id'] in expansion_ids:
                 candidates.append(candidate)
             if method_score:
                 methods.append({**candidate, 'score': getattr(rank_policy, 'rescore', lambda score, candidate: score)(method_score, candidate), 'expansion_only': False})
@@ -675,7 +756,8 @@ class WorkspaceQuery:
             with override(**collected['policy_versions']), stage('ladder'):
                 planned = plan_ladder(collected['candidates'], question,
                     neighbors=lambda identity: links.neighbors(project_id, identity),
-                    methods=fuse_candidates([collected.get('method_candidates', [])]), situation=question)
+                    methods=fuse_candidates([collected.get('method_candidates', [])]), situation=question,
+                    **({'fit': self._fit_dynamic_candidate} if callable(getattr(get('ladder'), 'demand', None)) else {}))
             plan = {**planned, 'project_id': project_id, 'scope': WorkScope('local-user', project_id)}
 
             def validate_current():
@@ -696,15 +778,129 @@ class WorkspaceQuery:
         except (RecognitionError, ValueError, TypeError, KeyError, OSError):
             return {'status': 'unknown', 'coverage': None, 'stopped': None, 'chosen': [], 'trace': []}
 
+    def _fit_dynamic_candidate(self, candidate, question, *, limit=None, admission=None):
+        """资格读取方提供真实父正文，扩窗不跨摘要、整理稿或原件边界。"""
+        from .v2.budget import dynamic_candidate, text_tokens
+        def bind_similarity(value):
+            value = {key: item for key, item in value.items() if key != '_vector_spans'}
+            if candidate.get('_vector_spans'):
+                values = [score for start, end, score in candidate['_vector_spans']
+                    if any(window.start <= start and end <= window.end for window in value['windows'])]
+                value.pop('vector_score', None)
+                if values:
+                    value['vector_score'] = max(values)
+            return value
+        def admissible(value):
+            value = bind_similarity(value)
+            return ((limit is None or text_tokens(value['excerpt']) <= limit)
+                    and (admission is None or admission(value) is True))
+        if candidate['layer'] == 'L3' or candidate.get('coordinate_space') in {
+                'search_result_text_v1', 'recognition_experience_content_v1'}:
+            fitted = dynamic_candidate(candidate, question, limit=limit, admission=admissible)
+            return bind_similarity(fitted) if fitted is not None and admissible(fitted) else None
+        entry = candidate['entry']
+        current, hydrated = self.retrieval_index.hydrate(candidate['scope'].project_id, entry)
+        if current is None or any(current.get(key) != entry.get(key) for key in
+                ('revision', 'item_revision', 'title', 'item_id')):
+            raise RecognitionConflict('dynamic_parent_changed')
+        coordinates = candidate.get('coordinate_space')
+        if coordinates == 'document_markdown_v1' and candidate['kind'] == 'document':
+            content = hydrated.markdown[entry['id']]
+            _, start, end = summary_of(content)
+            bounds = [(start, end)] if candidate['layer'] == 'L2' else [
+                (left, right) for left, right in ((0, start), (end, len(content))) if right > left]
+            if candidate['layer'] not in {'L1', 'L2'}:
+                raise RecognitionConflict('dynamic_layer_coordinates_invalid')
+        elif coordinates == 'workspace_source_text_v1' and candidate['kind'] == 'document' and candidate['layer'] == 'L0':
+            item = hydrated.items.get(entry.get('item_id'))
+            if item is None:
+                raise RecognitionConflict('dynamic_parent_unavailable')
+            content = str(item.payload.get('source_text') or '')
+            bounds = [(0, len(content))]
+        elif coordinates == 'source_content_v1' and candidate['kind'] == 'source' and candidate['layer'] == 'L0':
+            content = current['content']
+            if content != entry.get('content'):
+                raise RecognitionConflict('dynamic_parent_changed')
+            bounds = [(0, len(content))]
+        else:
+            raise RecognitionConflict('dynamic_layer_coordinates_invalid')
+        windows = candidate.get('windows', ())
+        if (not windows or candidate['excerpt'] != '\n…\n'.join(window.text for window in windows)
+                or any(type(window.start) is not int or type(window.end) is not int
+                    or not 0 <= window.start < window.end <= len(content)
+                    or content[window.start:window.end] != window.text
+                    or not any(left <= window.start < window.end <= right for left, right in bounds)
+                    for window in windows)):
+            raise RecognitionConflict('dynamic_layer_window_changed')
+        if getattr(get('ladder'), 'bounded_discovery', False) and candidate.get('_discovered_chain'):
+            from .v2.policies.ladder import chain_binding_v14
+            # 完整chain在父正文与层边界校验后只原样准入，不能重新拟合后借分。
+            if not chain_binding_v14(candidate, question):
+                return None
+            from copy import deepcopy
+            return deepcopy(candidate) if admissible(candidate) else None
+        selected = []
+        def restore(value, offset):
+            pieces = sorted([*selected, *(EvidenceWindow(window.start+offset, window.end+offset, window.text)
+                for window in value['windows'])], key=lambda window: window.start)
+            return bind_similarity({**candidate, 'windows': tuple(pieces), 'excerpt': '\n…\n'.join(window.text for window in pieces)})
+        for left, right in bounds:
+            parent = content[left:right]
+            # collector 会合并相邻记录；拟合时重新取原完整单元作为种子，不能把整窗当成一个原子。
+            ranges = get('ladder').context_ranges(parent)
+            spans = {(max(window.start-left, start), min(window.end-left, end))
+                for window in windows if left <= window.start < window.end <= right
+                for start, end in ranges if start < window.end-left and end > window.start-left}
+            # 原编码块可能跨记录，保留其真实种子后扩成完整记录，避免借用未入选块的相似度。
+            spans.update((start-left, end-left) for start, end, _ in candidate.get('_vector_spans', ())
+                if left <= start < end <= right
+                and any(window.start <= start and end <= window.end for window in windows))
+            seeds = tuple(EvidenceWindow(start, end, parent[start:end]) for start, end in sorted(spans))
+            if not seeds:
+                continue
+            vectors = {index: max(score for start, end, score in candidate['_vector_spans']
+                    if left+seed.start <= start and end <= left+seed.end)
+                for index, seed in enumerate(seeds) if any(left+seed.start <= start and end <= left+seed.end
+                    for start, end, _ in candidate.get('_vector_spans', ()))}
+            order = get('ladder').seed_order(seeds, question, candidate['title'], '', vectors)
+            seeds = tuple(seeds[index] for index in order)
+            vectors = {new: vectors[old] for new, old in enumerate(order) if old in vectors}
+            if not seeds:
+                continue
+            relative = {**candidate, 'windows': seeds, 'excerpt': '\n…\n'.join(window.text for window in seeds)}
+            fitted = dynamic_candidate(relative, question, content=parent, vector_scores=vectors,
+                admission=lambda value: admissible(restore(value, left)))
+            if fitted is not None:
+                selected = list(restore(fitted, left)['windows'])
+        result = bind_similarity({**candidate, 'windows': tuple(selected), 'excerpt': '\n…\n'.join(window.text for window in selected)})
+        return result if selected and admissible(result) else None
+
+    def _answer_output_budget(self, target):
+        """冻结现有网关声明的输出预留，不把它当第三方最大能力实测。"""
+        reader = getattr(self.models, 'generation_budget_limits', None)
+        limits = reader(expected_revision=target['revision'],
+            max_tokens=512 if target['execution_location'] == 'local' else 7000) if callable(reader) else None
+        if (not isinstance(limits, dict) or type(limits.get('window')) is not int
+                or type(limits.get('reserve')) is not int or not 0 < limits['reserve'] < limits['window']):
+            raise ValueError('grounded_output_budget_unavailable')
+        return {'window': limits['window'], 'reserve': limits['reserve'], 'target_revision': target['revision']}
+
     def ask_budget(self):
         target = self.ask_target()
         reader = getattr(self.models, "generation_budget_limits", None)
         limits = reader(expected_revision=target["revision"], max_tokens=512 if target["execution_location"] == "local" else 7000) if callable(reader) else None
         valid = (isinstance(limits, dict) and type(limits.get("window")) is int and type(limits.get("reserve")) is int
                  and limits["window"] > 0 and 0 <= limits["reserve"])
-        budget = max(0, min(6000, (limits["window"] - limits["reserve"]) // 2)) if valid else 4000
-        overhead = structured_prompt_overhead() if any(callable(getattr(self.models, name, None))
-            for name in ("complete_structured", "complete_stream")) else 0
+        policy = get('ladder')
+        caps = policy()
+        if callable(getattr(policy, 'input_budget', None)):
+            budget = policy.input_budget(limits['window'] if valid else None, limits['reserve'] if valid else None)
+        else:
+            numerator, denominator = caps.get('input_budget_share', (1, 2))
+            budget = (max(0, min(caps["budget_cap"], (limits["window"] - limits["reserve"]) * numerator // denominator)) if valid
+                      else caps["fallback_budget"])
+        overhead = structured_prompt_overhead() if (version('compose') in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} or answer_response_model(version('compose')) is EvidenceFirstAskOutput or any(callable(getattr(self.models, name, None))
+            for name in ("complete_structured", "complete_stream"))) else 0
         return target, budget, overhead
 
     def prepare_ask(self, project_id: str, question: str, *, scene=None, retrieval_question=None, history="", collected=None, coverage_questions=None, situation=None, part_context=None, evidence_limit=None, profile_limit=None) -> dict:
@@ -777,8 +973,21 @@ class WorkspaceQuery:
                 'coordinate_space': candidate.get('coordinate_space', 'recognition_content_v1'),
                 'windows': [{'start': w.start, 'end': w.end} for w in candidate['windows']]})
         self.validate_ask_plan(plan)
-        validate_frozen_inputs(self.records, models,
-            {'scope': {'project_id': plan['project_id']}, 'privacy': privacy})
+        validation_request = {'scope': {'project_id': plan['project_id']}, 'privacy': privacy}
+        if plan['policy_versions']['retrieve'] == '@5':
+            from .kernel.answer_turns import ACTIVE_ANSWER
+            active = ACTIVE_ANSWER.get()
+            if active is None or active[2] is not self:
+                raise RecognitionConflict('gap_turn_authority_unavailable')
+            request, store, _, _ = active
+            frozen = store.get_request(request['turn_id'])
+            if (frozen['turn_id'] != request['turn_id'] or frozen['scope']['project_id'] != plan['project_id']
+                    or frozen['input']['text'] != plan['question'] or frozen['policy_versions'] != plan['policy_versions']):
+                raise RecognitionConflict('gap_turn_identity_changed')
+            # 使用同轮真实输入校验依赖，局部资料只替换本次外发的隐私快照。
+            validation_request = {**frozen, 'privacy': privacy}
+        validate_frozen_inputs(self.records, models, validation_request,
+            **({'query': self} if plan['policy_versions']['retrieve'] == '@5' else {}))
         with override(**plan['policy_versions']):
             messages = get('retrieve')(None, plan['_drilldown']['retrieval_question'], texts, operation='gap_messages')
         return {'messages': messages, 'privacy': privacy, 'selection': selection}
@@ -836,6 +1045,7 @@ class WorkspaceQuery:
         from .v2.links import InsightLinks
         links = InsightLinks(self.records, self.service)
         target, budget, overhead = self.ask_budget()
+        answer_output_budget = self._answer_output_budget(target) if version('compose') in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} else None
         from .v2.profile import confirmed_profile
         profile = confirmed_profile(self.records, self.service, rank_reference=collected.get('rank_reference'))
         ordinary_limit = evidence_limit
@@ -864,11 +1074,44 @@ class WorkspaceQuery:
             vectors = cached_candidate_vectors(self, collected["candidates"])
         with stage("ladder"):
             from .v2.multi_query import fuse_candidates
+            from .v2.reranking import layer_reranker
+            rerank_state = collected.get('_rerank_state', {'used_layers': [], 'failed': False})
             options = dict(token_budget=budget, prompt_overhead=overhead,
                 history=history, answer_question=question, coverage_questions=coverage_questions,
                 neighbors=lambda identity: links.neighbors(project_id, identity), cached_vectors=vectors,
                 methods=fuse_candidates([collected.get('method_candidates', [])]), situation=situation or question,
-                inspirations=collected.get('inspiration_candidates', ()), evidence_limit=ordinary_limit)
+                inspirations=collected.get('inspiration_candidates', ()), evidence_limit=ordinary_limit,
+                layer_order=layer_reranker(self, project_id, retrieval_question, scene=scene,
+                    token_budget=budget, state=rerank_state))
+            if callable(getattr(get('ladder'), 'demand', None)):
+                options['fit'] = self._fit_dynamic_candidate
+                options['semantic_anchors'] = tuple(dict.fromkeys((retrieval_question, *(coverage_questions or ()))))
+                if version('compose') in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+                    # 两轮共用真实目录；原文、画像、历史、依赖及三种包装全部计入。
+                    def partition_cost(rows):
+                        catalog = build_evidence_catalog(rows)
+                        first = build_partition_messages(rows, question, history=history,
+                            profile=profile, part_context=part_context, compose_version=version('compose'))
+                        worst = {'selected_ids': [unit['id'] for unit in catalog['units']],
+                            'irrelevant_ids': [], 'uncertain_ids': []}
+                        final = build_partition_messages(rows, question, history=history,
+                            profile=profile, part_context=part_context, compose_version=version('compose'),
+                            **({'first_output': first_fact_empty(version('compose'), catalog)} if version('compose') in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else {'partition': worst}))
+                        return max(review_input_tokens(first, response_model=answer_response_model(version('compose'))),
+                            review_input_tokens(final, response_model=final_response_model(version('compose'), question)) + 3)
+                    def partition_admission(rows):
+                        # 分类输出有界；实际公开原话仍在末轮渲染时单独检查，不能预先截资料。
+                        catalog = build_evidence_catalog(rows)
+                        required = (grounded_output_minimum(catalog, compose_version=version('compose')) if version('compose') in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}
+                            else partition_output_tokens(catalog))
+                        if version('compose') in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+                            required = max(required, first_facts_output_minimum(catalog, compose_version=version('compose')) if version('compose') in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else partition_output_tokens(catalog))
+                        return required <= (
+                            answer_output_budget['reserve'] if answer_output_budget is not None
+                            else 512 if target['execution_location'] == 'local' else 7000)
+                    options.update(cost=partition_cost, admission=partition_admission)
+                    if partition_cost([]) > budget or not partition_admission([]):
+                        raise RecognitionError('question context exceeds structured answer budget')
             if _pause_after is None:
                 planned = plan_ladder(collected['candidates'], retrieval_question, **options)
             else:
@@ -889,11 +1132,14 @@ class WorkspaceQuery:
         plan = {"project_id": project_id, "question": question, "scope": WorkScope("local-user", project_id),
                 **({'rank_reference': collected['rank_reference']} if collected.get('rank_reference') else {}),
                 **({key: collected[key] for key in ('time_scope', 'time_documents')} if collected.get('time_scope') else {}),
-                "target": target, **planned, "profile": profile, **({'part_context':part_context} if part_context else {}), "overview_guard": overview_guard, "history": history, "prompt_overhead": overhead, "excluded_sources": excluded, "state": "pending",
+                "target": target, **({'answer_output_budget': answer_output_budget} if answer_output_budget is not None else {}), **planned, '_rerank_state': rerank_state, "profile": profile, **({'part_context':part_context} if part_context else {}), "overview_guard": overview_guard, "history": history, "prompt_overhead": overhead, "excluded_sources": excluded, "state": "pending",
                 "expires_monotonic": time.monotonic() + 300,
                 "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()}
         if _pause_after is not None:
-            plan['drilldown_needed'] = get('retrieve')(None, plan, operation='gap_needed')
+            plan['drilldown_needed'] = get('retrieve')(None,
+                {**plan, 'policy_versions': collected.get('policy_versions') or versions_for_turn('project.answer')},
+                operation='gap_needed', **({'semantic_anchors': options['semantic_anchors']}
+                    if 'semantic_anchors' in options else {}))
             plan['_drilldown'] = {'selection': selection, 'collected': collected, 'scene': scene,
                                   'retrieval_question': retrieval_question}
         return plan
@@ -935,7 +1181,8 @@ class WorkspaceQuery:
 
     def original_snapshot(self, scope, entry, authority):
         from .original_sources import resolve, original, document_roots
-        with self.records.begin() as reader:
+        from core.storage_provider.sqlite_uow import begin_read
+        with begin_read(self.records) as reader:
             if entry["kind"] == "source":
                 kind,identity = resolve(reader,scope,entry["id"],kind="source")
                 roots = ((kind,identity,original(reader,scope,kind,identity).revision),)
@@ -962,6 +1209,8 @@ class WorkspaceQuery:
             code = ("private_project_remote_blocked" if is_private_project(self.records, plan["project_id"])
                     else "remote_disabled")
             raise ModelConfigurationError(code)
+        if plan.get('policy_versions', {}).get('compose') in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} and self._answer_output_budget(plan['target']) != plan.get('answer_output_budget'):
+            raise ValueError('grounded_output_budget_changed')
         if self.ask_target() != plan["target"]:
             raise ModelConfigurationError("ask_model_target_changed")
         if plan.get("profile") is not None:
@@ -1123,10 +1372,77 @@ class WorkspaceQuery:
                 messages.insert(1 if plan.get('profile', {}).get('text') else 0,
                     {'role':'user', 'content':plan['part_context']['text']})
         invocation_key = continuation['invocation_key'] if continuation else 'answer'
+        compose_version = plan.get('policy_versions', {}).get('compose')
+        review_required = compose_version in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}
+        response_model = answer_response_model(plan.get('policy_versions', {}).get('compose'))
         if continuation:
+            # 续答恢复同轮实际冻结的合同，不把旧两字段输出升级为新合同。
+            active_request, turn_store, _, _ = ACTIVE_ANSWER.get()
+            frozen_input = turn_store.get_immutable_payload(active_request['turn_id'], 'answer-model-input-answer')
+            if frozen_input is None or not isinstance(frozen_input[1].get('response_schema'), dict):
+                raise ValueError('answer_response_schema_unavailable')
+            response_model = answer_response_model(None, frozen_schema=frozen_input[1].get('response_schema'))
             messages = get('retry')({'kind': 'continue_messages', 'messages': continuation['messages'],
                 'partial': continuation['partial']})
+            if review_required:
+                if continuation['partial'] or response_model is not (FocusedReferencedFactsOutput if compose_version in {'@27', '@28', '@29', '@30'} else FirstReferencedFactsOutput if compose_version == '@26' else FirstFactsOutput if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else EvidencePartitionOutput if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} else SourceQuoteExtraction if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} else AskOutput):
+                    raise ValueError('answer_review_continuation_unavailable')
+                # 新合同没有公开草稿段落；恢复同轮键可复用已完成草稿及审核，不另发草稿调用。
+                messages, invocation_key, continuation = frozen_input[1]['messages'], 'answer', None
+        evidence_first = response_model is EvidenceFirstAskOutput
+        rejected_usage = None
+        review_started, review_usage = False, None
+        context_messages = messages
+        partition_catalog, partition_tokens = None, None
         try:
+            if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+                if continuation is None:
+                    messages = build_partition_messages(chosen, question, history=plan.get('history', ''),
+                        profile=plan.get('profile', {}), part_context=plan.get('part_context'), compose_version=compose_version)
+                context_messages = messages
+                partition_catalog = build_evidence_catalog(chosen)
+                partition_tokens = partition_output_tokens(partition_catalog)
+            if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+                from .kernel.answer_continuations import PLAN_KIND, save_plan
+                active_request, turn_store, _, _ = ACTIVE_ANSWER.get()
+                if turn_store.get_immutable_payload(active_request['turn_id'], PLAN_KIND) is None:
+                    frozen_request = turn_store.get_request(active_request['turn_id'])
+                    if (not isinstance(frozen_request, dict)
+                            or frozen_request.get('turn_id') != active_request['turn_id']
+                            or plan.get('policy_versions') != frozen_request.get('policy_versions')
+                            or plan.get('scope') != WorkScope('local-user', project_id)):
+                        raise ValueError('answer_plan_freeze_binding_changed')
+                    # 普通问答和提醒没有线程历史；非空历史必须由工作台原入口冻结其真实证明。
+                    if (plan.get('history', '') != '' or plan.get('history_count', 0) != 0
+                            or plan.get('history_guard') is not None):
+                        raise ValueError('answer_history_freeze_unavailable')
+                    save_plan(self, active_request['turn_id'], plan, {'text': '', 'turns': []},
+                        request=active_request, store=turn_store,
+                        runtime=self.answer_turns.application.state.ai_runtime)
+            review_budget = get('compose')(None, operation='review_budget') if review_required else None
+            if compose_version in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+                review_budget = plan.get('budget')
+                if type(review_budget) is not int or review_budget <= 0:
+                    raise ValueError('answer_review_budget_unavailable')
+                if review_input_tokens(messages, response_model=response_model) > review_budget:
+                    raise ValueError('answer_draft_budget_exceeded')
+            if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+                output_limit = (grounded_output_limit(plan, review_input_tokens(messages, response_model)) if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}
+                    else 512 if plan['target']['execution_location'] == 'local' else 7000)
+                required_output = (grounded_output_minimum(partition_catalog, compose_version=compose_version) if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} else partition_tokens)
+                if compose_version in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+                    # 旧首全集或26稀疏首外壳各按真实合同准入，事实容量仍须首后重核。
+                    required_output = max(required_output, first_facts_output_minimum(partition_catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else partition_tokens)
+                if required_output > output_limit:
+                    raise ValueError('evidence_partition_output_budget_exceeded')
+                # 首wire前核真实Schema与最小外壳；空facts只是预估，首后重核完整原件，不换资料。
+                worst_partition = {'selected_ids': [unit['id'] for unit in partition_catalog['units']],
+                    'irrelevant_ids': [], 'uncertain_ids': []}
+                worst_review = build_partition_messages(chosen, question, history=plan.get('history', ''),
+                    profile=plan.get('profile', {}), part_context=plan.get('part_context'), compose_version=compose_version,
+                    **({'first_output': first_fact_empty(compose_version, partition_catalog)} if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else {'partition': worst_partition}))
+                if review_input_tokens(worst_review, response_model=final_response_model(compose_version, question)) + 3 > review_budget:
+                    raise ValueError('answer_review_budget_exceeded')
             dispatched_at = time.perf_counter()
 
             def generate():
@@ -1139,24 +1455,41 @@ class WorkspaceQuery:
 
                 def measured_delta(text):
                     nonlocal first_seen
-                    if streaming and text and not first_seen:
+                    if streaming and text and not first_seen and not review_required:
                         first_seen = True
                         _record_elapsed("first_token", started)
-                    if on_delta is not None:
+                    # 新合同验收前缓冲公开输出，避免无效引文伴随的答案先到达界面。
+                    if on_delta is not None and not evidence_first and not review_required:
                         on_delta(text)
 
                 try:
-                    return generate_answer(self.models, messages, response_model=AskOutput,
-                        max_tokens=512 if plan["target"]["execution_location"] == "local" else 7000,
+                    return generate_answer(self.models, messages, response_model=response_model,
+                        max_tokens=(output_limit if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else partition_tokens if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} else min(get('compose')(None, operation='answer_contract')['draft_max_tokens'],
+                            512 if plan["target"]["execution_location"] == "local" else 7000)
+                            if compose_version in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} else 512 if plan["target"]["execution_location"] == "local" else 7000),
                         validate_current=lambda: self.validate_ask_plan(plan),
-                        on_delta=measured_delta if on_delta is not None else None, invocation_key=invocation_key,
+                        on_delta=measured_delta if on_delta is not None and compose_version not in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} else None, invocation_key=invocation_key,
                         **({'on_retry': on_retry} if on_retry is not None else {}))
                 finally:
                     _record_elapsed("generation", started)
 
             output, meta = await run_in_threadpool(generate)
+            rejected_usage = meta.get('usage', {}) if evidence_first or review_required else None
             self.validate_ask_plan(plan)
-            answer, citations = output.answer, output.citations
+            if evidence_first:
+                output = accept_evidence_structure(output, chosen)
+            if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+                if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+                    if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+                        validate_first_facts(output, partition_catalog, chosen=chosen, question=question, compose_version=compose_version)
+                    else:
+                        validate_partition(output, partition_catalog)
+                else:
+                    verified_quote_bundle(output, chosen)
+                extracted_output = output.model_dump()
+                answer, citations = 'internal extraction', []
+            else:
+                answer, citations = output.answer, output.citations
             if continuation:
                 answer = continuation['partial'] + answer
                 if isinstance(citations, list):
@@ -1168,11 +1501,77 @@ class WorkspaceQuery:
             if (not isinstance(answer, str) or not answer.strip() or not isinstance(citations, list)
                     or any(type(number) is not int or number < 1 or number > len(answer_sources) for number in citations)):
                 raise ValueError("invalid_answer")
+            if review_required:
+                reviewed = (build_partition_messages(chosen, question, history=plan.get('history', ''),
+                    profile=plan.get('profile', {}), part_context=plan.get('part_context'), compose_version=compose_version,
+                    **({'first_output': output.model_dump()} if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else {'partition': output.model_dump()})) if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} else
+                    quote_answer_messages(messages, output.model_dump(), chosen, compose_version=compose_version, question=question) if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} else
+                    review_messages(messages, output.model_dump(), get('compose')(None, operation='review_instruction')))
+                final_model = final_response_model(compose_version, question)
+                if review_input_tokens(reviewed, response_model=final_model) > review_budget:
+                    raise ValueError('answer_review_budget_exceeded')
+                review_started = True
+                final_output_limit = (grounded_output_limit(plan, review_input_tokens(reviewed, final_model))
+                    if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} else None)
+                if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} and grounded_output_minimum(partition_catalog, compose_version=compose_version) > final_output_limit:
+                    raise ValueError('grounded_output_budget_exceeded')
+                def review():
+                    return generate_answer(self.models, reviewed, response_model=final_model,
+                        max_tokens=(final_output_limit if final_model in (GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, ReviewedScopeAnswerOutput, ReviewedReferencedScopeOutput, FocusedReviewedScopeOutput) else partition_tokens if final_model is EvidencePartitionOutput else
+                            512 if plan['target']['execution_location'] == 'local' else 7000),
+                        validate_current=lambda: self.validate_ask_plan(plan), invocation_key=REVIEW_KEY,
+                        **({'on_retry': on_retry} if on_retry is not None else {}))
+                output, reviewed_meta = await run_in_threadpool(review)
+                review_usage = reviewed_meta.get('usage', {})
+                from .v2.followup import sum_usage
+                rejected_usage = sum_usage(rejected_usage, review_usage)
+                self.validate_ask_plan(plan)
+                if final_model in (GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, ReviewedScopeAnswerOutput, ReviewedReferencedScopeOutput, FocusedReviewedScopeOutput):
+                    if final_model in (ReviewedScopeAnswerOutput, ReviewedReferencedScopeOutput, FocusedReviewedScopeOutput):
+                        output = reviewed_scope_answer(output, partition_catalog, extracted_output, chosen=chosen, question=question, compose_version=compose_version)
+                    elif final_model is GroundedScopeAnswerOutput:
+                        output = grounded_scope_answer(output, partition_catalog, extracted_output, chosen=chosen)
+                    elif final_model is GroundedUsageAnswerOutput:
+                        output = grounded_usage_answer(output, partition_catalog, extracted_output, chosen=chosen)
+                    output = render_grounded_answer(output, partition_catalog, first_fact_partition(extracted_output, partition_catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else extracted_output,
+                        max_output_tokens=final_output_limit, chosen=chosen, **get('compose')(None,
+                            operation='grounded_render', question=question))
+                elif final_model is EvidencePartitionOutput:
+                    output = render_partition(output, partition_catalog,
+                        **get('compose')(None, question, operation='render_limits',
+                            execution_location=plan['target']['execution_location']))
+                elif final_model is not AskOutput:
+                    output = render_coverage(output, extracted_output, chosen,
+                        **get('compose')(None, question, operation='render_limits',
+                            execution_location=plan['target']['execution_location']))
+                answer, citations = output.answer, output.citations
+                if (not isinstance(answer, str) or not answer.strip() or not isinstance(citations, list)
+                        or any(type(number) is not int or not 1 <= number <= len(answer_sources) for number in citations)):
+                    raise ValueError('invalid_review_answer')
+                active_request, turn_store, _, _ = ACTIVE_ANSWER.get()
+                frozen_request = turn_store.get_request(active_request['turn_id'])
+                if not isinstance(frozen_request, dict) or frozen_request.get('turn_id') != active_request['turn_id']:
+                    raise ValueError('answer_review_turn_binding_changed')
+                frozen = [turn_store.get_immutable_payload(active_request['turn_id'], kind) for kind in (
+                    'answer-model-input-answer', 'answer-model-result-answer',
+                    'answer-model-input-' + REVIEW_KEY, 'answer-model-result-' + REVIEW_KEY)]
+                public_proof = {'answer': answer.strip(), 'sources': [{'number': number} for number in dict.fromkeys(citations)]}
+                selected = select_answer_input(frozen_request, public_proof,
+                    *(payload[1] if payload else None for payload in frozen),
+                    capsule=(turn_store.get_immutable_payload(active_request['turn_id'], 'answer-continuation-plan-v1') or (None, None))[1])
+                if frozen[-2] is None or selected is not frozen[-2][1]:
+                    raise ValueError('answer_review_final_binding_changed')
+                messages, meta = reviewed, {**reviewed_meta, 'usage': rejected_usage}
+            if (evidence_first or review_required) and on_delta is not None:
+                if review_required:
+                    _record_elapsed('first_token', dispatched_at)
+                on_delta(output.answer.strip())
             result = {"answer": answer.strip(), "sources": [answer_sources[number - 1]
                       for number in dict.fromkeys(citations)], "model_used": True,
                       "model_usage": meta.get("usage", {}), "excluded_sources": plan["excluded_sources"],
                       "context": _ask_context(chosen, source_texts, messages, meta.get("context_budget"),
-                          plan.get("history", ""), plan.get("history_count", 0), plan.get("profile"), plan.get('part_context'))}
+                          plan.get("history", ""), plan.get("history_count", 0), plan.get("profile"), plan.get('part_context'),
+                          review_base=context_messages if review_required else None)}
             if any(candidate.get('supplemented') for candidate in chosen) and ACTIVE_ANSWER.get() is not None:
                 result['context']['feedback'] = {'turn_id': ACTIVE_ANSWER.get()[0]['turn_id'],
                                                  'project_id': project_id}
@@ -1183,22 +1582,34 @@ class WorkspaceQuery:
                 plan["chosen"] = []  # Idempotent replay needs only the bounded public result.
             return result
         except ModelInterrupted as interrupted:
-            self.validate_ask_plan(plan)
-            observation = answer_observation(invocation_key)
-            from .v2.followup import sum_usage
-            usage = sum_usage(*observation['observations'])
-            if continuation:
-                usage = sum_usage(continuation['usage'], usage)
-            if not observation['complete']:
-                usage['observed_only'] = True
-            self.mark_ask_receipt(preview_id, 'failed', usage=usage)
-            with self.ask_preview_lock:
-                plan['state'] = 'failed'
-            return {'answer': None, 'partial': (continuation['partial'] if continuation else '') + interrupted.partial,
-                'interruption': interrupted.interruption, 'sources': [],
-                'model_used': True, 'model_usage': usage, 'excluded_sources': plan['excluded_sources'],
-                'context': _ask_context(chosen, source_texts, messages, None,
-                    plan.get('history', ''), plan.get('history_count', 0), plan.get('profile'))}
+            if review_required:
+                try:
+                    self.validate_ask_plan(plan)
+                    error = HTTPException(502, 'answer_generation_failed')
+                except RecognitionError:
+                    error = HTTPException(409, 'source_changed_retry')
+                except ModelConfigurationError as failure:
+                    code = str(failure)
+                    error = (HTTPException(409, code) if code in {
+                        'ask_model_target_changed', 'remote_disabled', 'private_project_remote_blocked'
+                    } else HTTPException(502, 'answer_generation_failed'))
+            else:
+                self.validate_ask_plan(plan)
+                observation = answer_observation(invocation_key)
+                from .v2.followup import sum_usage
+                usage = sum_usage(*observation['observations'])
+                if continuation:
+                    usage = sum_usage(continuation['usage'], usage)
+                if not observation['complete']:
+                    usage['observed_only'] = True
+                self.mark_ask_receipt(preview_id, 'failed', usage=usage)
+                with self.ask_preview_lock:
+                    plan['state'] = 'failed'
+                return {'answer': None, 'partial': (continuation['partial'] if continuation else '') + ('' if evidence_first else interrupted.partial),
+                    'interruption': interrupted.interruption, 'sources': [],
+                    'model_used': True, 'model_usage': usage, 'excluded_sources': plan['excluded_sources'],
+                    'context': _ask_context(chosen, source_texts, messages, None,
+                        plan.get('history', ''), plan.get('history_count', 0), plan.get('profile'))}
         except RecognitionError:
             error = HTTPException(409, "source_changed_retry")
         except ModelConfigurationError as failure:
@@ -1214,7 +1625,22 @@ class WorkspaceQuery:
         except Exception:
             error = HTTPException(502, "answer_generation_failed")
         try:
-            self.mark_ask_receipt(preview_id, "failed")
+            if review_required and review_started and review_usage is None:
+                from .v2.followup import sum_usage
+                observation = answer_observation(REVIEW_KEY)
+                rejected_usage = sum_usage(rejected_usage, *observation['observations'])
+                if not observation['complete']:
+                    rejected_usage['observed_only'] = True
+            elif (evidence_first or review_required) and rejected_usage is None:
+                # Schema 解析或模型内部复验可能在返回 metadata 前失败，仍保留已观察到的用量。
+                observation = answer_observation(invocation_key)
+                from .v2.followup import sum_usage
+                rejected_usage = sum_usage(*observation['observations'])
+                if continuation:
+                    rejected_usage = sum_usage(continuation['usage'], rejected_usage)
+                if not observation['complete']:
+                    rejected_usage['observed_only'] = True
+            self.mark_ask_receipt(preview_id, "failed", usage=rejected_usage)
         finally:
             with self.ask_preview_lock:
                 plan["state"] = "failed"

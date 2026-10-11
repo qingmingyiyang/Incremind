@@ -169,6 +169,7 @@ from backend.security.ai_tool_execution_boundary import (
 )
 from backend.security.turn_frozen_authorization import TurnFrozenAuthorizationAuthority
 from .policy_runtime import ProductPolicyRuntime
+from .answer_contract import AnswerContractRegistry
 from core.ai_kernel import (
     AgentProfileRegistry,
     CapabilityDefinition,
@@ -1328,7 +1329,7 @@ def build_ai_runtime(container: object, *, application: object | None = None) ->
         ) if hook_host is not None else None
     runtime = ProductPolicyRuntime(
         planner=planner,
-        registry=dispatch_registry,
+        registry=AnswerContractRegistry(dispatch_registry),
         events=session_store,
         payloads=session_store,
         state=session_store,

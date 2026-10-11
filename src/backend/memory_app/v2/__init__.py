@@ -108,7 +108,7 @@ def install_v2_routes(application, *, runtime_root, records, models, documents, 
     daily_jobs.register('embedding_cache', CacheMaintenance(workspace.query).run)
     from .embedding_index import EmbeddingIndex
     application.state.memory_embedding_index = EmbeddingIndex(workspace.query)
-    daily_jobs.register('local_embedding_index', application.state.memory_embedding_index.run)
+    daily_jobs.register('local_embedding_index', application.state.memory_embedding_index.run_scoped)
     daily_jobs.register('insight_links', InsightLinks(records, service, models).run)
     daily_jobs.register('consolidation', consolidation.run)
     from .nudges import NudgeService, install_nudge_routes

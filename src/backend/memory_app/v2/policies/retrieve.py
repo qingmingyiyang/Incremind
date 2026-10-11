@@ -81,3 +81,36 @@ def v4(entrypoint, /, *args, **kwargs):
 
 
 register('retrieve', '@4')(v4)
+
+
+def v5(entrypoint, /, *args, **kwargs):
+    """原问题的需求与现有证据共同决定缺口，不把词覆盖当充分证明。"""
+    operation = kwargs.get('operation')
+    if operation == 'gap_needed':
+        from . import get
+        plan, = args
+        policy = get('ladder', version=plan['policy_versions']['ladder'])
+        if not callable(getattr(policy, 'demand', None)) or not callable(getattr(policy, 'progress', None)):
+            raise ValueError('gap_demand_policy_required')
+        demand = policy.demand(plan['question'], semantic_anchors=kwargs.get('semantic_anchors', ()))
+        progress = policy.progress(demand, plan['chosen'])
+        # 开放列举没有预先已知的完整项目数；有限事实仍允许启发式充分即停。
+        return demand['mode'] == 'open' or not progress['heuristic_sufficient']
+    if operation == 'gap_messages':
+        question, materials = args
+        return [
+            {'role': 'system', 'content':
+             '对照原问题的各个要求检查已选材料，找出尚缺的事实、比较对象、日期或限定条件。'
+             '列举问题还要检查可能遗漏的不同事项，不因为已有几个例子就认为完整。'
+             '最多生成3条针对具体缺口的短问句，每条不超过200字。'
+             '不回答、不改写已覆盖的内容。只返回JSON {"queries":["问句"]}。'},
+            {'role': 'user', 'content': '原问题：' + question + '\n已选材料：\n' + '\n\n'.join(materials)},
+        ]
+    return v4(entrypoint, *args, **kwargs)
+
+
+# 调用方按策略能力选择暂停/续查路径，不枚举某个版本字符串。
+v4.drilldown = True
+v5.drilldown = True
+v5.demand_based = True
+register('retrieve', '@5')(v5)

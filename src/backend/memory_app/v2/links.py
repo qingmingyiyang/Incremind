@@ -444,7 +444,8 @@ class InsightLinks:
         return self.propose(project, recognition_id, target.object_id,
             kind, candidate.payload['content'], expected_revisions={target.object_id: wanted['revision']})
 
-    def discover(self, project, identity):
+    def discover(self, project, identity, *, later=None):
+        """Rebuild the anchor's related edges; `later` defers the model suggestion call."""
         if self.maintenance_guard:
             self.maintenance_guard(self.records)
         anchor = self.eligible(project, identity)
@@ -482,7 +483,11 @@ class InsightLinks:
                     expected_revision=old.revision if old else 0,
                 )
             tx.commit()
-        self._suggest(project, anchor, [r for r, _ in ranked[:3]])
+        others = [r for r, _ in ranked[:3]]
+        if later is None:
+            self._suggest(project, anchor, others)
+        else:
+            later(self._suggest, project, anchor, others)
         return self.list(project, identity)
 
     def _suggest(self, project, anchor, others):

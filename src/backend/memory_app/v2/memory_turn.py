@@ -10,6 +10,6 @@ class MemoryTurn(KernelMemoryTurn):
             validate_request=validate_frozen_inputs, remote_allowed=egress_allowed, **kwargs)
 
 
-def embedding_request(records, models, project, materials, key, validate, transport, request):
+def embedding_request(records, models, project, materials, key, validate, transport, request, *, purpose='embedding'):
     return kernel_embedding_request(records, models, project, materials, key, validate,
-        transport, request, turn_factory=MemoryTurn)
+        transport, request, turn_factory=MemoryTurn, purpose=purpose)

@@ -1,5 +1,6 @@
 """Scoped candidate aliases and the common Insight read model."""
 from backend.recognition import WorkScope
+from core.storage_provider.sqlite_uow import begin_read
 from ..source_egress import recognition_service
 
 from .projects import scene_of
@@ -12,7 +13,7 @@ def source_experiences(reader, scope, experience_ids, recognition_ids=(), *,
         experience_revisions=_UNFROZEN, recognition_revisions=_UNFROZEN):
     """Flatten the existing same-scope evidence chain for an explicit copy."""
     if hasattr(reader, '_connect'):
-        with reader.begin() as tx:
+        with begin_read(reader) as tx:
             return source_experiences(tx, scope, experience_ids, recognition_ids,
                 experience_revisions=experience_revisions, recognition_revisions=recognition_revisions)
     service = recognition_service(reader)

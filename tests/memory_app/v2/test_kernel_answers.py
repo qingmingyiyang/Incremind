@@ -2,10 +2,12 @@ from tests.memory_app.v2.test_workbench_ask import env as _env_fixture, publish,
 from core.ai_kernel.sqlite_store import SQLiteAITurnStore
 import asyncio
 import json
+from backend.memory_app.v2.policies import override
 
 env = _env_fixture
 
 
+@override(compose='@13', ladder='@5', retrieve='@3', rerank='@1')
 def test_answer_uses_real_kernel_and_replays_the_same_completed_request(env):
     publish(env)
     response = env.http.post("/api/v2/workbench/turns", headers={"Idempotency-Key": "answer-once"},
@@ -30,6 +32,7 @@ def test_answer_uses_real_kernel_and_replays_the_same_completed_request(env):
     assert env.model.calls == 1
 
 
+@override(compose='@13', ladder='@5', retrieve='@3', rerank='@1')
 def test_followup_aux_and_answer_share_one_kernel_turn(env):
     publish(env)
     first = ask(env).json()
@@ -51,6 +54,7 @@ def test_followup_aux_and_answer_share_one_kernel_turn(env):
     assert store.get_immutable_payload(identity, "answer-model-result-answer") is not None
 
 
+@override(compose='@13', ladder='@5', retrieve='@3', rerank='@1')
 def test_completed_kernel_result_replays_after_configuration_changes(env):
     publish(env)
     response = ask(env)
@@ -74,6 +78,7 @@ def test_completed_kernel_result_replays_after_configuration_changes(env):
     assert env.model.calls == 1
 
 
+@override(compose='@13', ladder='@5', retrieve='@3', rerank='@1')
 def test_answer_local_dispatch_latency(env):
     import time
     publish(env)
@@ -91,6 +96,7 @@ def test_answer_local_dispatch_latency(env):
 
 
 
+@override(compose='@13', ladder='@5', retrieve='@3', rerank='@1')
 def test_frozen_inputs_are_revalidated_at_each_answer_wire(env, monkeypatch):
     from backend.memory_app.v2 import turn_requests
     publish(env)

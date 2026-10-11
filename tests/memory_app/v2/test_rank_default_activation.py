@@ -1,4 +1,4 @@
-"""默认时效版本保留原事实，并在真实查询和问答历史中冻结过时标记。"""
+"""默认语义召回版本保留时效事实，并在真实问答历史中冻结过时标记。"""
 from copy import deepcopy
 
 from backend.memory_app.v2.policies import ACTIVE, get, override
@@ -9,8 +9,10 @@ from tests.memory_app.v2.test_workbench_ask import env, ask
 
 
 def test_default_rank_selects_only_the_new_freshness_version():
-    assert ACTIVE == {**OLD_ACTIVE, 'rank':'@2', 'search':'@1'}
-    assert get('rank') is get('rank', version='@2')
+    # 保留完整默认表核验，同时补齐旧搜索测试快照之后已独立启用的版本。
+    assert ACTIVE == {**OLD_ACTIVE, 'rank':'@3', 'search':'@1', 'place':'@2', 'extract':'@5',
+                      'vector':'@1', 'ladder':'@2', 'retry':'@1', 'continuation':'@2', 'style':'@1'}
+    assert get('rank') is get('rank', version='@3')
     unknown = RankInput(3, .7)
     assert get('rank')(unknown) == get('rank', version='@1')(unknown) == (3 + 1) * .7
 
@@ -27,7 +29,7 @@ def test_default_real_query_applies_one_half_without_rewriting_the_recognition(e
     assert new['score'] == old['score'] * .5
     assert new['stale'] is True and new['title'].startswith('过时')
     assert new['excerpt'] == old['excerpt'] and new['windows'] == old['windows']
-    assert after['policy_versions']['rank'] == '@2'
+    assert after['policy_versions']['rank'] == '@3'
     assert env.records.read('recognitions', insight.id) == original
     assert env.model.calls == 0
 
@@ -51,7 +53,7 @@ def test_default_real_ask_freezes_stale_citation_and_history_does_not_recompute_
     assert citation['locator']['windows'] == [{'start':0, 'end':len(insight.content)}]
     assert env.records.read('recognitions', insight.id) == original
     request = env.http.app.state.ai_turn_store.get_request(saved['turn']['id'])
-    assert request['policy_versions']['rank'] == '@2' and request['policy_versions']['search'] == '@1'
+    assert request['policy_versions']['rank'] == '@3' and request['policy_versions']['search'] == '@1'
     before_calls, frozen = env.model.calls, deepcopy(saved['turn'])
     monkeypatch.setattr('backend.memory_app.v2.insight_validity.now', lambda:'2024-02-01T00:00:00+08:00')
     with override(rank='@1'):

@@ -2,6 +2,7 @@ import pytest
 
 from backend.memory_app.v2.budget import evidence_tokens, input_tokens, trim_candidate
 from backend.memory_app.v2.ladder import plan_ladder
+from backend.memory_app.v2.policies import override
 from core.search_and_recall.evidence_windows import EvidenceWindow
 from tests.memory_app.v2.test_ladder import env as _env_fixture, document
 from tests.memory_app.v2.test_workbench_ask import env as _ask_env_fixture, add_document, ask, publish
@@ -27,12 +28,14 @@ def test_prompt_reserve_skips_large_then_admits_smaller_candidate():
     assert sum(row["skipped_budget"] for row in plan["trace"]) == 1
 
 
-def test_layer_caps_replace_global_eight_item_limit():
+@pytest.mark.parametrize('version,total', [('@1', 9), ('@2', 11)])
+def test_layer_caps_replace_global_eight_item_limit(version, total):
     rows = [candidate(f"{layer}-{i}", "alpha " + chr(65+4*level+i)*2, layer=layer) for level, layer in enumerate(["L3", "L2", "L1", "L0"]) for i in range(4)]
     rows += [candidate(f"persona-{i}", "alpha " + chr(85+i)*2, persona=True) for i in range(4)]
-    result = plan_ladder(rows, "alpha beta gamma")
-    assert len(result["chosen"]) == 9
-    assert sum(row["selected"] for row in result["trace"]) == 9
+    with override(ladder=version):
+        result = plan_ladder(rows, "alpha beta gamma")
+    assert len(result["chosen"]) == total
+    assert sum(row["selected"] for row in result["trace"]) == total
     assert evidence_tokens(result["chosen"]) <= 3200
 
 
