@@ -483,7 +483,8 @@ class EffectLog:
         self._schema_lock = threading.Lock()
         self._ensure_schema()
 
-    @reusable_connection(row_factory=sqlite3.Row, isolation_level=None, timeout_ms=30000)
+    @reusable_connection(row_factory=sqlite3.Row, isolation_level=None, timeout_ms=30000,
+                         close_unscoped_context=True)
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database, timeout=30, isolation_level=None, check_same_thread=False)
         observe_connection(connection)

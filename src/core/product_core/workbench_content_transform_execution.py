@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import closing
+
 import json
 import sqlite3
 from collections.abc import Callable, Mapping
@@ -51,7 +53,7 @@ class WorkbenchContentTransformEffectHandler:
         return self.handle(effect)
 
     def handle(self, effect: Effect) -> EffectReceipt:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             job = _read_job(connection, effect)
             receipt = _validated_receipt(connection, effect, job, self.verify_output)
@@ -78,7 +80,7 @@ class WorkbenchContentTransformEffectHandler:
         except EffectHandlerAbandoned:
             raise
         except Exception:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 connection.execute("BEGIN IMMEDIATE")
                 failed_job = _read_job(connection, effect)
                 failure = _validated_failure(connection, effect, failed_job)
@@ -104,7 +106,7 @@ class WorkbenchContentTransformEffectHandler:
         if self.after_domain_write is not None:
             self.after_domain_write()
 
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             job = _read_job(connection, effect)
             receipt = _validated_receipt(connection, effect, job, self.verify_output)
@@ -149,7 +151,7 @@ class WorkbenchContentTransformEffectProbe:
 
     def probe(self, effect: Effect) -> tuple[EffectState, str | None]:
         try:
-            with sqlite3.connect(self.database) as connection:
+            with closing(sqlite3.connect(self.database)) as connection, connection:
                 connection.row_factory = sqlite3.Row
                 job = _read_job(connection, effect)
                 receipt = _validated_receipt(connection, effect, job, self.verify_output)
@@ -169,7 +171,7 @@ def read_workbench_transform_receipt(database: Path | str, job_id: str) -> dict[
     path = Path(database)
     if not path.exists():
         return None
-    with sqlite3.connect(f"{path.resolve(strict=False).as_uri()}?mode=ro", uri=True) as connection:
+    with closing(sqlite3.connect(f"{path.resolve(strict=False).as_uri()}?mode=ro", uri=True)) as connection, connection:
         row = connection.execute(
             f"SELECT receipt_json FROM {RECEIPT_TABLE} WHERE job_id=?", (job_id,),
         ).fetchone()
@@ -343,7 +345,7 @@ def _failure_job_fact(job: Mapping[str, object], failure: Mapping[str, object]) 
 
 def _ensure_schema(database: Path) -> None:
     database.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         initialize_job_projection_schema(connection)
         connection.execute(
             f"CREATE TABLE IF NOT EXISTS {RECEIPT_TABLE}("

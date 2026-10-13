@@ -8,10 +8,13 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import inspect
+from pathlib import Path
+import stat
 import time
 
 from backend.security.user_context import USER_ACCESS, authorize_user
 from core.storage_provider.connection_scope import capture_connection_scope, connection_scope
+from core.storage_provider.vault_backup_restore import _native_io_path
 
 
 class QuotaError(ValueError):
@@ -93,18 +96,28 @@ class ServerJobScheduler:
 
     def _user(self, user_id):
         user = self.users.get(user_id)
+        if self.users.deletion_pending(user_id):
+            raise QuotaError('user_deletion_in_progress')
         if user['disabled_at'] is not None:
             raise QuotaError('user_disabled')
         return user
 
     def storage_bytes(self, user_id):
-        root = self.users.root_for(user_id)
+        # 与备份和删除预检共用扩展路径，避免长文件被 is_file 静默漏算。
+        root = Path(_native_io_path(self.users.root_for(user_id)))
         total = 0
         for path in root.rglob('*'):
-            if path.is_symlink() or not path.resolve().is_relative_to(root):
-                raise QuotaError('user_storage_invalid')
-            if path.is_file():
-                total += path.stat().st_size
+            try:
+                information = path.lstat()
+                if (stat.S_ISLNK(information.st_mode)
+                        or getattr(information, 'st_file_attributes', 0) & 0x400
+                        or not path.resolve().is_relative_to(root)):
+                    raise QuotaError('user_storage_invalid')
+                if stat.S_ISREG(information.st_mode):
+                    total += information.st_size
+            except FileNotFoundError:
+                # 统计只读取一次元数据，已枚举后消失的文件不计入本次快照。
+                continue
         return total
 
     def check_intake(self, user_id):

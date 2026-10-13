@@ -72,11 +72,19 @@ def install_server_routes(application, *, users, registry, audit, jobs):
         access = USER_ACCESS.get()
         caller = users.get(access.caller.user_id)
         items = users.list_for(access.caller) if users.can(access.caller, action='manage_users') else []
+        current = []
         for row in items:
-            row['device_count'] = sum(item['revoked_at'] is None for item in registry.list_devices(row['user_id']))
-            row['storage_bytes'] = jobs.storage_bytes(row['user_id'])
-            row['job_seconds_today'] = jobs.job_seconds(row['user_id'])
-        return response(200, {'caller': caller, 'target_user_id': access.target_user_id, 'items': items})
+            try:
+                row['deletion_pending'] = users.deletion_pending(row['user_id'])
+                row['device_count'] = sum(item['revoked_at'] is None for item in registry.list_devices(row['user_id']))
+                row['storage_bytes'] = jobs.storage_bytes(row['user_id'])
+                row['job_seconds_today'] = jobs.job_seconds(row['user_id'])
+            except UserError as error:
+                if str(error) == 'user_not_found':
+                    continue
+                raise
+            current.append(row)
+        return response(200, {'caller': caller, 'target_user_id': access.target_user_id, 'items': current})
 
     @router.post('/users')
     async def create_user(request: Request):
@@ -87,6 +95,19 @@ def install_server_routes(application, *, users, registry, audit, jobs):
     async def update_user(user_id: str, request: Request):
         data = await body(request, {'expected_revision', 'disabled', 'storage_limit_mb', 'job_minutes_per_day'}, {'expected_revision'})
         return response(200, users.update(USER_ACCESS.get().caller, user_id, **data))
+
+    @router.delete('/users/{user_id}')
+    async def delete_user(user_id: str, request: Request):
+        from ..server_jobs import retain_until_finished
+        from .server_deletion import ServerUserDeletion
+        data = await body(request, {'expected_revision', 'confirmation'}, {'expected_revision', 'confirmation'})
+        intent = request.scope['state'].get('server_audit_intent')
+        deletion = ServerUserDeletion(users, application.state.server_user_pool, jobs)
+        result, removed = await retain_until_finished(deletion.delete(USER_ACCESS.get().caller, user_id,
+                                         intent_id=intent, control_token=request.scope['state'].get('server_control_token'), **data))
+        if removed:
+            request.scope['state']['server_deleted_audit_intent'] = intent
+        return response(200, result)
 
     @router.post('/users/{user_id}/pair')
     async def pair_user(user_id: str, request: Request):
@@ -133,6 +154,10 @@ def install_server_routes(application, *, users, registry, audit, jobs):
         code = str(error)
         status = {'user_unauthorized': 401, 'user_forbidden': 403, 'user_not_found': 404,
             'user_revision_conflict': 409, 'user_name_conflict': 409,
+            'user_delete_protected': 403, 'user_delete_requires_disabled': 409,
+            'user_delete_busy': 409, 'user_delete_shared_owner': 409,
+            'user_delete_related_data': 409, 'user_delete_path_invalid': 409,
+            'user_delete_incomplete': 409, 'user_deletion_in_progress': 409,
             'attribution_not_found': 404, 'attribution_revision_conflict': 409}.get(code, 400)
         return response(status, {'detail': code})
     application.add_exception_handler(UserError, user_error)

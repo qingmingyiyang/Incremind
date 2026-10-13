@@ -8,6 +8,7 @@ import uuid
 from dataclasses import asdict, dataclass, replace as dataclass_replace
 from pathlib import Path
 from typing import Mapping
+from core.storage_provider.connection_scope import _Lease
 from .capability_artifact import CapabilityArtifactError, CapabilityArtifactStore
 
 
@@ -633,7 +634,7 @@ class CapabilityPackageLoader:
         connection = sqlite3.connect(self._database_path, timeout=30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        return _Lease(connection, None, None)
 
     def _initialize_schema(self) -> None:
         with self._connect() as connection:

@@ -23,7 +23,7 @@ from .local_vectors import model_directory, unload
 from .server_audit import AdminAudit
 from .server_jobs import ServerJobScheduler, QuotaError, retain_until_finished
 from .v2.devices import DeviceRegistry, install_device_routes
-from .v2.server_users import ServerUsers
+from .v2.server_users import ServerUsers, USERS
 
 HOST_SETTINGS = frozenset('/api/rebuild/settings/' + suffix for suffix in (
     'local-ocr-provider', 'local-asr-provider', 'local-video-provider',
@@ -32,6 +32,7 @@ INTAKE_PATHS = frozenset({'/api/v2/workbench/files', '/api/v2/workbench/share',
     '/api/workspace/v1/items/text', '/api/workspace/v1/items/file', '/api/workspace/v1/items/audio'})
 LOGGER = logging.getLogger(__name__)
 _DOWNLOAD_ROUTE = re.compile(r'/api/(?:asr/faster-whisper/models|rag/models)/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}/download\Z')
+_CONTROL_USER_ROUTE = re.compile(r'/api/v2/server/users/([A-Za-z0-9][A-Za-z0-9._~-]{0,127})(?:/pair)?\Z')
 
 
 def authorize_host_resource(users, access, method, path):
@@ -91,6 +92,10 @@ class _UserDispatcher:
                 access = authorize_user(self.context.users, state.get('device_identity'), target)
                 target = access.target_user_id
                 state['user_access'] = access
+                if (self.context.users.deletion_pending(target)
+                        and not (scope.get('method') == 'DELETE'
+                                 and scope['path'] == '/api/v2/server/users/' + target)):
+                    raise UserError('user_deletion_in_progress')
                 if scope['type'] == 'websocket' and self.context.users.get(target)['disabled_at'] is not None:
                     raise UserError('user_unauthorized')
                 authorize_host_resource(self.context.users, access, scope.get('method'), scope['path'])
@@ -102,7 +107,15 @@ class _UserDispatcher:
                 control = not internal and (scope['path'].startswith('/api/v2/server/')
                     or scope['path'] == '/api/v2/server/users' or scope['path'].startswith('/api/v2/devices'))
                 if control:
-                    return await self._invoke(self.application, self.app, scope, receive, send, access)
+                    targets = {target}
+                    route_user = _CONTROL_USER_ROUTE.fullmatch(scope['path'])
+                    if (route_user is not None and self.context.users.can(access.caller, action='manage_users')
+                            and self.context.users.records.read(USERS, route_user[1]) is not None):
+                        targets.add(route_user[1])
+                    deleting = route_user[1] if route_user is not None and scope.get('method') == 'DELETE' else None
+                    async with self.context.pool.control_lease(targets, deleting_user_id=deleting) as token:
+                        state['server_control_token'] = token
+                        return await self._invoke(self.application, self.app, scope, receive, send, access)
                 load_intent = None
                 if access is not None and access.by == 'admin' and target not in self.context.pool.loaded_user_ids:
                     try:
@@ -119,7 +132,8 @@ class _UserDispatcher:
                     self._outcome(load_intent, load_status)
         except UserError as error:
             code = str(error)
-            status = {'user_unauthorized': 401, 'user_forbidden': 403, 'user_not_found': 404, 'user_unavailable':503}.get(code, 400)
+            status = {'user_unauthorized': 401, 'user_forbidden': 403, 'user_not_found': 404,
+                'user_unavailable': 503, 'user_deletion_in_progress': 409, 'user_delete_busy': 409}.get(code, 400)
         except QuotaError as error:
             code, status = str(error), 429
         if scope['type'] == 'websocket':
@@ -133,6 +147,7 @@ class _UserDispatcher:
         except Exception:
             return await self._audit_unavailable(scope, receive, send)
         status = 500
+        scope.setdefault('state', {})['server_audit_intent'] = intent
         async def observed(message):
             nonlocal status
             if message['type'] == 'http.response.start':
@@ -143,7 +158,10 @@ class _UserDispatcher:
         try:
             await handler(scope, receive, observed)
         finally:
-            self._outcome(intent, status)
+            # 只有此请求的删除事务实际清除了原 intent，才跳过对应末尾回执。
+            removed = scope['state'].get('server_deleted_audit_intent')
+            if not (status == 200 and intent is not None and removed == intent):
+                self._outcome(intent, status)
 
     async def _audit_unavailable(self, scope, receive, send):
         if scope['type'] == 'websocket':
@@ -247,13 +265,14 @@ class UserApplicationPool:
         self.idle_seconds = idle_seconds
         self.pending_jobs = pending_jobs
         self._children, self._locks = {}, {}
+        self._controls, self._deleting = {}, {}
         self._closing, self._changed = False, asyncio.Event()
 
     @property
     def loaded_user_ids(self):
         return tuple(self._children)
 
-    def _pending_work(self, app, *, detached_only=False):
+    def _pending_work(self, app, *, detached_only=False, ignore_native=False):
         """Observe actual executors; durable Turn status is never completion."""
         tasks = [] if detached_only else list(getattr(app.state, 'workbench_tasks', ()))
         if not detached_only:
@@ -287,12 +306,16 @@ class UserApplicationPool:
         recovery = getattr(app.state, 'effect_recovery_service', None)
         if recovery is not None and not detached_only:
             observed = observed or (recovery._stop.is_set() and recovery._thread.is_alive())
+        host = getattr(app.state, 'external_execution_host', None)
+        if host is not None and not detached_only and not ignore_native:
+            # 原生租约和失败清理 owner 不能随着已终态 Turn 被当成空闲。
+            observed = observed or bool(host._issued_leases) or any(not owner.closed for owner in host._bootstrap_owners)
         pending = tuple(dict.fromkeys(task for task in tasks if not task.done()))
         return pending, observed
 
-    async def _settle_work(self, app, *, detached_only=False):
+    async def _settle_work(self, app, *, detached_only=False, ignore_native=False):
         while True:
-            tasks, observed = self._pending_work(app, detached_only=detached_only)
+            tasks, observed = self._pending_work(app, detached_only=detached_only, ignore_native=ignore_native)
             if not tasks and not observed:
                 return
             if tasks:
@@ -324,6 +347,8 @@ class UserApplicationPool:
             async with lock:
                 if self._closing:
                     raise ValueError('server_runtime_closed')
+                if self.users.deletion_pending(user_id):
+                    raise UserError('user_deletion_in_progress')
                 child = self._children.get(user_id)
                 retiring = child.retiring if child is not None else None
                 if retiring is None:
@@ -349,6 +374,63 @@ class UserApplicationPool:
             child.active -= 1
             child.touched = self.clock()
             self._changed.set()
+
+    @asynccontextmanager
+    async def control_lease(self, user_ids, *, deleting_user_id=None):
+        """中央请求保留到审计 outcome 结束，同一目标的删除不能抢先清理。"""
+        identities = tuple(sorted(user_ids))
+        token = object()
+        # 准入检查、登记和删除独占标记都在事件循环内连续完成，不持锁等待其它用户。
+        if self._closing:
+            raise UserError('user_unavailable')
+        for user_id in identities:
+            self.users.get(user_id)
+            if user_id in self._deleting:
+                raise UserError('user_delete_busy')
+            if self.users.deletion_pending(user_id) and deleting_user_id != user_id:
+                raise UserError('user_deletion_in_progress')
+        for user_id in identities:
+            self._controls.setdefault(user_id, set()).add(token)
+        try:
+            yield token
+        finally:
+            # 集合只在事件循环内、无 await 的短区间增删；outcome 已完成后再归还。
+            for user_id in identities:
+                controls = self._controls[user_id]
+                controls.remove(token)
+                if not controls:
+                    del self._controls[user_id]
+
+    @asynccontextmanager
+    async def deletion_lease(self, user_id, prepare, *, control_token=None):
+        """在同一准入锁内封闭新租约，再关闭无忙碌任务的原应用。"""
+        lock = self._locks.setdefault(user_id, asyncio.Lock())
+        ownership, claimed = object(), False
+        try:
+            async with lock:
+                if (self._closing or user_id in self._deleting
+                        or (self.pending_jobs is not None and self.pending_jobs(user_id))
+                        or any(token is not control_token for token in self._controls.get(user_id, ()))):
+                    raise UserError('user_delete_busy')
+                child = self._children.get(user_id)
+                if child is not None and (child.active or child.retiring is not None
+                                         or any(self._pending_work(child.application))):
+                    raise UserError('user_delete_busy')
+                self._deleting[user_id] = ownership
+                claimed = True
+                identity = prepare()
+                if inspect.isawaitable(identity):
+                    identity = await identity
+                if child is not None:
+                    child.retiring = asyncio.get_running_loop().create_future()
+            if child is not None:
+                await self._retire(user_id, child)
+            yield identity
+        finally:
+            if claimed:
+                async with lock:
+                    if self._deleting.get(user_id) is ownership:
+                        del self._deleting[user_id]
 
     def start_vector_indexes(self):
         """只通知已存在的用户应用，不为加载权重创建或扫描其它空间。"""
@@ -394,7 +476,13 @@ class UserApplicationPool:
                 # alive. Stop its next pass, then observe real completion before
                 # the lifespan closes clients or the root is recreated.
                 recovery.shutdown(timeout_seconds=0)
-            await self._settle_work(child.application)
+            # 执行任务先结束，再让原 Host 收口残余租约；不能反向等 Host 自己关闭。
+            await self._settle_work(child.application, ignore_native=True)
+            host = getattr(child.application.state, 'external_execution_host', None)
+            if host is not None:
+                await retain_until_finished(asyncio.to_thread(host.close))
+                if host._issued_leases or host._bootstrap_owners:
+                    raise UserError('user_delete_incomplete')
             await child.lifespan.__aexit__(None, None, None)
         except BaseException:
             async with self._locks[user_id]:

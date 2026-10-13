@@ -11,13 +11,15 @@ from backend.security.device_identity import DeviceIdentity
 from backend.security.user_context import UserError, user_action_allowed
 
 USERS = 'server_users'
+DELETIONS = 'server_user_deletions'
 _ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._~-]{0,127}\Z')
 _UNSET = object()
 
 
 def enabled_user(tx, user_id):
     row = tx.read(USERS, user_id)
-    return row if row is not None and row.payload.get('disabled_at') is None else None
+    return row if (row is not None and row.payload.get('disabled_at') is None
+                   and tx.read(DELETIONS, user_id) is None) else None
 
 
 def ensure_install_user(tx, now):
@@ -67,6 +69,9 @@ class ServerUsers:
         if not root.is_relative_to(self.server_root / 'users') or root == self.server_root / 'users':
             raise UserError('user_root_invalid')
         return root
+
+    def deletion_pending(self, user_id):
+        return self.records.read(DELETIONS, user_id) is not None
 
     def _admin(self, tx, actor):
         caller = current_caller(tx, actor)
@@ -136,6 +141,10 @@ class ServerUsers:
             with self.records.begin() as tx:
                 self._admin(tx, actor)
                 row = tx.read(USERS, user_id)
+                if row is None:
+                    raise UserError('user_not_found')
+                if tx.read(DELETIONS, user_id) is not None:
+                    raise UserError('user_deletion_in_progress')
                 payload = dict(row.payload)
                 if disabled is not _UNSET:
                     payload['disabled_at'] = self.clock().astimezone(timezone.utc).isoformat() if disabled else None

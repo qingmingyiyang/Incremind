@@ -90,7 +90,11 @@ class _Lease:
     def close(self):
         if not self.closed:
             self.closed = True
-            self.scope.release(self.key, self.connection)
+            if self.scope is None:
+                # 未绑定 scope 的显式 owner 在 context 退出后直接释放底层句柄。
+                self.connection.close()
+            else:
+                self.scope.release(self.key, self.connection)
 
     def __enter__(self):
         self.connection.__enter__()
@@ -183,15 +187,17 @@ def borrow_read_connection(path, factory):
 
 
 def reusable_connection(factory=None, *, row_factory=None, isolation_level="", timeout_ms=5000,
-                        group='kernel'):
+                        group='kernel', close_unscoped_context=False):
     if factory is None:
         return lambda function: reusable_connection(function, row_factory=row_factory,
-            isolation_level=isolation_level, timeout_ms=timeout_ms, group=group)
+            isolation_level=isolation_level, timeout_ms=timeout_ms, group=group,
+            close_unscoped_context=close_unscoped_context)
     @wraps(factory)
     def connect(store):
         scope = _SCOPE.get()
         if scope is None:
-            return factory(store)
+            connection = factory(store)
+            return _Lease(connection, None, None) if close_unscoped_context else connection
         path = (getattr(store, "_database_path", None) or getattr(store, "_path", None)
                 or store.database)
         lease = scope.acquire(_database_key(path, group), lambda: factory(store))

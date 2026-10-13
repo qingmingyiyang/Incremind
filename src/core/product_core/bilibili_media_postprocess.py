@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import closing
+
 import json
 import sqlite3
 from collections.abc import Callable, Mapping
@@ -145,7 +147,7 @@ class BilibiliPostprocessEffectHandler:
         _ensure_schema(Path(self.database))
 
     def __call__(self, effect: Effect) -> EffectReceipt:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             job = _read_job(connection, effect)
             if _validated_receipt(connection, effect, job, self.verify) is not None:
@@ -159,7 +161,7 @@ class BilibiliPostprocessEffectHandler:
             self.verify(effect, exact_input(job["postprocess_input"]), output)
             checkpoint()
         except Exception:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 connection.execute("BEGIN IMMEDIATE")
                 current = _read_job(connection, effect)
                 if _read_failure(connection, effect, current) is None:
@@ -178,7 +180,7 @@ class BilibiliPostprocessEffectHandler:
                     )
                 connection.commit()
             raise
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             current = _read_job(connection, effect)
             if _validated_receipt(connection, effect, current, self.verify) is None:
@@ -224,7 +226,7 @@ class BilibiliPostprocessEffectProbe:
 
     def __call__(self, effect: Effect) -> tuple[EffectState, str | None]:
         try:
-            with sqlite3.connect(self.database) as connection:
+            with closing(sqlite3.connect(self.database)) as connection, connection:
                 connection.row_factory = sqlite3.Row
                 job = _read_job(connection, effect)
                 receipt = _validated_receipt(connection, effect, job, self.verify)
@@ -341,7 +343,7 @@ def _effect_receipt(effect):
 
 def _ensure_schema(database: Path) -> None:
     database.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         initialize_job_projection_schema(connection)
         connection.execute(
             f"CREATE TABLE IF NOT EXISTS {RECEIPT_TABLE}(operation_id TEXT PRIMARY KEY,job_id TEXT NOT NULL,receipt_ref TEXT NOT NULL UNIQUE,receipt_json TEXT NOT NULL,recorded_at TEXT NOT NULL)"

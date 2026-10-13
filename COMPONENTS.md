@@ -1,5 +1,11 @@
 # 统一组件与公共能力索引
 
+- 用户永久删除（2026-10-14）：`v2.server_deletion.ServerUserDeletion` 复用 `ServerUsers`、`UserApplicationPool` 与 `ServerJobScheduler`；停用保留资料和访问记录，永久删除仅允许已停用普通用户，保护本人和管理员。按目标 ID 确认与所见修订 CAS，先核空闲与关联记录，再关闭原 owner、清除用户根和中央关联记录；开始清理后失败保留已落清理标记并阻止空间重新准入，可按原修订重试，预检拒绝不落标记。路径复验拒绝链接、重解析点及跨挂载边界，Windows 复用原生长路径入口。
+
+- 删除确认（2026-10-14）：前端 `settings/DeleteConfirmation` 共用于账号与作废设备，输入完整名称后显式提交；`usersApi`、`devicesApi` 仅将 HTTP 200、`deleted:true` 且目标 ID 一致视为删除终态。失败重读实际用户状态，删除当前空间后返回自己的管理入口；沿用原设备身份与请求作用域，不以隐藏列表代替服务端清除。
+
+- SQLite 连接收口（2026-10-14）：`connection_scope._Lease` 支持未绑定 scope 的显式 owner，事务 context 退出后关闭底层连接；`reusable_connection(close_unscoped_context=True)` 为 opt-in，其他装饰器默认行为保持。EffectLog 显式启用，CapabilityPackageLoader 保留独立连接并交同一租约关闭；五个相关模块的 SQLite 调用保留原事务 context，并以显式 `close()` 归还连接，避免用户空间清理被遗留句柄阻挡。
+
 - Hy-ASR 转写后校对（2026-10-13）：`v2.transcript_correction.TranscriptCorrection` 复用 `AsrLexiconService`、`OrganizeTurns` 和 `prepare_context`；纯策略 `transcript_correction@1` 提示模型给局部 edits，程序核原词表、原文唯一坐标、字面接近程度、受保护内容与不重叠后确定应用。默认 `organize@1` 上传音频/视频接入，候选材料流程显式跳过。原 `source_text`、ASR 检查点和 Source 快照保持原文；episode/current/publication 三旁路集合冻结词表与实际主/辅助模型绑定。读取从真实 `STEPS.output` 重建并核原请求、修订、attempt/终态回执；这不等于语义正确性证明。长视频通过可选 message_builder/ground_draft/stage_prefix 接线，旧调用保持。统一 formatter 展示校对全文与疑点，两种确认分支在原事务冻结并绑定 Document；旧稿读取不依赖当前词表。模型无效输出保留原转写，漂移拒绝旧结果，已知用量和 unknown_calls 分别保留。定向自动化隔离运输，真实质量见 Q77。
 
 - 转写热词表（2026-10-13）：`core.product_core.asr_lexicon_service.AsrLexiconService` 是设置、实时语音、上传录音/视频与内部 Agent 共用的词表服务；`aggregate_repository_factory.recognition_record_store_resolution` 统一数据库归属。读取和预览不迁移，显式导入按修订号原子合并，保留旧 JSON；支持 TXT/CSV/JSON、UTF-8 与数量/权重校验。`v2.asr_lexicon` 提供 HTTP 入口，前端 `AsrLexicon` 复用设置行、主题 token 和用户请求作用域。本机内置 faster-whisper 依据实际 tokenizer 容量按优先级选完整热词，转写缓存绑定词表修订，回执区分实际采用与截断。Qwen 实时语音使用原生词表；Hy-ASR 尚不支持热词，导入不自动安装模型或切换服务。

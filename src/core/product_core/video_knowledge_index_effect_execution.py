@@ -155,7 +155,7 @@ class VideoKnowledgeIndexEffectExecutionProbe:
 
     def probe(self, effect: Effect) -> tuple[EffectState, str | None]:
         try:
-            with sqlite3.connect(self.database, isolation_level=None) as connection:
+            with closing(sqlite3.connect(self.database, isolation_level=None)) as connection, connection:
                 connection.row_factory = sqlite3.Row
                 connection.execute("BEGIN IMMEDIATE")
                 request = _read_request(connection, effect)
@@ -176,7 +176,7 @@ class VideoKnowledgeIndexEffectExecutionProbe:
                 return EffectState.PLANNED, f"facts:video-knowledge-index/not-completed/{effect.operation_id}"
             if outcome.state == "unknown":
                 return EffectState.UNKNOWN, "error:video-knowledge-index-query-unknown"
-            with sqlite3.connect(self.database, isolation_level=None) as connection:
+            with closing(sqlite3.connect(self.database, isolation_level=None)) as connection, connection:
                 connection.row_factory = sqlite3.Row
                 connection.execute("BEGIN IMMEDIATE")
                 # A competing Probe may have materialized the same exact
@@ -341,7 +341,7 @@ def _validate_result(value: object) -> dict[str, object]:
 
 def _ensure_schema(database: Path) -> None:
     database.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute("PRAGMA foreign_keys=ON")
         for table, ref in ((RESERVATION_TABLE, "reservation"), (RECEIPT_TABLE, "receipt")):
             connection.execute(f"CREATE TABLE IF NOT EXISTS {table}(operation_id TEXT PRIMARY KEY,{ref}_json TEXT NOT NULL,recorded_at INTEGER NOT NULL,FOREIGN KEY(operation_id) REFERENCES effect(operation_id))")

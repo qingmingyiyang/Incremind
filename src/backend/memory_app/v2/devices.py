@@ -163,6 +163,50 @@ class DeviceRegistry:
         except SQLiteUnitOfWorkConflict:
             raise DeviceError('device_revision_conflict') from None
 
+    def delete(self, user_id, device_id, *, expected_revision, confirmation, actor_device_id=None, actor_identity=None):
+        if not isinstance(device_id, str) or not _ID.fullmatch(device_id):
+            raise DeviceError('device_not_found')
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise DeviceError('device_revision_invalid')
+        if confirmation != device_id:
+            raise DeviceError('device_delete_confirmation_invalid')
+        if device_id == actor_device_id:
+            raise DeviceError('device_delete_protected')
+        try:
+            with self.records.begin() as tx:
+                if actor_identity is not None:
+                    from .server_users import current_caller, UserError
+                    from backend.security.user_context import user_action_allowed
+                    try:
+                        caller = current_caller(tx, actor_identity)
+                    except UserError:
+                        raise DeviceError('device_unauthorized') from None
+                    if actor_device_id != actor_identity.device_id:
+                        raise DeviceError('device_unauthorized')
+                    if not user_action_allowed(caller.payload['role'], actor_identity.user_id, user_id, 'pair_device'):
+                        raise DeviceError('device_forbidden')
+                elif actor_device_id != 'desktop':
+                    raise DeviceError('device_unauthorized')
+                row = tx.read(DEVICES, device_id)
+                if row is None or row.payload['user_id'] != user_id:
+                    raise DeviceError('device_not_found')
+                if row.revision != expected_revision:
+                    raise DeviceError('device_revision_conflict')
+                if row.payload['revoked_at'] is None:
+                    raise DeviceError('device_delete_requires_revoked')
+                # 删除凭据及其配对入口，不触碰用户资料和访问历史。
+                for pairing in tx.list(PAIRINGS):
+                    if device_id in (pairing.payload.get('issuer'), pairing.payload.get('device_id')):
+                        tx.delete(PAIRINGS, pairing.object_id, expected_revision=pairing.revision)
+                presence = tx.read(PRESENCE, device_id)
+                if presence is not None:
+                    tx.delete(PRESENCE, device_id, expected_revision=presence.revision)
+                tx.delete(DEVICES, device_id, expected_revision=expected_revision)
+                tx.commit()
+            return {'device_id': device_id, 'deleted': True}
+        except SQLiteUnitOfWorkConflict:
+            raise DeviceError('device_revision_conflict') from None
+
 
 def _response(status, value):
     return JSONResponse(value, status_code=status, headers={'Cache-Control': 'no-store'})
@@ -241,9 +285,18 @@ def install_device_routes(application, *, registry):
         body = await _body(request, {'expected_revision'})
         return _response(200, registry.revoke(user_id, device_id, expected_revision=body['expected_revision']))
 
+    @router.delete('/{device_id}')
+    async def delete_device(device_id: str, request: Request):
+        user_id, actor = _request_owner(request)
+        body = await _body(request, {'expected_revision', 'confirmation'})
+        return _response(200, registry.delete(user_id, device_id, actor_device_id=actor,
+            actor_identity=server_identity(request) if server_mode(request) else None, **body))
+
     async def device_error(_request, error):
         status = {'pairing_unavailable': 401, 'device_unauthorized': 401,
-            'device_not_found': 404, 'device_revision_conflict': 409}.get(str(error), 400)
+            'device_not_found': 404, 'device_revision_conflict': 409,
+            'device_delete_requires_revoked': 409, 'device_delete_protected': 403,
+            'device_forbidden': 403}.get(str(error), 400)
         return _response(status, {'detail': str(error)})
     application.add_exception_handler(DeviceError, device_error)
     application.include_router(router)

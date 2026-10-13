@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
 import { saveDeviceCredential, readUserSpace, selectUserSpace, userStorageKey } from '../../shared/api/deviceTransport';
 import { devicesApi } from './devicesApi';
+import { usersApi } from './usersApi';
 import './Settings.css';
 import { UserSpaceHeader } from '../../shared/ui/UserSpaceHeader';
 
@@ -18,10 +19,12 @@ export function DeviceGate({ children }) {
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [retry, setRetry] = useState(0);
   const gate = useRequestScope('device-bootstrap'), scope = gate.scope;
   const [space,setSpace] = useState(readUserSpace);
+  const [server, setServer] = useState(false), [caller, setCaller] = useState(null);
   useEffect(()=>{
     const changed=()=>{
       history.replaceState(null,'',location.pathname+'#view=workbench&project_id=default');
       setSpace(readUserSpace());
+      window.dispatchEvent(new Event('hashchange'));
     };
     window.addEventListener('chriptmas-user-space',changed);
     return()=>window.removeEventListener('chriptmas-user-space',changed);
@@ -29,12 +32,18 @@ export function DeviceGate({ children }) {
   useEffect(() => {
     if (globalThis.electronAPI?.backendBaseUrl) return;
     const token = gate.issue('probe', scope);
-    devicesApi.list().then(() => { if (gate.isCurrent(token)) setState('ready'); })
+    devicesApi.list().then(value => { if (gate.isCurrent(token)) { setServer(value.mode === 'server'); setState('ready'); } })
       .catch(reason => { if (gate.isCurrent(token)) { setState(reason.status === 401 ? 'pair' : 'error'); setError('读取未完成 · 重试'); } });
     return () => gate.invalidate('probe');
   }, [retry]);
   useEffect(() => {
-    const required = () => { gate.invalidate('probe'); gate.invalidate('exchange'); setState('pair'); setBusy(false); setError(''); };
+    if (state !== 'ready' || !server) return;
+    const token = gate.issue('caller', scope);
+    usersApi.list().then(value => { if (gate.isCurrent(token)) setCaller(value.caller); }).catch(() => {});
+    return () => gate.invalidate('caller');
+  }, [state, server]);
+  useEffect(() => {
+    const required = () => { gate.invalidate('probe'); gate.invalidate('exchange'); gate.invalidate('caller'); setCaller(null); setSpace(null); setState('pair'); setBusy(false); setError(''); };
     window.addEventListener('chriptmas-device-required', required);
     return () => window.removeEventListener('chriptmas-device-required', required);
   }, []);
@@ -44,11 +53,20 @@ export function DeviceGate({ children }) {
     setBusy(true); setError('');
     try {
       const value = await devicesApi.exchange(code.trim(), name.trim());
-      if (gate.isCurrent(token)) { saveDeviceCredential(value); setCode(''); setState('ready'); }
+      if (gate.isCurrent(token)) { saveDeviceCredential(value); setCode(''); setState('checking'); setRetry(old => old + 1); }
     } catch { if (gate.isCurrent(token)) setError('配对未完成 · 重试'); }
     finally { if (gate.isCurrent(token)) setBusy(false); }
   }
-  const headerStart = space ? <button type="button" className="ui-shell-user-space" aria-label={`${space.name} · 返回自己的空间`} title={space.name} onClick={()=>selectUserSpace(null)}>{Array.from(space.name || '·')[0]}</button> : null;
+  function returnToManagement() {
+    selectUserSpace(null);
+    history.replaceState(null, '', location.pathname + '#view=settings&project_id=default&section=devices');
+    window.dispatchEvent(new Event('hashchange'));
+  }
+  const headerStart = server ? <div className="ui-shell-space-context">
+    <span className="ui-shell-space-name" title={`${space?.name || caller?.name || '自己'}的空间`}>{space?.name || caller?.name || '自己'}的空间</span>
+    {space && <button type="button" aria-label={`${space.name} · 返回自己的空间`} onClick={() => selectUserSpace(null)}>返回自己</button>}
+    {(space || caller?.role === 'admin') && <button type="button" aria-label="返回用户管理" onClick={returnToManagement}>用户管理</button>}
+  </div> : null;
   if (state === 'ready') return <UserSpaceHeader.Provider value={headerStart}>
     <Fragment key={userStorageKey('view')}>{children}</Fragment>
   </UserSpaceHeader.Provider>;

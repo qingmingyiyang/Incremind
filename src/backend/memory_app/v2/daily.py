@@ -70,7 +70,12 @@ class DailyJobs:
                 while True:
                     await asyncio.sleep(get('trigger')(TriggerInput(False, self.initial_delay, self.interval),
                         operation='check', check_interval=self.check_interval))
-                    states = await asyncio.to_thread(self.checkpoint)
+                    if self.server_jobs is not None:
+                        from ..server_jobs import retain_until_finished
+                        # 服务器关闭空间前须等检查点线程结束，取消 waiter 不能替代完成。
+                        states = await retain_until_finished(asyncio.to_thread(self.checkpoint))
+                    else:
+                        states = await asyncio.to_thread(self.checkpoint)
                     callback = self.jobs.get('nudges')
                     if callback is not None:
                         try:

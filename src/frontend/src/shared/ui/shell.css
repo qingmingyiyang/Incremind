@@ -53,3 +53,16 @@
 @media(min-width:760px){.ui-shell-header-start+.ui-project-switcher{margin-right:auto}}
 .ui-shell-user-space{width:32px;height:32px;padding:0;border-radius:999px!important;background:var(--sunk)!important;color:var(--ink2)!important;font-size:14px!important}
 .ui-shell-header-status{display:flex;align-items:center;gap:12px;flex-shrink:0}
+
+.ui-shell:has(.ui-shell-space-context){grid-template-rows:96px minmax(0,1fr)}.ui-shell-header:has(.ui-shell-space-context){flex-wrap:wrap;align-content:center;gap:4px 12px}.ui-shell-header-start:has(.ui-shell-space-context){flex-basis:100%;min-width:0;margin:0}.ui-shell-space-context{display:flex;gap:12px;align-items:center;width:100%;min-width:0;min-height:32px;font-size:13px;color:var(--ink2)}.ui-shell-space-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}.ui-shell-space-context button{flex-shrink:0;padding:4px 8px;border:1px solid var(--line2);border-radius:var(--r-control);font-size:12px}.ui-shell-space-context button:first-of-type{margin-left:auto}
+@media(max-width:759px){
+ .ui-shell:has(.ui-shell-space-context){grid-template-rows:104px minmax(0,1fr) 60px}
+ .ui-shell:has(.ui-shell-space-context) .ui-shell-avatar{align-self:start;height:56px}
+ .ui-shell:has(.ui-shell-space-context) .ui-shell-tray{align-self:start;height:56px;box-sizing:border-box}
+ .ui-shell-header:has(.ui-shell-space-context){height:56px;box-sizing:border-box;align-self:start;flex-wrap:nowrap;justify-content:center;padding:0 8px;gap:8px}
+ .ui-shell-header-start:has(.ui-shell-space-context){position:absolute;top:56px;left:0;right:0;box-sizing:border-box;padding:0 16px;border-bottom:1px solid var(--line);background:var(--paper)}
+ .ui-shell-space-context{min-height:48px;gap:8px}
+ .ui-shell-space-name{flex:1;font-size:13px}
+ .ui-shell-header:has(.ui-shell-space-context) .ui-project-switcher{max-width:calc(100% - 16px)}
+ .ui-shell:has(.ui-shell-space-context) .ui-tray-list{top:104px}
+}

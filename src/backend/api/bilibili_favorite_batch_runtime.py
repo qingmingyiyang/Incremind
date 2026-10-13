@@ -7,6 +7,8 @@ thread nor a second queue.
 
 from __future__ import annotations
 
+from contextlib import closing
+
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -69,7 +71,7 @@ class BilibiliFavoriteBatchEffectHandler:
 
     def __call__(self, effect: Effect) -> EffectReceipt:
         batch_id = _effect_batch_id(effect)
-        with sqlite3.connect(self.database) as connection:
+        with closing(sqlite3.connect(self.database)) as connection, connection:
             row = connection.execute(
                 f"SELECT receipt_json FROM {_RECEIPT_TABLE} WHERE operation_id=?", (effect.operation_id,),
             ).fetchone()
@@ -117,7 +119,7 @@ class BilibiliFavoriteBatchEffectHandler:
         final["updated_at"] = _now()
         final = repository.save(final).payload
         receipt = _receipt_payload(effect, batch_id, final)
-        with sqlite3.connect(self.database) as connection:
+        with closing(sqlite3.connect(self.database)) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 f"INSERT OR IGNORE INTO {_RECEIPT_TABLE}(operation_id,batch_id,receipt_ref,receipt_json,recorded_at) VALUES(?,?,?,?,?)",
@@ -140,7 +142,7 @@ class BilibiliFavoriteBatchEffectProbe:
     def __call__(self, effect: Effect) -> tuple[EffectState, str | None]:
         try:
             batch_id = _effect_batch_id(effect)
-            with sqlite3.connect(self.database) as connection:
+            with closing(sqlite3.connect(self.database)) as connection, connection:
                 row = connection.execute(
                     f"SELECT receipt_json FROM {_RECEIPT_TABLE} WHERE operation_id=?", (effect.operation_id,),
                 ).fetchone()
@@ -180,7 +182,7 @@ def _validate_receipt(value: object, effect: Effect, batch_id: str) -> None:
 
 def _ensure_schema(database: Path) -> None:
     database.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute(f"CREATE TABLE IF NOT EXISTS {_RECEIPT_TABLE}(operation_id TEXT PRIMARY KEY,batch_id TEXT NOT NULL,receipt_ref TEXT NOT NULL UNIQUE,receipt_json TEXT NOT NULL,recorded_at TEXT NOT NULL)")
 
 

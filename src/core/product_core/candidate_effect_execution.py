@@ -7,6 +7,8 @@ candidate-domain receipt are the execution evidence.
 
 from __future__ import annotations
 
+from contextlib import closing
+
 import inspect
 import json
 import sqlite3
@@ -56,7 +58,7 @@ class CandidateEffectExecutionHandler:
         return self.handle(effect)
 
     def handle(self, effect: Effect) -> EffectReceipt:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             intent, job = _read_and_validate_inputs(connection, effect)
             existing = _validated_receipt(connection, effect, job, self.creator)
@@ -70,7 +72,7 @@ class CandidateEffectExecutionHandler:
         if self.after_domain_write is not None:
             self.after_domain_write()
 
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             intent, job = _read_and_validate_inputs(connection, effect)
             existing = _validated_receipt(connection, effect, job, self.creator)
@@ -117,7 +119,7 @@ class CandidateEffectExecutionProbe:
 
     def probe(self, effect: Effect) -> tuple[EffectState, str | None]:
         try:
-            with sqlite3.connect(self.database) as connection:
+            with closing(sqlite3.connect(self.database)) as connection, connection:
                 connection.row_factory = sqlite3.Row
                 _intent, job = _read_and_validate_inputs(connection, effect)
                 if _validated_receipt(connection, effect, job, self.creator) is not None:
@@ -355,7 +357,7 @@ def _initialize_receipt_schema(connection: sqlite3.Connection) -> None:
 
 def _ensure_schema(database: Path) -> None:
     database.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute("PRAGMA foreign_keys=ON")
         initialize_job_projection_schema(connection)
         _initialize_receipt_schema(connection)
