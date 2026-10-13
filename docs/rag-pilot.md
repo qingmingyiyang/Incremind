@@ -1,5 +1,15 @@
 # LoCoMo 小规模 RAG 评测
 
+## 当前状态 · 2026-10-13
+
+当前默认为 `compose@30 / ladder@15 / retrieve@5 / rerank@2`，另用 `rank@4 / vector@1`。最近一轮默认组合在下述同 19 份会话、固定 12 道开发题上，独立 Agent 对照原文核对为 **8 正确、4 部分正确、0 错误、0 未发布**；实际模型为 `deepseek-flash`，没有新增评分 API。36 次新请求使用 335,444 输入、12,498 输出词元；全 12 题总耗时中位数 22.160 秒，召回中位数 14.292 秒。
+
+2026-10-12 的非默认 `31/16/5/2` 复测为 8 正确、2 部分、1 错误、1 未发布；`32/16/5/2` 有 6 题未发布，已发布题采用保守判定口径且仍有生日庆祝日遗漏。两组均未激活，不与不同判定口径的历史成绩绘制准确率提升曲线。材料先分析候选追加 38 次付费请求后，只有 7/19 份 L1 完成确认；累计调用序号 404 遇到领域引用拒收而停止，没有新的完整材料冻结、向量或 12 题问答成绩。
+
+最新版本、用量、失败及复现范围统一见[测评总览](evaluation.md)。下文按对应日期保留历史协议、原分数、当时默认和当时下一步；历史状态不覆盖本节的当前默认。下文 `work/` 路径指维护者本地档案，原语料、逐题正文和运行产物不随仓库发布。
+
+## 历史试点协议与记录
+
 入口为 [`tools/rag_pilot.py`](../tools/rag_pilot.py)。它使用公开对话和真实模型，比较关键词、关键词加本机向量、关键词加向量加 DeepSeek 语义重排。第三组使用通用生成模型评分，不能代表专用重排模型的效果。
 
 ## 数据与适用范围
@@ -18,10 +28,10 @@
 
 ```powershell
 .\.venv\Scripts\python.exe tools/rag_pilot.py `
-  --output F:\ChriptmasAgent\work\rag-pilot-20261010 `
-  --config-root F:\ChriptmasAgent\runtime `
-  --config-db F:\ChriptmasAgent\runtime\.rebuild-data\structured-records.sqlite3 `
-  --models-root F:\ChriptmasAgent\runtime\data\models `
+  --output .\work\rag-pilot-20261010 `
+  --config-root .\runtime `
+  --config-db .\runtime\.rebuild-data\structured-records.sqlite3 `
+  --models-root .\runtime\data\models `
   --questions 1
 ```
 
@@ -70,11 +80,11 @@
 
 ```powershell
 .\.venv\Scripts\python.exe tools/rag_pilot.py `
-  --output F:\ChriptmasAgent\work\rag-retest-20261010 `
-  --baseline F:\ChriptmasAgent\work\rag-pilot-20261010 `
-  --config-root F:\ChriptmasAgent\runtime `
-  --config-db F:\ChriptmasAgent\runtime\.rebuild-data\structured-records.sqlite3 `
-  --models-root F:\ChriptmasAgent\runtime\data\models `
+  --output .\work\rag-retest-20261010 `
+  --baseline .\work\rag-pilot-20261010 `
+  --config-root .\runtime `
+  --config-db .\runtime\.rebuild-data\structured-records.sqlite3 `
+  --models-root .\runtime\data\models `
   --questions 12
 ```
 
@@ -196,7 +206,7 @@
 
 独立审阅核24份实际提示、114个精确来源窗口，最大输入含结构开销4025≤4500、证据3234≤3600；本轮9个合同通过答案逐条与其实际引用的原话核过，未发现实质错误、漏项或矛盾。QA56全文直问原评分仍漏参考符号，由要点检查降待复核；QA39原评分误拒了有来源的活动。QA81整答审核将拒答误标为non_factual，且把缺本答案引用支持的推断判为supported_inference，最终仍待复核，未计入合同通过。程序能校验覆盖和出处，语义标签仍会错，实际合同通过不等于普遍正确性保证。
 
-证据 `work/rag-correctness-speed-20261010/summary.json`、`comparison-analysis.json`、`regression-result.json`、`restart-verification.json`；独立审阅 `work/rag-correctness-speed-20261010-review/`，进度入口 `notes/task.md`。运行产物含公开原文，不提交Git。
+证据 `work/rag-correctness-speed-20261010/summary.json`、`comparison-analysis.json`、`regression-result.json`、`restart-verification.json`；独立审阅 `work/rag-correctness-speed-20261010-review/`。以上为维护者本地档案，运行产物含公开原文，不随仓库发布。
 
 ## 评分下降的逐题事实审查与候选回答修复
 

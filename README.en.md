@@ -10,7 +10,7 @@
 
 Give it the material you choose. It organizes and archives it, extracts what adds to **what you already know**, and turns proposed insights into long-term memory only after you confirm them.
 
-[Quick start](#quick-start) · [Features](#features) · [Usage](#usage) · [Architecture](#architecture) · [Privacy](#privacy-and-data) · [Development](#development)
+[Quick start](#quick-start) · [Features](#features) · [Evaluation](#evaluation-and-verification) · [Usage](#usage) · [Architecture](#architecture) · [Privacy](#privacy-and-data) · [Development](#development)
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
@@ -54,14 +54,32 @@ For example, an introductory article on spaced repetition might produce an insig
 | ✅ | **Answers with citations** | Searches insights first, then summaries, organized notes, and originals as needed. Stops when there is enough evidence. Citations open the original source. Questions in Everyday can be routed to the relevant project. |
 | ✅ | **Task execution** | Uses relevant memory to create output documents, which you can continue revising or regenerate. |
 | ✅ | **Library** | Browse insights, summaries, organized notes, and originals; confirm, edit, forget, or restore insights. |
-| ✅ | **Privacy controls** | Keeps data on your computer, excludes private projects from external model requests, and records a receipt for each external call. |
+| ✅ | **Privacy controls** | Keeps data on the computer or server hosting the application, excludes private projects from external model requests, and records a receipt for each external call. |
 | 🧪 | More input formats | Image OCR, audio and video transcription, and Bilibili favorites import; requires the corresponding models to be configured. |
 | 🧪 | Forgetting and daily organization | Adjusts recall weights by usage and a forgetting curve. Daily organization proposes patterns from recurring material for your confirmation. |
 | 🧪 | Local embeddings | Install EmbeddingGemma from Settings, approximately 1.5 GB, for semantic retrieval without a network connection. |
 | 🧪 | Claude Code, Codex, and DeepSeek Harness | Plugins expose memory tools and let the workbench delegate tasks into new drafts. See installation requirements and validation limits in [the agent guide](docs/agents.md) (Chinese). |
 | 🧪 | Servers and multiple users | Home or cloud server deployment, device pairing, backup, and recovery. See [the server guide](docs/server.md) (Chinese). |
 
-✅ End-to-end flows have been exercised with a real model, DeepSeek. 🧪 Implemented with automated tests; validation in real environments is still in progress.
+✅ Basic usage paths are implemented. 🧪 Optional dependencies or further real-environment validation are required. The table below states the actual validation scope; the icons do not establish coverage of every scenario.
+
+## Evaluation and verification
+
+Updated 2026-10-13. Current defaults `compose@30 / ladder@15 / retrieve@5 / rerank@2` were checked against the originals by an independent Agent on 12 fixed LoCoMo development questions over 19 conversation originals: **8 correct, 4 partially correct, 0 wrong, 0 unpublished**. The run used DeepSeek Flash and local EmbeddingGemma 2. Supported unknown answers can count as correct; omissions remain. These questions were repeatedly used during development, so this is not a held-out or overall accuracy estimate.
+
+The run made 36 real model requests and used **335,444 input / 12,498 output tokens**. Median total latency over all 12 questions was **22.160 s**, with **14.292 s** median retrieval latency. Usage and timings describe that run; no monetary cost was inferred from pricing.
+
+Engineering verification below is separate from answer quality:
+
+| Area | Environment and scope | Observed result |
+|---|---|---|
+| **DeepSeek Harness task to draft** | Isolated data root on Ubuntu 22.04; real Harness and DeepSeek Flash, including authenticated MCP memory tools | After a fix, one real task passed **29 checks**. Both real attempts used **4,017 input / 1,226 output tokens** in total; the first MCP tool-call failure is retained. |
+| **Correction after Hy-ASR** | Real SQLite, Turns, and confirmation; simulated ASR delivery and model transport | **30 new checks and 13 existing targeted checks passed**; one pre-existing comment-fetch failure is retained. Real recognition and correction quality await evaluation. |
+| **Server CPU embeddings** | Ubuntu 22.04 instance, real model assets, and device pairing | Loading, encoding, unloading, and reloading verified. GPU and standalone vector-service integration remain unverified. |
+
+The material-analysis candidate has confirmed L1 notes for 7/19 sources; the next source failed quotation validation. No new 12-question answer evaluation was run. Candidates `compose@31, @32 / ladder@16` produced wrong or unpublished answers in retests; defaults remain `30/15`.
+
+The [evaluation overview and reproduction entry points](docs/evaluation.md) (Chinese) list versions, samples, latency, usage, failures, and validation limits. The [RAG pilot report](docs/rag-pilot.md) (Chinese) retains earlier protocols and results. There is no comparison with OpenViking under a shared evaluation protocol.
 
 ## Quick start
 
@@ -307,7 +325,7 @@ Ordinary facts and inferences may explicitly identify a record or conversation d
 
 In schema-valid drafts, invalid references, quotations, support roles, calendar text, and duplicates receive per-item diagnostics with field paths, failed conditions, and repair requirements. The original draft stays unchanged and the final call still reviews the full catalog. Final responses must actually correct or exclude invalid items; a reason alone changes no field, and emptying references does not repair unsupported absolute dates still in the text. Corrupted frozen material stops execution. Invalid final references, unsupported dates, and exact duplicate statements still prevent publication; ordinary statements cannot evade de-duplication by changing incidental references. Citations are generated by the program and the public response remains `AskOutput`. These checks validate structure and provenance; prompt instructions also cannot guarantee that a model never repeats or truncates output.
 
-See [the RAG evaluation record](docs/rag-pilot.md) (Chinese) for each version's real answers, timings, and evaluation limits. Historical candidate implementations and [the answer flow diagram](docs/rag-pilot.md#回答流程与出错位置) retain their version context. Small samples and engineering controls do not establish overall accuracy.
+See [the evaluation overview](docs/evaluation.md) (Chinese) for each version's real answers, timings, and evaluation limits. Earlier results and [the answer flow diagram](docs/rag-pilot.md#回答流程与出错位置) retain their version context. Small samples and engineering controls do not establish overall accuracy.
 
 **Local vectors**
 
@@ -327,7 +345,7 @@ The applicable turn snapshots record `compose`, `retrieve`, `rerank`, `rank`, `l
 
 ## Privacy and data
 
-- **Local first.** Sources, organized notes, insights, and conversations are stored in SQLite in your local data directory.
+- **Local first.** Sources, organized notes, insights, and conversations are stored in SQLite on the computer or server hosting the application. Ordinary server users have separate spaces.
 - **Encrypted credentials.** Model keys and website cookies use the existing encrypted secret store: DPAPI on Windows and the existing server store on servers. Saved values are not returned or logged. Website cookies are excluded from model inputs.
 - **Controlled external transmission.** External models are called only for purposes whose transmission switches you enable in **Settings → Models**. Private projects and sources are excluded. Every external request leaves a receipt recording what was sent and which model received it. See [the model guide](docs/models.md) (Chinese).
 - **Originals are retained.** Forgetting affects automatic recall. Originals, organized notes, insight text, and revision history remain available for restoration.
@@ -355,10 +373,10 @@ npm run build
 
 ## Known limitations
 
-- **Speed:** remembering a source takes about 15–20 seconds, asking a question about 5–15 seconds, and confirming an insight is near-instant. A question asked in Everyday whose material lives in another project first points to that project and is then answered there, in about 10 seconds total. About a minute after each startup, a maintenance round runs (with a backup on the day's first startup), and the app is slower while it runs.
-- **Platform:** end-to-end validation has been performed on Windows. The application interface is currently Chinese only.
+- **Speed:** latency varies with material length, model, selection, and cache state. Individual runs are recorded in the [evaluation overview](docs/evaluation.md). Startup maintenance, backups, and indexing also affect response times.
+- **Platform:** basic complete flows have been checked on Windows. Application deployment, CPU embeddings, and real DeepSeek Harness execution in isolation have been checked separately on Ubuntu 22.04. The application interface is currently Chinese only.
 - **Mobile sharing and website login:** OS sharing and iPhone Shortcuts await device validation; real-account QR confirmation has not been verified. Xiaohongshu sessions currently use cookie import.
-- **In progress:** real-environment validation of the mobile shell, shared projects, and LAN or public server deployment.
+- **In progress:** validation of the mobile shell, shared projects, production public-network task submission, and real-account execution and reconnection for Claude Code and Codex.
 
 ## Acknowledgments
 
