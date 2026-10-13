@@ -60,7 +60,7 @@ Incremind 只记**信息增量**：
 | 🧪 | 更多格式 | 图片识字、录音和视频转写、B 站收藏夹导入（需要在设置里配好对应模型） |
 | 🧪 | 遗忘与每日整理 | 按使用频率和遗忘曲线降权；每天把反复出现的内容归纳成规律，等你确认 |
 | 🧪 | 本机向量 | 设置里一键安装 EmbeddingGemma（约 1.5 GB），语义召回不用联网 |
-| 🧪 | 接入 Claude Code、Codex、DeepSeek Harness | 通过插件调用记忆工具，在工作台选择外部执行者并保存草稿；安装条件与验收范围见 [docs/agents.md](docs/agents.md) |
+| 🧪 | 接入 Claude Code、Codex、DeepSeek Harness | 三种客户端均可通过插件调用记忆工具；工作台派活只保存草稿，服务器目前仅开放 DeepSeek Harness。安装条件与验收范围见 [docs/agents.md](docs/agents.md) |
 | 🧪 | 服务器与多用户 | 家庭服务器或云服务器部署、设备配对、备份恢复，见 [docs/server.md](docs/server.md) |
 
 ✅ 基本使用路径已实现；🧪 需要可选依赖或进一步真实环境验收。各功能的实际验证范围见下表，图标不代表所有场景均已验证。
@@ -89,7 +89,7 @@ Incremind 只记**信息增量**：
 
 - Windows 10 / 11
 - [Python 3.12](https://www.python.org/downloads/)（安装时勾选 *Add python.exe to PATH*）
-- [Node.js 22 LTS](https://nodejs.org/)（或 20.19 以上）
+- [Node.js](https://nodejs.org/)：推荐 22.x（≥ 22.13.0）；兼容 20.x（≥ 20.19.0）或 ≥ 24.0.0
 - 一个大模型 API Key，推荐 [DeepSeek](https://platform.deepseek.com/)；任何 OpenAI 兼容接口都可以
 
 **三步：**
@@ -142,7 +142,7 @@ macOS 和 Linux 暂时没有一键启动；Linux 服务器部署见 [docs/server
 
 向量模型可在电脑上手动加载或卸载，也可交给独立私有服务器计算，资料库仍留在电脑。独立向量服务和整个应用的服务器部署是两条可选路径；向量配置与 Linux 模板见 [私有服务器计算向量](docs/vector-server.md)。自建模式仍受向量外发开关和私密规则约束，目前按提问填入缓存，真实服务器联通待验证。
 
-整站部署把资料和应用一起放到服务器，所有用户共用服务器本机的向量模型，各自保留独立资料与缓存。启动默认未加载，由管理员加载或卸载；CPU/CUDA 配置、模型安装和用户配对见 [服务器部署](docs/server.md)。已在 Ubuntu 22.04 CPU 实例验证安装、设备配对及向量加载、计算、卸载与重新加载；HTTPS 和 GPU 联通仍待验证。
+整站部署把资料和应用一起放到服务器，所有用户共用服务器本机的向量模型，各自保留独立资料与缓存。启动默认未加载，由管理员加载或卸载；CPU/CUDA 配置、模型安装和用户配对见 [服务器部署](docs/server.md)。已在 Ubuntu 22.04 CPU 实例验证安装、设备配对、向量加载、计算、卸载与重新加载，以及公网 IP 受信任 HTTPS 和多用户接口隔离；GPU 和独立向量服务联通仍待验证。
 
 建议以本机开发提交为代码源，沿公开仓库现有的干净 AGPL 历史发布过滤后的代码增量。服务器按固定发布版本更新，记录 `deployment-version.json`，先备份代码，再重启并检查健康状态，保留撤回路径。服务器不要直接推送私有开发历史、`runtime/`、密钥、模型配置或个人资料；资料备份与迁移单独处理。
 
@@ -330,17 +330,26 @@ flowchart TB
 
 ## 隐私与数据
 
-- **本地优先**：资料、整理稿、认识和对话保存在部署所在的电脑或服务器数据目录的 SQLite 里；服务器上的普通用户各有独立空间。
+- **本地优先**：资料、整理稿、认识和对话保存在部署所在电脑或服务器的数据目录中；SQLite 保存结构化记录，PDF、图片、音视频等上传原件另存为文件。备份需保留整个数据目录。
+- **服务器权限**：普通用户空间独立；管理员可按权限进入用户空间，访问留痕对该用户可见。私密资料不对管理员隐藏。
 - **凭据加密**：模型密钥和网站 Cookie 复用现有加密存储，Windows 使用 DPAPI，服务器使用已有密钥存储；保存值不回显、不写日志，网站 Cookie 不进入模型输入。
 - **外发可控**：只有你在 **设置 · 模型** 里打开外发开关的用途才会调用外部模型；标成**私密**的项目和资料永远不外发；每次外发都留回执，写明发了什么、给了哪个模型。详见 [docs/models.md](docs/models.md)。
 - **不删原件**：遗忘只影响自动召回，原件、整理稿、认识正文和历史修订都保留，随时恢复。
 
 ## 开发
 
+在仓库根目录运行后端测试和依赖方向检查：
+
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/memory_app/v2 -q   # 后端测试
-cd src/frontend; npm test; npm run build                       # 前端测试与构建
-.\.venv\Scripts\python.exe tools/run_import_linter.py          # 依赖方向检查
+.\.venv\Scripts\python.exe -m pytest tests/memory_app/v2 -q
+.\.venv\Scripts\python.exe tools/run_import_linter.py
+```
+
+在 `src/frontend/` 下运行前端测试和构建：
+
+```powershell
+npm test
+npm run build
 ```
 
 - 改提示词或算法：在 `v2/policies/` 登记新版本，离线对比后，单独一次提交切换 `ACTIVE`。

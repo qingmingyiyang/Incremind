@@ -58,7 +58,7 @@ For example, an introductory article on spaced repetition might produce an insig
 | 🧪 | More input formats | Image OCR, audio and video transcription, and Bilibili favorites import; requires the corresponding models to be configured. |
 | 🧪 | Forgetting and daily organization | Adjusts recall weights by usage and a forgetting curve. Daily organization proposes patterns from recurring material for your confirmation. |
 | 🧪 | Local embeddings | Install EmbeddingGemma from Settings, approximately 1.5 GB, for semantic retrieval without a network connection. |
-| 🧪 | Claude Code, Codex, and DeepSeek Harness | Plugins expose memory tools and let the workbench delegate tasks into new drafts. See installation requirements and validation limits in [the agent guide](docs/agents.md) (Chinese). |
+| 🧪 | Claude Code, Codex, and DeepSeek Harness | All three clients can access memory tools through plugins. Workbench delegation saves new drafts; server-side delegation is currently limited to DeepSeek Harness. See installation requirements and validation limits in [the agent guide](docs/agents.md) (Chinese). |
 | 🧪 | Servers and multiple users | Home or cloud server deployment, device pairing, backup, and recovery. See [the server guide](docs/server.md) (Chinese). |
 
 ✅ Basic usage paths are implemented. 🧪 Optional dependencies or further real-environment validation are required. The table below states the actual validation scope; the icons do not establish coverage of every scenario.
@@ -87,7 +87,7 @@ The [evaluation overview and reproduction entry points](docs/evaluation.md) (Chi
 
 - Windows 10 or 11.
 - [Python 3.12](https://www.python.org/downloads/). Select *Add python.exe to PATH* during installation.
-- [Node.js 22 LTS](https://nodejs.org/), or version 20.19 or later.
+- [Node.js](https://nodejs.org/): 20.x ≥ 20.19.0, 22.x ≥ 22.13.0, or ≥ 24.0.0. Version 22.x ≥ 22.13.0 is recommended.
 - A model API key. [DeepSeek](https://platform.deepseek.com/) is the suggested provider; OpenAI-compatible endpoints are also supported.
 
 **Three steps:**
@@ -157,7 +157,7 @@ Recommended synchronization: use local development commits as the code source, a
 
 Load or unload the vector model on your computer, or use a standalone private server for vector computation while keeping the library on your computer. The standalone vector service and full application deployment are separate options. See [Private server vectors](docs/vector-server.md) (Chinese) for configuration and Linux templates. Self-hosted mode still follows the vector egress switch and privacy rules; it fills the cache on demand during questions. Real-server integration remains unverified.
 
-Full server deployment keeps both the application and its data on the server. Users share the server's local vector model while retaining separate libraries and caches. The model starts unloaded; an administrator controls loading and unloading. See [Server deployment](docs/server.md) (Chinese) for CPU/CUDA configuration, model installation, and device pairing. Installation, device pairing, and CPU vector loading, encoding, unloading, and reloading have been verified on an Ubuntu 22.04 instance. HTTPS and GPU integration remains unverified.
+Full server deployment keeps both the application and its data on the server. Users share the server's local vector model while retaining separate libraries and caches. The model starts unloaded; an administrator controls loading and unloading. See [Server deployment](docs/server.md) (Chinese) for CPU/CUDA configuration, model installation, and device pairing. Installation, device pairing, CPU vector loading, encoding, unloading, and reloading, trusted HTTPS for the public IP address, and multi-user API isolation have been verified on an Ubuntu 22.04 instance. GPU and standalone vector-service integration remain unverified.
 
 ## Usage
 
@@ -345,7 +345,8 @@ The applicable turn snapshots record `compose`, `retrieve`, `rerank`, `rank`, `l
 
 ## Privacy and data
 
-- **Local first.** Sources, organized notes, insights, and conversations are stored in SQLite on the computer or server hosting the application. Ordinary server users have separate spaces.
+- **Local first.** Sources, organized notes, insights, and conversations are stored in the data directory on the computer or server hosting the application. SQLite stores structured records; uploaded originals such as PDFs, images, audio, and video are stored as separate files. Back up the entire data directory.
+- **Server permissions.** Ordinary users have separate spaces. Administrators can enter user spaces according to their permissions, and access logs are visible to the affected user. Private material is not hidden from administrators.
 - **Encrypted credentials.** Model keys and website cookies use the existing encrypted secret store: DPAPI on Windows and the existing server store on servers. Saved values are not returned or logged. Website cookies are excluded from model inputs.
 - **Controlled external transmission.** External models are called only for purposes whose transmission switches you enable in **Settings → Models**. Private projects and sources are excluded. Every external request leaves a receipt recording what was sent and which model received it. See [the model guide](docs/models.md) (Chinese).
 - **Originals are retained.** Forgetting affects automatic recall. Originals, organized notes, insight text, and revision history remain available for restoration.
