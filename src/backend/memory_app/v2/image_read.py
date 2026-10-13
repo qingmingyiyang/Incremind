@@ -211,17 +211,19 @@ def _literal_section(heading, text):
 COMMENT_SECTION_PREFIX = '\n\n## 评论区\n\n<!-- source_sections.comments: capture-qualified -->\n\n'
 
 
-def draft_markdown(records, row, draft):
+def draft_markdown(records, row, draft, *, runtime_root=None):
     """The complete L1 formatter: draft, proven comments, retained inference."""
-    return _formatted_draft(records, row, draft)[0]
+    return _formatted_draft(records, row, draft, runtime_root=runtime_root)[0]
 
 
-def _formatted_draft(records, row, draft):
+def _formatted_draft(records, row, draft, *, runtime_root=None):
     from ..workspace_generation import _markdown
     from .material_analysis import item_analysis, render_analysis
     from .source_sections import comment_section_for_item
     markdown = _markdown(draft)
     markdown += render_analysis(item_analysis(records, row, draft))
+    from .transcript_correction import item_correction, render_correction
+    markdown += render_correction(item_correction(records, row, draft, root=runtime_root))
     section = None
     comments = comment_section_for_item(records, row)
     if comments is not None:

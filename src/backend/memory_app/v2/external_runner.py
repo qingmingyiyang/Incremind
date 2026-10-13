@@ -89,28 +89,30 @@ class ExternalRunner:
             if saved is None:
                 return None
             self._revalidate_memory(saved[1]['memory_proof'], saved[1]['launch']['executor'],
-                config=saved[1]['mcp_config'])
+                config=saved[1]['mcp_config'], turn_id=request['turn_id'])
         except Exception:
             return None
         return self.authority(request, capability, boundary_request)
 
-    def _require_memory(self, config, executor):
+    def _require_memory(self, config, executor, *, turn_id=None):
         from .external_memory_admission import MemoryAdmissionError, require_memory_service
         from .external_host import ExternalHostError
         try:
             return require_memory_service(self.application, config=config,
                 client=EXECUTOR_CLIENTS.get(executor),
-                environment=self.host._memory_environment(config))
+                environment=self.host._memory_environment(config, **({'turn_id': turn_id}
+                    if self.host.deployment.mode == 'server' else {})))
         except (MemoryAdmissionError, ExternalHostError):
             raise ExternalRunnerError('external_runner_memory_unavailable') from None
 
-    def _check_memory_configuration(self, config, executor):
+    def _check_memory_configuration(self, config, executor, *, turn_id=None):
         from .external_memory_admission import MemoryAdmissionError, check_memory_configuration
         from .external_host import ExternalHostError
         try:
             check_memory_configuration(self.application, config=config,
                 client=EXECUTOR_CLIENTS.get(executor),
-                environment=self.host._memory_environment(config))
+                environment=self.host._memory_environment(config, **({'turn_id': turn_id}
+                    if self.host.deployment.mode == 'server' else {})))
         except (MemoryAdmissionError, ExternalHostError):
             raise ExternalRunnerError('external_runner_memory_unavailable') from None
 
@@ -122,11 +124,11 @@ class ExternalRunner:
             tx.put(PREPARATIONS, turn_id, {'owner_id':self.owner_id, 'turn_id':turn_id}, expected_revision=0)
             tx.commit()
 
-    def _revalidate_memory(self, proof, executor, *, config):
+    def _revalidate_memory(self, proof, executor, *, config, turn_id=None):
         from .external_memory_admission import MemoryAdmissionError, revalidate_memory_service
         try:
             self._composition_current()
-            self._check_memory_configuration(config, executor)
+            self._check_memory_configuration(config, executor, turn_id=turn_id)
             revalidate_memory_service(self.application, proof,
                 client=EXECUTOR_CLIENTS.get(executor))
         except MemoryAdmissionError:
@@ -171,7 +173,7 @@ class ExternalRunner:
                 or _encoded(archive['mcp_config']) != _encoded(mcp_config)
                 or _encoded(archive['host_permission_refs']) != _encoded(host_permission_refs)):
             _reject()
-        self._revalidate_memory(archive['memory_proof'], executor, config=archive['mcp_config'])
+        self._revalidate_memory(archive['memory_proof'], executor, config=archive['mcp_config'], turn_id=turn_id)
         delivery, _ = self._delivery(request, delivery_turn_id)
         if _encoded(delivery) != _encoded(archive['delivery']):
             _reject()
@@ -204,7 +206,7 @@ class ExternalRunner:
                 folder=folder, attachments=attachments)
             if replay is not None:
                 return replay
-            self._check_memory_configuration(mcp_config, executor)
+            self._check_memory_configuration(mcp_config, executor, turn_id=turn_id)
             client = EXECUTOR_CLIENTS.get(executor)
             delivery = self.context.qualified_delivery(delivery_turn_id)
             if delivery['owner_id'] != self.owner_id or delivery['client'] != client:
@@ -265,7 +267,7 @@ class ExternalRunner:
                     self.records)
 
             self._claim_preparation(turn_id)
-            memory_proof = self._require_memory(mcp_config, executor)
+            memory_proof = self._require_memory(mcp_config, executor, turn_id=turn_id)
             destination_current()
             accepted = self.runtime.accept_turn(frozen)
             newly_accepted = not accepted.replayed
@@ -277,7 +279,7 @@ class ExternalRunner:
                 expected_root_identity=root_identity)
             if executor == 'deepseek-harness':
                 from .external_harness_profile import install_profile
-                install_profile(cwd, mcp_config)
+                install_profile(cwd, mcp_config, server=self.host.deployment.mode == 'server')
             elif registration.controlled_api:
                 from .external_host import create_executor_home
                 create_executor_home(cwd)
@@ -394,11 +396,11 @@ class ExternalRunner:
             attachments=None):
         """接受后冻结绑定；不启动任务，不把调用方的请求当成实际 Turn。"""
         try:
+            request = validate_turn_request(frozen)
             if self.application is not None:
                 if memory_proof is None:
-                    memory_proof = self._require_memory(mcp_config, plan.executor)
-                self._revalidate_memory(memory_proof, plan.executor, config=mcp_config)
-            request = validate_turn_request(frozen)
+                    memory_proof = self._require_memory(mcp_config, plan.executor, turn_id=request['turn_id'])
+                self._revalidate_memory(memory_proof, plan.executor, config=mcp_config, turn_id=request['turn_id'])
             turn_id = request['turn_id']
             if (request['desired_outcome'] != 'project.task'
                     or type(request['execution_policy']['template_version']) is not int
@@ -488,7 +490,7 @@ class ExternalRunner:
             request, archive, context = self._invocation(value)
             if self.application is not None:
                 self._revalidate_memory(archive['memory_proof'], archive['launch']['executor'],
-                    config=archive['mcp_config'])
+                    config=archive['mcp_config'], turn_id=request['turn_id'])
             if self.turn_binding_guard is not None:
                 self.turn_binding_guard.ensure_current(request)
             launch = archive['launch']
@@ -505,7 +507,7 @@ class ExternalRunner:
                 def before_launch():
                     if self.application is not None:
                         self._revalidate_memory(archive['memory_proof'], launch['executor'],
-                            config=archive['mcp_config'])
+                            config=archive['mcp_config'], turn_id=request['turn_id'])
                     if self.turn_binding_guard is not None:
                         self.turn_binding_guard.ensure_current(request)
                     if _encoded(self.turns.get_request(request['turn_id'])) != _encoded(request):

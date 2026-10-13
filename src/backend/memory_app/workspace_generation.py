@@ -184,7 +184,7 @@ def _video_source_chunks(source: str) -> list[tuple[str, int]]:
 
 def _complete_chunked_video_draft(
     source: str, validate_current: Callable[[], None], local_model: bool,
-    *, organize,
+    *, organize, message_builder=None, ground_draft=None, stage_prefix='',
 ) -> tuple[dict, dict]:
     """Use the OS chunk plan, then merge only source-checked candidates."""
     chunks = _video_source_chunks(source)
@@ -213,7 +213,7 @@ def _complete_chunked_video_draft(
                     messages if correction is None else [*messages, correction],
                     max_tokens=768 if local_model else 7000,
                     validate_current=validate_current, timeout_seconds=remaining,
-                    stage=f'{stage}-{attempt}', validate_output=parse,
+                    stage=f'{stage_prefix}{stage}-{attempt}', validate_output=parse,
                 )
             except ModelConfigurationError as error:
                 safe_code = str(error) if str(error) in {
@@ -264,12 +264,16 @@ def _complete_chunked_video_draft(
                             "quote": evidence["quote"],
                         },
                     })
-            return _draft({**partial, **translated}, source)
+            value = _draft({**partial, **translated}, source)
+            return ground_draft(value) if ground_draft is not None else value
 
-        grounded = complete_validated([
-            {"role": "system", "content": _VIDEO_CHUNK_PROMPT + f" 当前仅处理全文第 {index}/{len(chunks)} 段。"},
+        system = _VIDEO_CHUNK_PROMPT + f" 当前仅处理全文第 {index}/{len(chunks)} 段。"
+        messages = message_builder(system, chunk_text, offset) if message_builder is not None else [
+            {"role": "system", "content": system},
             {"role": "user", "content": chunk_text},
-        ], timeout_seconds=VIDEO_SUMMARY_CHUNK_TIMEOUT_SECONDS, stage=f"chunk_{index}", parse=parse_chunk)
+        ]
+        grounded = complete_validated(messages, timeout_seconds=VIDEO_SUMMARY_CHUNK_TIMEOUT_SECONDS,
+            stage=f"chunk_{index}", parse=parse_chunk)
         for field in ("facts", "todos"):
             for number, entry in enumerate(grounded[field], 1):
                 candidates[f"{field}-{index}-{number}"] = entry

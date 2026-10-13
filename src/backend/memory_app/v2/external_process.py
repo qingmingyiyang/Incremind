@@ -205,6 +205,7 @@ class _Owner:
         self.lock = threading.Lock()
         self.cleanup_lock = threading.Lock()
         self.job = None
+        self.linux_namespace = None
         self.process = None
         self.closed = False
         self.streams, self.threads, self.descriptors = [], [], set()
@@ -230,6 +231,11 @@ class _Owner:
             if self.closed:
                 return
             failed = False
+            if self.linux_namespace is not None:
+                try:
+                    self.linux_namespace.terminate(deadline)
+                except (OSError, ValueError):
+                    failed = True
             if self.job is not None:
                 try:
                     self.job.terminate(deadline)
@@ -280,6 +286,11 @@ class _Owner:
                         self.job.close()
                     except OSError:
                         failed = True
+            if self.linux_namespace is not None:
+                try:
+                    self.linux_namespace.close(deadline)
+                except (OSError, ValueError):
+                    failed = True
             self.finished.set()
             # 读取/watch 线程只终止进程，不持此清理锁或负责 join 自身。
             for thread in self.threads:
@@ -390,7 +401,8 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
     cancel: threading.Event | None = None, on_line: Callable[[str], None] | None = None,
     on_started: Callable[[], None] | None = None,
     secret_values: Sequence[str] = (), on_owner: Callable[[_Owner], None] | None = None,
-    input_channel: ProcessInputChannel | None = None) -> ProcessResult:
+    input_channel: ProcessInputChannel | None = None, linux_isolation=None,
+    before_native: Callable[[], None] | None = None) -> ProcessResult:
     """回调仅供有界的本地解析；不记录命令、环境或异常详情。"""
     if cancel is not None and cancel.is_set():
         if isinstance(input_channel, ProcessInputChannel):
@@ -404,6 +416,7 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
             or (on_line is not None and not callable(on_line))
             or (on_started is not None and not callable(on_started))
             or (on_owner is not None and not callable(on_owner))
+            or (before_native is not None and (not callable(before_native) or linux_isolation is None))
             or (input_channel is not None and not isinstance(input_channel, ProcessInputChannel))
             or any(not isinstance(value, str) for value in secret_values)):
         if isinstance(input_channel, ProcessInputChannel):
@@ -420,6 +433,8 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
     tail = deque(maxlen=128)
     control, exit_code, closed = {}, None, set()
     deadline = time.monotonic() + timeout
+    namespace_ready = threading.Event()
+    isolation_spec = None
 
     def stop(reason):
         with state_lock:
@@ -469,10 +484,48 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
                         raise OSError('external_process_failed')
                     remaining = remaining[written:]
                 process.stdin.flush()
-            write(payload + b'\n' if input_channel is not None else payload)
+            if isolation_spec is not None:
+                # 关闭与隔离启动共享原owner锁，未开闸不能在关闭意图之后写入启动包。
+                with owner.lock:
+                    if owner.closed or finished.is_set():
+                        return
+                    owner.linux_namespace.armed = True
+                    write(payload + b'\n')
+            else:
+                write(payload + b'\n' if input_channel is not None else payload)
             # 旧路径仍以 EOF 开闸；交互完整行只在原 owner 绑定后发送。
             with state_lock:
                 state['launch_possible'] = True
+            if isolation_spec is not None:
+                while not namespace_ready.wait(.02):
+                    if finished.is_set() or state['reason'] is not None:
+                        return
+                # namespace绑定可能耗时；同一租约须在真实原生命令开闸前再次复验。
+                if cancel is not None and cancel.is_set():
+                    stop('cancelled')
+                    return
+                if time.monotonic() >= deadline:
+                    stop('timed_out')
+                    return
+                if before_native is not None:
+                    try:
+                        before_native()
+                    except Exception:
+                        stop('external_process_callback_failed')
+                        return
+                reason = None
+                with owner.lock:
+                    if owner.closed or finished.is_set() or state['reason'] is not None:
+                        return
+                    if cancel is not None and cancel.is_set():
+                        reason = 'cancelled'
+                    elif time.monotonic() >= deadline:
+                        reason = 'timed_out'
+                    else:
+                        write(b'G')
+                if reason is not None:
+                    stop(reason)
+                    return
             if input_channel is not None:
                 while not finished.is_set():
                     try:
@@ -489,6 +542,7 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
             process.stdin.close()
 
     def watch():
+        last_namespace_scan = 0
         while not finished.wait(.02):
             if cancel is not None and cancel.is_set():
                 stop('cancelled')
@@ -496,6 +550,15 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
             if time.monotonic() >= deadline:
                 stop('timed_out')
                 return
+            if owner.linux_namespace is not None and time.monotonic() - last_namespace_scan >= .1:
+                try:
+                    with owner.lock:
+                        if not finished.is_set():
+                            owner.linux_namespace.observe()
+                    last_namespace_scan = time.monotonic()
+                except (OSError, ValueError):
+                    stop('external_process_failed')
+                    return
             if process.poll() is not None:
                 # CLI 的父进程已退也不能等待仍持有管道的孙进程。
                 with state_lock:
@@ -520,7 +583,14 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
             and control.get('error') != 'external_process_start_failed')
 
     try:
+        if linux_isolation is not None:
+            from .external_linux_isolation import LinuxLaunch, LinuxNamespaceOwner
+            if not isinstance(linux_isolation, LinuxLaunch):
+                raise ValueError('external_linux_isolation_unavailable')
+            isolation_spec = linux_isolation.process_spec()
         owner = _Owner()
+        if linux_isolation is not None:
+            owner.linux_namespace = LinuxNamespaceOwner(linux_isolation)
         owner.finished = finished
         if on_owner is not None:
             on_owner(owner)
@@ -548,8 +618,8 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
             # Windows 虚拟环境 redirector 会先派生 native 子进程，绑定后才开闸不足以约束它。
             executable = sys._base_executable if os.name == 'nt' else sys.executable
             bootstrap_command = [executable, '-I', '-S', '-u', str(bootstrap), str(descriptor)]
-            if input_channel is not None:
-                bootstrap_command.append('interactive')
+            if input_channel is not None or isolation_spec is not None:
+                bootstrap_command.append('interactive' if input_channel is not None else 'isolated')
             process = subprocess.Popen(bootstrap_command,
                 cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 bufsize=0, close_fds=True, **options)
@@ -570,7 +640,8 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
                 threads.append(thread)
                 thread.start()
             payload = json.dumps({'command': list(command), 'cwd': str(cwd), 'environment': dict(environment),
-                'input_text': input_text, 'interactive': input_channel is not None}, ensure_ascii=False).encode('utf-8')
+                'input_text': input_text, 'interactive': input_channel is not None,
+                **({'linux_isolation': isolation_spec} if isolation_spec is not None else {})}, ensure_ascii=False).encode('utf-8')
             for name, target, args in [('stdin', send, (payload,)), ('watch', watch, ())]:
                 thread = threading.Thread(target=target, args=args, name='external-process-' + name)
                 threads.append(thread)
@@ -603,6 +674,15 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
                 while b'\n' in control_bytes:
                     raw, control_bytes = control_bytes.split(b'\n', 1)
                     packet = json.loads(raw)
+                    if 'namespace_pid' in packet:
+                        if owner.linux_namespace is None or set(packet) != {'namespace_pid', 'launcher_pid'}:
+                            raise ValueError('external_linux_isolation_unavailable')
+                        with owner.lock:
+                            if owner.closed or finished.is_set():
+                                raise ValueError('external_linux_isolation_unavailable')
+                            owner.linux_namespace.bind(packet['namespace_pid'], packet['launcher_pid'],
+                                process.pid, min(deadline, time.monotonic() + 10))
+                        namespace_ready.set()
                     first_start = packet.get('started') is True and not control.get('started')
                     control.update(packet)
                     # 只有私有管道报告实际 CLI 已创建，才记录开始；stdout 不能伪造此事实。

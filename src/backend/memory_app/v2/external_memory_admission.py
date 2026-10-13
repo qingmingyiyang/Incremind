@@ -21,7 +21,7 @@ _ERROR = 'external_runner_memory_unavailable'
 _TOOLS = {'projects', 'recall', 'methods', 'read', 'remember', 'propose_insight', 'report_use'}
 _ENVIRONMENT = {'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE',
     'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
-    'CHRIPTMAS_DEVICE_KEY', 'DEVICE_KEY', 'APPROVED_DEVICE_KEY', 'CHRIPTMAS_MCP_BACKEND_URL'}
+    'CHRIPTMAS_DEVICE_KEY', 'DEVICE_KEY', 'APPROVED_DEVICE_KEY', 'CHRIPTMAS_MCP_BACKEND_URL', 'CHRIPTMAS_MCP_TARGET_USER'}
 _CREDENTIALS = {'CHRIPTMAS_DEVICE_KEY', 'DEVICE_KEY', 'APPROVED_DEVICE_KEY'}
 _PROOF = {'turn_id', 'owner_id', 'client', 'immutable_ref', 'outcome_ref'}
 
@@ -44,6 +44,13 @@ def _environment(environment, aliases):
     result = {key: '' for key in DEFAULT_INHERITED_ENV_VARS}
     result.update(environment)
     for target, reference in aliases.items():
+        if target == 'CHRIPTMAS_MCP_TARGET_USER':
+            import re
+            if (reference != '${CHRIPTMAS_MCP_TARGET_USER}'
+                    or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._~-]{0,127}', environment.get(target, ''))):
+                _deny()
+            result[target] = environment[target]
+            continue
         if target == 'CHRIPTMAS_MCP_BACKEND_URL':
             from .external_workspace import _loopback_backend
             if not _loopback_backend(reference) or environment.get(target) != reference:

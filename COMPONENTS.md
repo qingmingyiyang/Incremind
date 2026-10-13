@@ -1,5 +1,7 @@
 # 统一组件与公共能力索引
 
+- Hy-ASR 转写后校对（2026-10-13）：`v2.transcript_correction.TranscriptCorrection` 复用 `AsrLexiconService`、`OrganizeTurns` 和 `prepare_context`；纯策略 `transcript_correction@1` 提示模型给局部 edits，程序核原词表、原文唯一坐标、字面接近程度、受保护内容与不重叠后确定应用。默认 `organize@1` 上传音频/视频接入，候选材料流程显式跳过。原 `source_text`、ASR 检查点和 Source 快照保持原文；episode/current/publication 三旁路集合冻结词表与实际主/辅助模型绑定。读取从真实 `STEPS.output` 重建并核原请求、修订、attempt/终态回执；这不等于语义正确性证明。长视频通过可选 message_builder/ground_draft/stage_prefix 接线，旧调用保持。统一 formatter 展示校对全文与疑点，两种确认分支在原事务冻结并绑定 Document；旧稿读取不依赖当前词表。模型无效输出保留原转写，漂移拒绝旧结果，已知用量和 unknown_calls 分别保留。定向自动化隔离运输，真实质量见 Q77。
+
 - 转写热词表（2026-10-13）：`core.product_core.asr_lexicon_service.AsrLexiconService` 是设置、实时语音、上传录音/视频与内部 Agent 共用的词表服务；`aggregate_repository_factory.recognition_record_store_resolution` 统一数据库归属。读取和预览不迁移，显式导入按修订号原子合并，保留旧 JSON；支持 TXT/CSV/JSON、UTF-8 与数量/权重校验。`v2.asr_lexicon` 提供 HTTP 入口，前端 `AsrLexicon` 复用设置行、主题 token 和用户请求作用域。本机内置 faster-whisper 依据实际 tokenizer 容量按优先级选完整热词，转写缓存绑定词表修订，回执区分实际采用与截断。Qwen 实时语音使用原生词表；Hy-ASR 尚不支持热词，导入不自动安装模型或切换服务。
 
 - 内部 Agent 数据操作（2026-10-13）：`v2.agent_data_tools` 复用上述服务、原工具注册与 Kernel 批准机制，提供 `asr.lexicon.read/preview/import`，由 `config/application-skills/asr-lexicon/SKILL.md` 渐进说明用法。`project.task@3` 仅为内部干活增加三项能力，旧 @1/@2 和外部七工具保持；自定义 profile 不自动扩权。明确完整的更新指令才可形成一次性、绑定当前用户与预览的保存授权；保存及回执同事务，完成状态核真实操作和当前词表。模型消息可省略重复机器日志，原事件审计、调度与预算检查保留。操作格式与边界见 [Agent 数据操作](docs/agent-data-tools.md)。
@@ -7,6 +9,8 @@
 - 外部执行插件（2026-10-12）：`v2.external_executor_plugins` 固定登记 Claude Code、Codex、DeepSeek Harness，提供独立偏好 CAS、旧两客户端开关同事务同步及实际安装/凭据/可用状态；`effective_external_agent_settings` 供现有外发、配额、召回与写回统一使用。客户端身份保持独立，不加载请求提供的代码或命令。前端 `ExternalExecutorPicker` 复用 Composer 工具槽和 FocusPanel，提交前重验资格；原问、记住、附件及内置文档继续流程保持。用法见 [外部 agent](docs/agents.md)。
 
 - DeepSeek 受控运行（2026-10-12）：`v2.external_harness_profile` 生成专用封闭 profile 与可复制的官方 MCP patch，取得原模型密钥短租约并在派发前复核；`external_harness_protocol.HarnessProtocol` 消费发布版 SDK JSON-RPC 的会话、消息、用量与终止事件。`external_process` 保留原启动闸门、进程树 owner、有界输出与清理归属，通过交互通道提供输入，不调用独立 SDK 的 Popen。只开放记忆 MCP 和最终文字草稿，文件系统、Shell、子 agent、日志上传及遥测插件未装配。
+
+- Linux 服务器 Harness（2026-10-13）：`v2.external_linux_isolation` 复用原进程 owner，固定可信只读挂载、bubblewrap namespace 与 seccomp，按 pidfd 观察原 PID1 及后代关闭；`external_server_identity.ServerMemoryLease` 绑定真实设备、目标用户与空间。原 Host、Runner 和工作台共用同一准入，原生启动前复用冻结交付、外发及私密复验，再检查设备和模型密钥修订；关闭租约释放秘密引用。服务器 profile 仅用官方两个固定 YAML 环境引用通过 subprocess 过滤，在内存中把设备钥匙与目标交给 MCP，四个模型密钥保持空值，Windows 旧 profile 字节不变。只开放固定版本 DeepSeek Harness，仍由原 Kernel 保存未核对草稿。
 
 - 外部干活编排（2026-10-12）：`v2.external_task_do.ExternalTaskDo` 将工作台的外部执行者接到原 `ExternalContext`、冻结 `ExternalRunner`、Kernel `external.task.execute` 与 `TaskDrafts`，不复制领域服务。重启只观察原 request/archive/result/receipt/ExternalRuns 并投影真实完成或中断，禁止自动重执行或按超时推定清理成功。`external_memory_transport` 通过受控进程及官方 MCP SDK 做七工具握手准入。
 

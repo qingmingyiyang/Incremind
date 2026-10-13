@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import yaml
+
 from core.external_extension_runtime.windows_handle_io import WindowsHandleTreeIo
 from .external_workspace import validate_memory_mcp_config, validate_task_path, task_path_identity, verify_task_material
 
@@ -11,6 +13,18 @@ from .external_workspace import validate_memory_mcp_config, validate_task_path, 
 RUNTIME_VERSION = '0.1.5-rc.1'
 PACKAGE_VERSION = '0.1.5rc1'
 PROFILE_NAME = 'chriptmas-task'
+
+
+class _EnvironmentExpression(str):
+    """仅由封闭server profile生成官方Cordis内存环境引用。"""
+
+
+class _ServerProfileDumper(yaml.SafeDumper):
+    """只为固定server引用注册标签，不修改全局YAML序列化器。"""
+
+
+_ServerProfileDumper.add_representer(_EnvironmentExpression,
+    lambda dumper, value: dumper.represent_scalar('tag:yaml.org,2002:js', str(value)))
 
 
 def _credential(models):
@@ -53,7 +67,9 @@ def memory_patch(config, *, remote_backend=None):
     if 'command' not in server:
         raise ValueError('external_executor_memory_invalid')
     environment = {'DEEPSEEK_API_KEY': '', 'OPENAI_API_KEY': '', 'ANTHROPIC_API_KEY': '', 'CODEX_API_KEY': ''}
-    environment.update(server.get('env', {}))
+    # 设备凭据不写明文；server封闭profile另用官方固定!!js引用读取Host内存环境。
+    environment.update({key: value for key, value in server.get('env', {}).items()
+        if key not in {'CHRIPTMAS_DEVICE_KEY', 'DEVICE_KEY', 'APPROVED_DEVICE_KEY', 'CHRIPTMAS_MCP_TARGET_USER'}})
     if remote_backend is not None:
         from ..mcp import _backend_url
         if _backend_url(remote_backend) != remote_backend or not remote_backend.startswith('https://'):
@@ -65,7 +81,7 @@ def memory_patch(config, *, remote_backend=None):
             'failOnStartupError': True, 'reconnect': {'enabled': False}}}]}]
 
 
-def profile_files(home, config):
+def profile_files(home, config, *, server=False):
     names = [
         ('sdk-app-startup', '@deepseek-ai/dsh-sdk-app', {'profile': 'sdk-minimal'}),
         ('sdk-jsonrpc-server', '@deepseek-ai/dsh-sdk-jsonrpc-server', {'maxTokensAsSuccess': False}),
@@ -90,21 +106,29 @@ def profile_files(home, config):
     ]
     rows = [{'id': identity, 'name': name, **({'config': value} if value is not None else {})}
         for identity, name, value in names]
+    if server:
+        rows[3]['config']['retryPolicy'] = {'mode': 'normal', 'maxRetries': 0}
     rows[1]['inject'] = ['sdkAppStartup', 'loader']
     rows.extend(memory_patch(config)[0]['insert'])
+    if server:
+        # 发布版MCP子进程会清除含KEY的父环境；固定!!js引用在内存显式转交设备凭据。
+        rows[-1]['config']['env'].update({name: _EnvironmentExpression('process.env.' + name)
+            for name in ('CHRIPTMAS_DEVICE_KEY', 'CHRIPTMAS_MCP_TARGET_USER')})
     # 明确采用封闭允许列表：不含 session-log-deepseek/遥测/原生文件或 shell 插件。
     manifest = {'name': PROFILE_NAME, 'private': True, 'dependencies': {},
         'dsh': {'profile': {'bundles': [], 'patchReload': 'startup'}}}
     prefix = 'profiles/' + PROFILE_NAME + '/'
+    patch = (yaml.dump([{'insert': rows}], Dumper=_ServerProfileDumper, allow_unicode=True, sort_keys=True)
+        if server else json.dumps([{'insert': rows}], ensure_ascii=False, sort_keys=True))
     return {prefix + 'package.json': json.dumps(manifest, sort_keys=True).encode('utf-8'),
-        prefix + 'cordis.patch.yml': json.dumps([{'insert': rows}], ensure_ascii=False, sort_keys=True).encode('utf-8'),
+        prefix + 'cordis.patch.yml': patch.encode('utf-8'),
         prefix + 'cordis.yml': b'[]\n'}
 
 
-def install_profile(cwd, config):
+def install_profile(cwd, config, *, server=False):
     home = cwd / 'harness-home'
     validate_task_path(home)
-    files = profile_files(home, config)
+    files = profile_files(home, config, server=server)
     if os.name == 'nt':
         made = WindowsHandleTreeIo().write_new_tree(cwd, ('harness-home',), files,
             expected_root_identity=task_path_identity(cwd, directory=True))
@@ -136,11 +160,11 @@ def install_profile(cwd, config):
         finally:
             for descriptor in reversed(handles):
                 os.close(descriptor)
-    validate_profile(cwd, config)
+    validate_profile(cwd, config, server=server)
     return home
 
 
-def validate_profile(cwd, config):
+def validate_profile(cwd, config, *, server=False):
     home = cwd / 'harness-home'
     validate_task_path(home)
     # 发布版会读取调用目录的.env；任务材料不允许另行改变模型、密钥或配置入口。
@@ -151,7 +175,7 @@ def validate_profile(cwd, config):
         raise ValueError('external_executor_profile_changed')
     if set(path.name for path in (home / 'profiles').iterdir()) != {PROFILE_NAME}:
         raise ValueError('external_executor_profile_changed')
-    for name, expected in profile_files(home, config).items():
+    for name, expected in profile_files(home, config, server=server).items():
         verify_task_material(home / name, expected)
     profile = home / 'profiles' / PROFILE_NAME
     for forbidden in ('node_modules', '.env', 'plugins', 'skills', '.dsh-module-fallback'):

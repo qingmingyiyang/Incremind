@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -181,12 +182,18 @@ async def _serve(reader, writer, client, backend):
 async def _main():
     backend = _backend_url(os.environ.get('CHRIPTMAS_MCP_BACKEND_URL', 'http://127.0.0.1:8001'))
     headers = {}
-    if backend is not None and urlsplit(backend).scheme == 'https':
-        key = os.environ.get('CHRIPTMAS_DEVICE_KEY', '')
+    key = os.environ.get('CHRIPTMAS_DEVICE_KEY', '')
+    if backend is not None and (urlsplit(backend).scheme == 'https' or key):
         if not key or len(key) > 4096 or any(not 33 <= ord(character) <= 126 for character in key):
             backend = None
         else:
             headers['Authorization'] = 'Bearer ' + key
+    target = os.environ.get('CHRIPTMAS_MCP_TARGET_USER')
+    if target is not None:
+        if not key or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._~-]{0,127}', target):
+            backend = None
+        else:
+            headers['x-chriptmas-target-user'] = target
     async with httpx.AsyncClient(headers=headers, trust_env=False, follow_redirects=False,
         timeout=httpx.Timeout(150, connect=5)) as client, stdio_server() as (reader, writer):
         await _serve(reader, writer, client, backend)

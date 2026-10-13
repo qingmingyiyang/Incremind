@@ -29,7 +29,8 @@ class _CancellationView:
 
 
 def dispatch_external(plan: LaunchPlan, context: ToolExecutionContext, *, environment,
-        secret_values=(), on_started=None, event_sink=None, output_limit=1048576, on_owner=None):
+        secret_values=(), on_started=None, event_sink=None, output_limit=1048576, on_owner=None,
+        linux_isolation=None, harness_model=None, before_native=None):
     """合格宿主调用；返回前原 owner 已关闭整个进程树。
 
     event_sink 仅投影进度。调用方须依据最终返回值持久化运行与回执，
@@ -56,7 +57,8 @@ def dispatch_external(plan: LaunchPlan, context: ToolExecutionContext, *, enviro
         if plan.executor == 'deepseek-harness':
             from .external_harness_protocol import HarnessProtocol
             parser = HarnessProtocol(session_id=plan.cwd.name, task=plan.stdin_text or plan.input_text,
-                cwd=plan.cwd, secret_values=secret_values)
+                cwd=plan.cwd, secret_values=secret_values,
+                **({'model': harness_model} if harness_model is not None else {}))
         else:
             parser = ExternalEventParser(plan.executor, secret_values=secret_values)
     except (TypeError, ValueError):
@@ -92,7 +94,9 @@ def dispatch_external(plan: LaunchPlan, context: ToolExecutionContext, *, enviro
             input_text=parser.initial_input if plan.executor == 'deepseek-harness' else plan.stdin_text or plan.input_text,
             input_channel=parser.channel if plan.executor == 'deepseek-harness' else None, timeout=min(1200, remaining / 1000),
             output_limit=output_limit, cancel=_CancellationView(context),
-            on_line=receive, on_started=started, secret_values=secret_values, on_owner=on_owner)
+            on_line=receive, on_started=started, secret_values=secret_values, on_owner=on_owner,
+            **({'linux_isolation': linux_isolation, 'before_native': before_native}
+                if linux_isolation is not None else {}))
     except ProcessCleanupError as error:
         process = error._cleanup_result
         error._dispatch_result = DispatchResult('failed', process.exit_code, parser.usage,

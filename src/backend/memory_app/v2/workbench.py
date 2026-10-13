@@ -842,7 +842,8 @@ def install_workbench_routes(application, *, records, models, documents, service
         body = await _json(request)
         if body.get('executor', 'builtin') != 'builtin':
             from backend.security.device_identity import server_mode
-            if server_mode(request):
+            host = getattr(application.state, 'external_execution_host', None)
+            if server_mode(request) and (host is None or not host.server_available(body['executor'])):
                 raise HTTPException(409, 'external_host_isolation_unavailable')
             server = request.scope.get('server')
             if (not isinstance(server, (tuple, list)) or len(server) != 2
@@ -873,7 +874,17 @@ def install_workbench_routes(application, *, records, models, documents, service
         representation = negotiate_turn_response(request.headers.get("accept"), allow_stream=intent in {"ask", "do"})
         async def execute_created(on_started=None, on_delta=None, on_frame=None):
             with override(**selections):
-                result = await executions.run(body, key, on_started=on_started, on_delta=on_delta, on_frame=on_frame)
+                if body.get('executor', 'builtin') != 'builtin':
+                    from .external_server_identity import request_memory_identity
+                    try:
+                        with request_memory_identity(request, application.state):
+                            result = await executions.run(body, key, on_started=on_started, on_delta=on_delta, on_frame=on_frame)
+                    except ValueError as error:
+                        if str(error) != 'external_server_identity_unavailable':
+                            raise
+                        raise HTTPException(409, 'external_host_identity_unavailable') from None
+                else:
+                    result = await executions.run(body, key, on_started=on_started, on_delta=on_delta, on_frame=on_frame)
                 bind_turn_id(result['turn']['id'])
                 return result
         if representation == "sse":

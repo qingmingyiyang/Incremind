@@ -9,6 +9,7 @@ import re
 import sys
 import threading
 import time
+import weakref
 from types import MappingProxyType
 
 from backend.shared.deployment import DeploymentLayout
@@ -165,16 +166,25 @@ def create_executor_home(cwd):
 
 class HostLease:
     """租约只持有本次内存环境、秘密和复验闭包，不写授权事实。"""
-    def __init__(self, host, turn, plan, environment, secrets, validate):
+    def __init__(self, host, turn, plan, environment, secrets, validate, *, validate_current=None):
         self.owner_id, self.plan = host.owner_id, plan
         self._host = host
         self.concurrency_limit = host.concurrency_limit
         self._accepted_turn = deepcopy(turn)
-        self.isolation = 'desktop-cli-permissions'
+        self.isolation = 'linux-bwrap@1' if host.deployment.mode == 'server' else 'desktop-cli-permissions'
+        self.linux_launch = host.linux_isolation.launch(plan.cwd) if host.deployment.mode == 'server' else None
+        self.harness_model = None
+        if host.deployment.mode == 'server':
+            model = host.models.records.read('recognition_model_config', 'generation').payload.get('model')
+            if (not isinstance(model, str) or contains_secret(model)
+                    or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}', model)):
+                _reject('credentials_unavailable')
+            self.harness_model = model
         self.commands = plan.requested_commands
         self._environment = environment
         self._secrets = secrets
         self._validate = validate
+        self._validate_current = validate if validate_current is None else validate_current
         self._closed = False
         self._process_owner = None
         self._lifecycle_lock = threading.RLock()
@@ -182,7 +192,7 @@ class HostLease:
         self._completing = False
 
     def __repr__(self):
-        return 'HostLease(closed=' + repr(self._closed) + ',isolation=desktop-cli-permissions)'
+        return 'HostLease(closed=' + repr(self._closed) + ',isolation=' + self.isolation + ')'
 
     @property
     def accepted_turn(self):
@@ -210,10 +220,22 @@ class HostLease:
         self._binding()
         self._validate(reader)
 
+    @_safe
+    def _validate_native_current(self):
+        """完整复验及产品交付检查之后，只重读同一租约的紧前身份与凭据。"""
+        if self._closed:
+            _reject('lease_closed')
+        self._binding()
+        self._validate_current()
+
     def _binding(self):
         if not isinstance(self._host, HostAdmission):
             _reject('lease_invalid')
         snapshot = self._host._issued_leases.get(self)
+        if self._host.deployment.mode == 'server':
+            runtime = self._host._linux_leases.get(self)
+            if runtime is None or runtime[0] is not self.linux_launch or runtime[1] != self.harness_model:
+                _reject('lease_invalid')
         if (snapshot is None or self._host.records is not snapshot[0]
                 or self._host.owner_id != snapshot[1] or self.owner_id != snapshot[1]
                 or type(self.concurrency_limit) is not int or self.concurrency_limit != snapshot[2]
@@ -312,6 +334,7 @@ class HostLease:
         else: self._environment.clear()
         self._secrets = ()
         self._validate = None
+        self._validate_current = None
         self._accepted_turn = None
         self._closed = True
         if snapshot is None:
@@ -331,7 +354,8 @@ class HostLease:
 class HostAdmission:
     """应用固定的宿主机械准入；材料与真实 Turn 身份仍由原运行器核验。"""
     def __init__(self, *, deployment: DeploymentLayout, owner_id, registrations,
-            records, environment=None, secret_environment=None, memory_endpoint=None, concurrency_limit=1, models=None):
+            records, environment=None, secret_environment=None, memory_endpoint=None, concurrency_limit=1, models=None,
+            linux_isolation=None, server_state=None):
         if type(concurrency_limit) is not int or concurrency_limit < 1:
             _reject('concurrency_invalid')
         self.deployment, self.owner_id = deployment, owner_id
@@ -344,9 +368,65 @@ class HostAdmission:
         self._secret_environment = dict(secret_environment or {})
         self.memory_endpoint = memory_endpoint
         self.models = models
+        self.linux_isolation, self.server_state = linux_isolation, server_state
+        self._server_memory = {}
+        self._server_memory_lock = threading.RLock()
+        self._bootstrap_owners = []
+        self._linux_leases = weakref.WeakKeyDictionary()
+
+    def _adopt_bootstrap_owner(self, owner):
+        if not isinstance(owner, _Owner):
+            _reject('request_invalid')
+        self._bootstrap_owners.append(owner)
+
+    def server_available(self, executor):
+        from .external_linux_isolation import LinuxIsolation
+        return (executor == 'deepseek-harness' and self.deployment.mode == 'server'
+            and self.server_state is not None and self.server_state.external_execution_host is self
+            and self.server_state.deployment is self.deployment
+            and self.server_state.external_context.owner_id == self.owner_id
+            and self.server_state.recognition_records is self.records
+            and self.server_state.recognition_models is self.models
+            and self.server_state.recognition_runtime_root == self.deployment.user_root
+            and isinstance(self.linux_isolation, LinuxIsolation)
+            and self.linux_isolation.user_root == self.deployment.user_root and self.linux_isolation.available())
+
+    def bind_server_memory(self, turn_id):
+        if self.deployment.mode != 'server':
+            return
+        from .external_server_identity import current_memory_identity
+        binding = current_memory_identity(self.server_state)
+        with self._server_memory_lock:
+            if turn_id in self._server_memory or len(self._server_memory) >= 64:
+                _reject('request_invalid')
+            binding._adopted = True
+            self._server_memory[turn_id] = binding
+
+    def release_server_memory(self, turn_id):
+        with self._server_memory_lock:
+            binding = self._server_memory.pop(turn_id, None)
+        if binding is not None:
+            binding.close()
+
+    def _server_binding(self, turn_id):
+        if self.deployment.mode != 'server':
+            return None
+        with self._server_memory_lock:
+            binding = self._server_memory.get(turn_id)
+        if binding is None or binding.state is not self.server_state:
+            _reject('identity_unavailable')
+        binding.validate()
+        return binding
 
     def close(self):
         failed = False
+        for owner in tuple(self._bootstrap_owners):
+            try:
+                owner.close()
+            except ProcessCleanupError:
+                failed = True
+            else:
+                self._bootstrap_owners.remove(owner)
         for lease in tuple(self._issued_leases):
             try:
                 lease.close()
@@ -354,6 +434,8 @@ class HostAdmission:
                 failed = True
         if failed:
             _reject('cleanup_incomplete')
+        for identity in tuple(self._server_memory):
+            self.release_server_memory(identity)
 
     def _validated_limit(self):
         if (type(self.concurrency_limit) is not int or self.concurrency_limit < 1
@@ -369,8 +451,10 @@ class HostAdmission:
         """写材料前核已知内存秘密，不向调用方交出环境或秘密值。"""
         if not isinstance(text, str) or redact_secrets(text) != text:
             return False
+        with self._server_memory_lock:
+            device_keys = tuple(binding.environment()['CHRIPTMAS_DEVICE_KEY'] for binding in self._server_memory.values())
         return all(isinstance(value, str) and bool(value) and value not in text
-            for value in self._secret_environment.values())
+            for value in (*self._secret_environment.values(), *device_keys))
 
     def _approved_credentials(self):
         for key, value in self._secret_environment.items():
@@ -390,10 +474,12 @@ class HostAdmission:
             return {'has_key': False}
 
     @_safe
-    def _memory_environment(self, config=None):
+    def _memory_environment(self, config=None, *, turn_id=None):
         """MCP 仅消费原批准设备钥匙，不交模型钥匙或继承进程环境。"""
         from .external_memory_admission import _CREDENTIALS
         result = {key:value for key, value in self._approved_credentials().items() if key in _CREDENTIALS}
+        if self.deployment.mode == 'server':
+            result.update(self._server_binding(turn_id).environment())
         if os.name == 'nt':
             import ctypes
             buffer = ctypes.create_unicode_buffer(32768)
@@ -421,7 +507,7 @@ class HostAdmission:
         except (ValueError, TypeError, OSError):
             _reject('resource_changed')
 
-    def _environment_for(self, registration, plan):
+    def _environment_for(self, registration, plan, *, server_binding=None):
         if any(key not in _BASE_ENV for key in self._environment):
             _reject('environment_invalid')
         result = dict(self._environment)
@@ -447,7 +533,10 @@ class HostAdmission:
             home = plan.cwd / 'harness-home'
             result.update({'HOME':str(home), 'USERPROFILE':str(home), 'DSH_HOME':str(home),
                 'DEEPSEEK_API_KEY':key, **dict(plan.public_environment)})
-            return result, (key,)
+            if server_binding is not None:
+                result.update(server_binding.environment())
+            return result, (key, *([server_binding.environment()['CHRIPTMAS_DEVICE_KEY']]
+                if server_binding is not None else []))
         authentication = plan.cwd / 'executor-home' if registration.controlled_api else registration.authentication_root
         home = authentication if registration.controlled_api else authentication.parent
         result.update({'HOME':str(home), 'USERPROFILE':str(home)})
@@ -518,7 +607,7 @@ class HostAdmission:
         limit = self._validated_limit()
         if (not isinstance(self.deployment, DeploymentLayout)
                 or self.deployment.mode not in {'desktop','server'}
-                or self.owner_id != 'local-user' or not isinstance(plan, LaunchPlan)):
+                or not isinstance(plan, LaunchPlan)):
             _reject('request_invalid')
         try:
             turn = deepcopy(validate_turn_request(deepcopy(accepted_turn)))
@@ -560,7 +649,7 @@ class HostAdmission:
         if plan.executor == 'deepseek-harness':
             from .external_harness_profile import acquire_harness_credential, validate_profile
             _, credential_current = acquire_harness_credential(self.models)
-            validate_profile(cwd, mcp_config)
+            validate_profile(cwd, mcp_config, server=self.deployment.mode == 'server')
         elif registration.controlled_api:
             key = 'CODEX_API_KEY' if plan.executor == 'codex' else 'ANTHROPIC_API_KEY'
             original_key = self._approved_credentials().get(key)
@@ -569,9 +658,11 @@ class HostAdmission:
                     _reject('credentials_changed')
         else:
             credential_current = None
-        environment, secrets = self._environment_for(registration, plan)
+        server_binding = self._server_binding(turn['turn_id'])
+        environment, secrets = self._environment_for(registration, plan,
+            **({'server_binding': server_binding} if server_binding is not None else {}))
         # 进程 Job 不限制文件权限；本仓尚无可委托的隔离域，不能由 preset 或平台名代替。
-        if (self.deployment.mode == 'server' or plan.preset == 'research'
+        if (self.deployment.mode == 'server' and not self.server_available(plan.executor) or plan.preset == 'research'
                 or plan.requested_commands == 'sandboxed'):
             _reject('isolation_unavailable')
         refs = {'folder':None,'commands':None} if host_permission_refs is None else deepcopy(dict(host_permission_refs))
@@ -584,14 +675,24 @@ class HostAdmission:
         if plan.material_directory is not None:
             stamps[plan.material_directory] = _stamp(plan.material_directory)
 
+        def validate_current():
+            if self.deployment.mode == 'server':
+                if self._server_binding(turn['turn_id']) is not server_binding:
+                    _reject('identity_unavailable')
+            if credential_current is not None:
+                credential_current()
+
         def validate(reader=None):
             if self._validated_limit() != limit:
                 _reject('concurrency_changed')
             self._discovered_paths_are_local(registration)
             if credential_current is not None:
                 credential_current()
+            if self.deployment.mode == 'server':
+                if not self.server_available(plan.executor) or self._server_binding(turn['turn_id']) is not server_binding:
+                    _reject('isolation_unavailable')
             if plan.executor == 'deepseek-harness':
-                validate_profile(cwd, mcp_config)
+                validate_profile(cwd, mcp_config, server=self.deployment.mode == 'server')
             if (any(_present(path) for path in absent)
                     or plan.executor != 'deepseek-harness' and any((cwd / 'executor-home'
                         if registration.controlled_api else registration.authentication_root).iterdir())):
@@ -605,17 +706,31 @@ class HostAdmission:
                 if _stamp(path, contents=path == registration.executable) != expected:
                     _reject('resource_changed')
             self._permission_check(turn, plan, refs, self.records if reader is None else reader)
+            if self.deployment.mode == 'server':
+                # 隔离树与材料复核可能较慢；末尾紧前重读设备身份和模型密钥修订。
+                validate_current()
 
         validate()
-        lease = HostLease(self, turn, plan, environment, secrets, validate)
+        lease = HostLease(self, turn, plan, environment, secrets, validate, validate_current=validate_current)
+        if self.deployment.mode == 'server':
+            self._linux_leases[lease] = (lease.linux_launch, lease.harness_model)
         lease._executing = True
         self._issued_leases[lease] = (self.records, self.owner_id, limit, plan, False, None, None)
+        def before_version_native():
+            if lease._closed:
+                _reject('lease_closed')
+            # 版本探测尚未签发执行资格，复用同一复验闭包而不提前认可lease。
+            validate()
+            if lease._closed:
+                _reject('lease_closed')
         try:
             lines = []
             result = run_process((str(registration.executable), '--version'), cwd=cwd,
                 environment=environment, timeout=10 if plan.executor == 'deepseek-harness' else 3,
                 output_limit=4096, on_line=lines.append,
-                secret_values=secrets, on_owner=lease._adopt_owner)
+                secret_values=secrets, on_owner=lease._adopt_owner,
+                **({'linux_isolation': lease.linux_launch, 'before_native': before_version_native}
+                    if lease.linux_launch is not None else {}))
             expected = ('codex-cli ' + plan.cli_version if plan.executor == 'codex'
                 else plan.cli_version if plan.executor == 'deepseek-harness'
                 else plan.cli_version + ' (Claude Code)')

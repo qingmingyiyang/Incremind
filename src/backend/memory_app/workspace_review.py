@@ -136,6 +136,8 @@ class WorkspaceReview:
                 raise HTTPException(422, "invalid_draft_evidence") from None
             from .v2.material_analysis import save_reviewed_draft
             save_reviewed_draft(tx, row, draft)
+            from .v2.transcript_correction import save_reviewed_draft as save_correction_draft
+            save_correction_draft(tx, row, draft, root=self.root.parent)
             updated = tx.put(_COLLECTION, item_id,
                              {**row.payload, "draft": draft, "title": draft["title"]},
                              expected_revision=row.revision)
@@ -174,12 +176,20 @@ class WorkspaceReview:
                     markdown = self._frozen_markdown(tx, row, item['draft'])
                     publication = freeze_publication(tx, row, item['draft'], markdown)
                     refs.extend(analysis_source_refs(publication.payload['analysis'] if publication else None, item_id))
+                    from .v2.transcript_correction import (
+                        freeze_publication as freeze_correction, correction_source_refs,
+                        commit_publication as commit_correction,
+                    )
+                    correction = freeze_correction(tx, row, item['draft'], markdown, root=self.root.parent)
+                    refs.extend(correction_source_refs(correction.payload['correction'] if correction else None, item_id))
                     document = repository.create_or_replay_generated_in_uow(DocumentDraft(
                         title=item["draft"]["title"], document_type=item_id,
                         markdown=markdown, source_refs=tuple(refs),
                         project_id=project_id), tx)
                     commit_publication(tx, row, {'id': 'confirm-' + item_id,
                         'draft': item['draft'], 'markdown': markdown}, document)
+                    commit_correction(tx, row, {'id': 'confirm-' + item_id,
+                        'draft': item['draft'], 'markdown': markdown}, document, root=self.root.parent)
                     updated = tx.put(_COLLECTION, item_id, {**item, "document_id": document["id"],
                                                            "status": "confirmed", "reviewed_revision": row.revision},
                                      expected_revision=row.revision)
@@ -228,12 +238,11 @@ class WorkspaceReview:
     def image_markdown(self, item_id, project_id, draft):
         from .v2.image_read import draft_markdown
         row = self.items.item_for(item_id, project_id)
-        return draft_markdown(self.items.records, row, draft)
+        return draft_markdown(self.items.records, row, draft, runtime_root=self.root.parent)
 
-    @staticmethod
-    def _frozen_markdown(reader, row, draft):
+    def _frozen_markdown(self, reader, row, draft):
         from .v2.image_read import draft_markdown
-        return draft_markdown(reader, row, draft)
+        return draft_markdown(reader, row, draft, runtime_root=self.root.parent)
 
     def source(self, item_id: str, project_id: str = "default"):
         item = self.items.item_for(item_id, _project(project_id)).payload

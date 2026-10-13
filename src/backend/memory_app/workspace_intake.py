@@ -499,6 +499,7 @@ class WorkspaceIntake:
                         retries += 1
 
         heartbeat_task = asyncio.create_task(keep_lease_alive())
+        correction_owner = None
         try:
             if xhs_error is not None:
                 raise xhs_error
@@ -533,7 +534,15 @@ class WorkspaceIntake:
                 validate_current=completion_options["validate_current"],
                 lease=self.items.processing_lease, run_id=run_id)
             from .v2.material_analysis import selected_flow, run_analysis
-            if selected_flow(organize):
+            candidate_flow = selected_flow(organize)
+            from .v2.transcript_correction import (
+                TranscriptCorrection, ground_reading_draft, merge_metadata, reading_messages, save_draft,
+            )
+            correction_owner = TranscriptCorrection(organize, root=self.runtime_root)
+            correction = await run_in_threadpool(correction_owner.run, candidate_flow=candidate_flow)
+            if correction is not None:
+                completion_options['validate_current'] = correction_owner.guard
+            if candidate_flow:
                 draft, model_meta = await run_in_threadpool(run_analysis, organize,
                     original_title=item['title'], local_model=local_model)
             elif (item.get("platform") in {"bilibili", "xiaohongshu"} or item["input_kind"] == "video") and len(source) > 5000:
@@ -541,21 +550,33 @@ class WorkspaceIntake:
                     generation._complete_chunked_video_draft, source,
                     completion_options["validate_current"], local_model,
                     organize=organize,
+                    message_builder=(lambda system, text, offset: reading_messages(correction, system, source,
+                        start=offset, end=offset + len(text))) if correction is not None else None,
+                    ground_draft=(lambda draft: ground_reading_draft(draft, source, correction))
+                        if correction is not None else None,
+                    stage_prefix=('asro-' + correction_owner.episode_id[-16:] + '-v1-')
+                        if correction is not None else '',
                 )
             else:
                 def validate_output(response):
                     value = json.loads(generation._strip_fence(response))
                     if local_model:
                         value = generation._ground_local_draft(value, source)
+                        value = ground_reading_draft(value, source, correction)
                     return generation._draft(value, source)
-                response, model_meta = await run_in_threadpool(organize.complete, [
-                    {"role": "system", "content": generation._PROMPT},
-                    {"role": "user", "content": source},
-                ], **completion_options, validate_output=validate_output)
+                stage = ('asro-' + correction_owner.episode_id[-16:] + '-v1') if correction is not None else None
+                response, model_meta = await run_in_threadpool(organize.complete,
+                    reading_messages(correction, generation._PROMPT, source),
+                    **completion_options, stage=stage, validate_output=validate_output)
                 result = json.loads(generation._strip_fence(response))
                 if local_model:
                     result = generation._ground_local_draft(result, source)
+                    result = ground_reading_draft(result, source, correction)
                 draft = generation._draft(result, source)
+            if correction is not None:
+                correction_owner.guard()
+                save_draft(organize, correction, draft, root=self.runtime_root)
+                model_meta = merge_metadata(correction.get('metadata'), model_meta)
             # Stop future renewals and settle the current one before publishing.
             # A timeout fails this run; it never permits a late result to publish.
             stop_heartbeat.set()
@@ -575,6 +596,8 @@ class WorkspaceIntake:
                            "material_analysis_budget_insufficient", "material_analysis_invalid",
                            "material_analysis_capacity_unavailable",
                            "material_analysis_quote_invalid", "material_analysis_binding_changed",
+                           "transcript_correction_binding_changed",
+                           "transcript_organization_budget_insufficient",
                            "fast_model_binding_changed",
                            "model_not_configured", "unsupported_media_url", "invalid_source",
                            "media_short_link_unavailable", "media_short_link_target_invalid",
@@ -588,10 +611,15 @@ class WorkspaceIntake:
             code = str(exc) if isinstance(exc, (ValueError, ModelConfigurationError)) and str(exc) in safe_errors else "processing_failed"
             if isinstance(exc, ModelConfigurationError) and str(exc).startswith("model_request_failed"):
                 code = "model_request_failed"
+            paid = {}
+            if correction_owner is not None and getattr(correction_owner, 'stage_keys', []):
+                aggregate = correction_owner.usage_metadata()
+                paid = {'model_usage': aggregate['usage'], 'model_name': aggregate['model']}
             self.items.update(item_id, project_id, {"processing"}, expected_run_id=run_id,
                    status="failed", error=code,
-                   processing_seconds=round(time.monotonic() - started, 2))
-            if code in {"remote_processing_target_changed", "audio_transcription_evidence_invalid"}:
+                   processing_seconds=round(time.monotonic() - started, 2), **paid)
+            if code in {"remote_processing_target_changed", "audio_transcription_evidence_invalid",
+                        "transcript_correction_binding_changed"}:
                 raise HTTPException(409, code)
             return self.items.public_row(self.items.item_for(item_id, project_id))
         finally:

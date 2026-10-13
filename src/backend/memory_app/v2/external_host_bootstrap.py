@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import sys
 
 from backend.shared.deployment import DeploymentLayout
 from .external_context import ExternalContext
@@ -213,7 +214,7 @@ def install_local_host(state, *, runtime_root, records, context, models=None):
         if (not isinstance(layout, DeploymentLayout) or layout.mode not in {'desktop','server'}
                 or not isinstance(runtime_root, Path) or layout.user_root != runtime_root
                 or not isinstance(context, ExternalContext) or context.records is not records
-                or context.owner_id != 'local-user' or getattr(state, 'external_context', None) is not context):
+                or getattr(state, 'external_context', None) is not context):
             raise ValueError
         _checked_path(runtime_root)
         _checked_path(records.database_path)
@@ -226,7 +227,7 @@ def install_local_host(state, *, runtime_root, records, context, models=None):
                 raise ValueError
             return existing
         if layout.mode == 'server':
-            return None
+            return _install_linux_host(state, runtime_root=runtime_root, records=records, context=context, models=models)
         if layout.server_root is not None or getattr(state, 'ai_runtime', None) is not None:
             raise ValueError
         registrations = discover_local_executors(runtime_root=runtime_root)
@@ -246,7 +247,7 @@ def install_local_host(state, *, runtime_root, records, context, models=None):
         raise ValueError('external_host_bootstrap_invalid') from None
 
 
-def _probe_version(executor, executable, directory, *, controlled_api=False):
+def _probe_version(executor, executable, directory, *, controlled_api=False, linux_isolation=None, on_owner=None):
     """只在无用户配置的候选中探测版本；未知身份保留不可执行状态。"""
     from .external_process import run_process
     from .external_host import _system_configuration, _PROJECT_CONFIG, _present
@@ -268,7 +269,8 @@ def _probe_version(executor, executable, directory, *, controlled_api=False):
         environment = {'SystemRoot': buffer.value, 'WINDIR': buffer.value}
     lines = []
     result = run_process((str(executable), '--version'), cwd=directory, environment=environment,
-        timeout=10 if executor == 'deepseek-harness' else 3, output_limit=4096, on_line=lines.append)
+        timeout=10 if executor == 'deepseek-harness' else 3, output_limit=4096, on_line=lines.append,
+        **({'linux_isolation': linux_isolation, 'on_owner': on_owner} if linux_isolation is not None else {}))
     if result.status != 'completed' or result.exit_code != 0 or len(lines) != 1:
         return None
     expression = {'codex':r'codex-cli (0\.156\.1)', 'claude-code':r'(2\.1\.[0-9]+) \(Claude Code\)',
@@ -279,14 +281,21 @@ def _probe_version(executor, executable, directory, *, controlled_api=False):
     return found[1]
 
 
-def _discover_harness(runtime_root):
+def _discover_harness(runtime_root, *, shared=False):
     """独立可选wheel安装目录，不导入其中Python代码或SDK，不自动安装。"""
     try:
         from .external_harness_profile import PACKAGE_VERSION
-        root = runtime_root / 'external_executor_runtimes' / ('deepseek-harness-' + PACKAGE_VERSION)
+        linux = shared and sys.platform.startswith('linux')
+        if shared and not linux:
+            return None
+        if linux:
+            from .external_linux_isolation import RUNTIME_ROOT, read_trusted_file, trusted_path
+            root = RUNTIME_ROOT
+        else:
+            root = runtime_root / 'external_executor_runtimes' / ('deepseek-harness-' + PACKAGE_VERSION)
         package = root / 'deepseek_harness_runtime'
         architecture = _architecture()
-        if os.name != 'nt' or architecture not in {'x64', 'arm64'}:
+        if (os.name != 'nt' and not linux) or architecture not in {'x64', 'arm64'}:
             return None
         metadata = root / ('deepseek_harness_runtime_bin-' + PACKAGE_VERSION + '.dist-info') / 'METADATA'
         stamps = {}
@@ -294,15 +303,65 @@ def _discover_harness(runtime_root):
         if metadata.stat().st_size > 131072:
             return None
         # 元数据只核发行名与版本，不执行wheel中的入口脚本。
-        fields = metadata.read_text(encoding='utf-8').split('\n\n', 1)[0].splitlines()
+        raw = read_trusted_file(metadata, 131072).decode('utf-8') if linux else metadata.read_text(encoding='utf-8')
+        fields = raw.split('\n\n', 1)[0].splitlines()
         if fields.count('Name: deepseek-harness-runtime-bin') != 1 or fields.count('Version: ' + PACKAGE_VERSION) != 1:
             return None
-        executable = package / 'runtime' / ('deepseek-harness-sdk-runtime-win-' + architecture + '.exe')
+        executable = package / 'runtime' / ('deepseek-harness-sdk-runtime-' +
+            ('linux-' + architecture if linux else 'win-' + architecture + '.exe'))
         _freeze(executable, stamps, file=True)
-        _freeze(executable.with_name(executable.stem + '-rg.exe'), stamps, file=True)
-        version = _probe_version('deepseek-harness', executable, root)
+        sidecar = executable.with_name(executable.name + '-rg' if linux else executable.stem + '-rg.exe')
+        _freeze(sidecar, stamps, file=True)
+        if linux:
+            trusted_path(executable)
+            trusted_path(sidecar)
+            release = package / 'deepseek-harness-runtime.json'
+            _freeze(release, stamps, file=True)
+            if not isinstance(json.loads(read_trusted_file(release, 65536)), Mapping):
+                return None
+        version = None if linux else _probe_version('deepseek-harness', executable, root)
         if any(_stamp(path, contents=value[3] is not None) != value for path, value in stamps.items()):
             return None
         return ExecutorRegistration('deepseek-harness', executable, root, tuple(stamps.items()), version)
     except (ValueError, TypeError, OSError):
         return None
+
+
+def _install_linux_host(state, *, runtime_root, records, context, models):
+    """服务器真实隔离缺失时保持原不可用；探测资源仍交原Host关闭。"""
+    from dataclasses import replace
+    from uuid import uuid4
+    from .external_process import ProcessCleanupError
+    if (not sys.platform.startswith('linux') or os.geteuid() == 0
+            or getattr(state, 'server_context', None) is None
+            or state.server_context.users.root_for(state.server_user_id) != runtime_root):
+        return None
+    registration = _discover_harness(runtime_root, shared=True)
+    if registration is None:
+        return None
+    try:
+        from .external_linux_isolation import LinuxIsolation
+        isolation = LinuxIsolation(user_root=runtime_root, executable=registration.executable)
+        host = HostAdmission(deployment=state.deployment, owner_id=context.owner_id, records=records,
+            registrations={'deepseek-harness': registration}, models=models,
+            linux_isolation=isolation, server_state=state)
+        state.external_execution_host = host
+        parent = runtime_root / 'external_executor_probes'
+        _checked_path(parent)
+        parent.mkdir(mode=0o700, exist_ok=True)
+        directory = parent / ('probe-' + uuid4().hex)
+        directory.mkdir(mode=0o700)
+        version = _probe_version('deepseek-harness', registration.executable, directory,
+            linux_isolation=isolation.launch(directory), on_owner=host._adopt_bootstrap_owner)
+        if (version is None or len(host._bootstrap_owners) != 1
+                or not host._bootstrap_owners[0].closed
+                or not host._bootstrap_owners[0].linux_namespace.closed
+                or host._bootstrap_owners[0].linux_namespace.pid is None):
+            return host
+        isolation.verified = True
+        host.registrations['deepseek-harness'] = replace(registration, cli_version=version)
+        return host
+    except ProcessCleanupError:
+        return host
+    except (ValueError, TypeError, OSError):
+        return getattr(state, 'external_execution_host', None)

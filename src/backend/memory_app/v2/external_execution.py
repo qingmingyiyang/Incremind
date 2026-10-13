@@ -98,9 +98,18 @@ def execute_external(lease, context, *, records, turns, turn_id, owner_id,
         lease.validate()
         lease._begin_execution()
         execution_active = True
+        def before_native():
+            lease.validate()
+            # 原Runner闭包只复验冻结交付、外发和私密状态，不新增批准或交付。
+            if before_launch is not None:
+                before_launch()
+            lease._validate_native_current()
         result = dispatch_external(plan, context, environment=lease.environment,
             secret_values=lease.secret_values, on_started=on_started, event_sink=receive,
-            output_limit=output_limit, on_owner=lease._adopt_owner)
+            output_limit=output_limit, on_owner=lease._adopt_owner,
+            **({'linux_isolation': lease.linux_launch, 'harness_model': lease.harness_model,
+                 'before_native': before_native}
+                if lease.linux_launch is not None else {}))
         may_have_started = result.may_have_started
         body = {'turn_id':turn_id, 'owner_id':owner_id, 'status':result.status,
             'exit_code':result.exit_code, 'usage':result.usage, 'message':''.join(chunks),

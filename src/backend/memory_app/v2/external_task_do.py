@@ -34,6 +34,8 @@ class ExternalTaskDo:
         context, runner = state.external_context, state.ai_turn_runner
         delivery_id, identity = 'turn-' + uuid4().hex, 'turn-' + uuid4().hex
         try:
+            host_owner = state.external_execution_host
+            host_owner.bind_server_memory(identity)
             context.prepare_recall(delivery_id, {'client': EXECUTOR_CLIENTS[executor], 'tool': 'recall',
                 'query': text, 'budget': 3000, 'scope': {'user_id': context.owner_id, 'project_id': project}},
                 scene=scene, session_id='session-' + turn_id, operation_id='op-' + delivery_id,
@@ -48,13 +50,19 @@ class ExternalTaskDo:
             host, port = state.external_mcp_backend
             config['mcpServers']['chriptmas-memory']['env'] = {
                 'CHRIPTMAS_MCP_BACKEND_URL': 'http://' + ('[::1]' if host == '::1' else host) + ':' + str(port)}
+            if state.deployment.mode == 'server':
+                config['mcpServers']['chriptmas-memory']['env'].update({
+                    'CHRIPTMAS_DEVICE_KEY': '${CHRIPTMAS_DEVICE_KEY}',
+                    'CHRIPTMAS_MCP_TARGET_USER': '${CHRIPTMAS_MCP_TARGET_USER}'})
             request = external.prepare(identity, delivery_turn_id=delivery_id, executor=executor,
                 cli_version=status['runtime_version'], task=task, mcp_config=config,
                 session_id='session-' + turn_id, operation_id='op-' + identity,
                 idempotency_key='task-' + turn_id, created_at=_now())
         except HTTPException:
+            state.external_execution_host.release_server_memory(identity)
             raise
         except Exception:
+            state.external_execution_host.release_server_memory(identity)
             raise HTTPException(409, 'external_task_not_prepared') from None
         receipt = {'task_id': None, 'document_id': None, 'title': text[:80], 'state': 'running',
             'executor': executor, 'kernel_turn_id': identity, 'experts': [], 'division': [],
@@ -65,12 +73,13 @@ class ExternalTaskDo:
 
     def _observed(self, values, turn_id):
         state = self.application.state
+        owner_id = state.external_context.owner_id
         request = validate_turn_request(values['request'])
         identity = request['turn_id']
         turns = state.ai_turn_store
         original, archive = turns.get_request(identity), turns.get_immutable_payload(identity, ARCHIVE)
         if (original != request or archive is None or archive[1]['request'] != request
-                or archive[1]['owner_id'] != 'local-user' or archive[1]['turn_id'] != identity
+                or archive[1]['owner_id'] != owner_id or archive[1]['turn_id'] != identity
                 or archive[1]['launch']['executor'] != values['executor']
                 or request['scope']['project_id'] != values['project_id']
                 or request['session_id'] != 'session-' + turn_id
@@ -78,12 +87,12 @@ class ExternalTaskDo:
             raise ValueError('external_task_binding_invalid')
         terminal = state.ai_runtime.receipt_for(identity)
         payload, proof = turns.get_immutable_payload(identity, RESULT_KIND), turns.get_immutable_payload(identity, RECEIPT_KIND)
-        run = ExternalRuns(self.records).read(identity, owner_id='local-user')
+        run = ExternalRuns(self.records).read(identity, owner_id=owner_id)
         completed = (terminal.status == 'completed' and payload is not None and proof is not None
             and run is not None and run['status'] == 'completed'
-            and proof[1] == {'turn_id': identity, 'owner_id': 'local-user', 'payload_ref': payload[0],
+            and proof[1] == {'turn_id': identity, 'owner_id': owner_id, 'payload_ref': payload[0],
                 'run_revision': run['revision'], 'status': 'completed', 'effect_certainty': 'confirmed_applied'}
-            and payload[1]['turn_id'] == identity and payload[1]['owner_id'] == 'local-user'
+            and payload[1]['turn_id'] == identity and payload[1]['owner_id'] == owner_id
             and payload[1]['status'] == 'completed' and payload[1]['exit_code'] == run['exit_code'] == 0
             and payload[1]['usage'] == run['usage']
             and isinstance(payload[1]['message'], str) and 0 < len(payload[1]['message']) <= 200000
@@ -150,3 +159,5 @@ class ExternalTaskDo:
                 tx.commit()
         finally:
             self.active.discard(turn_id)
+            if execute:
+                state.external_execution_host.release_server_memory(values['request']['turn_id'])

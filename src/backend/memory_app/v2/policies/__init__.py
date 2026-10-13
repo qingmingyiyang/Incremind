@@ -126,6 +126,8 @@ from . import material_analysis_nullable
 from . import material_analysis_dialogue
 from . import outcome_correction
 from . import agent_data
+from . import transcript_correction
+register('transcript_correction', '@1')(transcript_correction.v1)
 
 for _module in (organize, place, extract, route, scope, retrieve, rank, strength,
                 forget, enough, compose, trigger, consolidate, image_read, handoff):

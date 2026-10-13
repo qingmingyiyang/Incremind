@@ -89,6 +89,7 @@ class WorkspaceConfirmation:
                  documents: SQLiteDocumentRepository) -> None:
         self.records = records
         self.documents = documents
+        self.runtime_root = runtime_root
         self.source_store = JsonObjectStore(runtime_root / ".rebuild-data",
                                             legacy_root=runtime_root / "library",
                                             namespace_id="default",
@@ -120,6 +121,8 @@ class WorkspaceConfirmation:
                     else markdown_for_draft(draft))
                 from .v2.material_analysis import freeze_publication, analysis_source_refs
                 publication = freeze_publication(tx, row, draft, markdown)
+                from .v2.transcript_correction import freeze_publication as freeze_correction, correction_source_refs
+                correction = freeze_correction(tx, row, draft, markdown, root=self.runtime_root)
                 source_id = "source-" + item_id
                 source = _source_payload(row.payload, operation_id, source_id)
                 operation = {
@@ -128,7 +131,8 @@ class WorkspaceConfirmation:
                     "markdown": markdown, "draft": draft,
                     "reviewed_revision": row.revision,
                     "source_refs": [*_refs(row.payload, source_id), *analysis_source_refs(
-                        publication.payload['analysis'] if publication else None, source_id)],
+                        publication.payload['analysis'] if publication else None, source_id),
+                        *correction_source_refs(correction.payload['correction'] if correction else None, source_id)],
                 }
                 tx.put(COLLECTION, operation_id, operation, expected_revision=0)
                 updated = tx.put(ITEMS, item_id, {**row.payload, "status": "confirming",
@@ -198,6 +202,8 @@ class WorkspaceConfirmation:
                               project_id=operation["project_id"]), tx)
             from .v2.material_analysis import commit_publication
             commit_publication(tx, item_row, operation, document)
+            from .v2.transcript_correction import commit_publication as commit_correction
+            commit_correction(tx, item_row, operation, document, root=self.runtime_root)
             item = {**item_row.payload, "status": "confirmed", "source_id": source_id,
                     "document_id": document["id"]}
             updated = tx.put(ITEMS, item_id, item, expected_revision=item_row.revision)

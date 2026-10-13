@@ -85,10 +85,11 @@ def plugin_status(records, state, models=None):
         discovered = identity in registrations
         version = getattr(registrations.get(identity), 'cli_version', None)
         has_key = host.credential_status(identity)['has_key'] if host is not None else False
+        isolated = not server or host is not None and host.server_available(identity)
         if identity == 'deepseek-harness' and models is not None and host is None:
             from .external_harness_profile import harness_credential_status
             has_key = harness_credential_status(models)['has_key']
-        runnable = (discovered and version is not None and not server
+        runnable = (discovered and version is not None and isolated
             and has_key
             and preferences['plugins'][identity]['enabled']
             and legacy['allow_remote'] and legacy['clients'].get(manifest['client'], True))
@@ -98,12 +99,12 @@ def plugin_status(records, state, models=None):
             'available': runnable,
             'capabilities': {**deepcopy(manifest['capabilities']), 'task': runnable,
                 'presets': ['workspace'], 'commands': ['disabled']},
-            'reason': 'external_host_isolation_unavailable' if server else
+            'reason': 'external_host_isolation_unavailable' if not isolated else
                 'external_executor_not_installed' if not discovered else
                 'external_executor_version_unverified' if version is None else
                 'external_executor_credentials_unavailable' if not has_key else
                 None if runnable else 'external_agent_disabled',
-            'runtime_status': 'unsupported' if server else 'discovered' if discovered else 'not_installed'})
+            'runtime_status': 'unsupported' if not isolated else 'discovered' if discovered else 'not_installed'})
     return {'revision': preferences['revision'], 'client_settings_revision': legacy['revision'], 'plugins': rows}
 
 
