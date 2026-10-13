@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://default/contracts/ai/asr-lexicon-preview-request.schema.json",
+  "title": "Preview exact ASR lexicon import",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["text", "format", "expected_revision"],
+  "properties": {
+    "text": {"type": "string", "minLength": 1, "maxLength": 262144},
+    "format": {"enum": ["txt", "csv", "json"]},
+    "expected_revision": {"type": "integer", "minimum": 0}
+  }
+}

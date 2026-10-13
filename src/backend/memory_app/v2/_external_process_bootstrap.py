@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 
 
 def main():
@@ -15,8 +16,13 @@ def main():
         def report(body):
             output.write((json.dumps(body) + '\n').encode('ascii'))
         try:
-            # EOF 是父进程成功绑定后的启动闸；此前不会创建实际命令。
-            body = json.loads(sys.stdin.buffer.read().decode('utf-8'))
+            # 完整启动行是父进程成功绑定后的启动闸；后续 stdin 不再解析成启动命令。
+            interactive = len(sys.argv) == 3 and sys.argv[2] == 'interactive'
+            raw = (sys.stdin.buffer.readline(32 * 1024 * 1024 + 1)
+                if interactive else sys.stdin.buffer.read())
+            if interactive and (not raw.endswith(b'\n') or len(raw) > 32 * 1024 * 1024):
+                raise ValueError('external_process_start_failed')
+            body = json.loads(raw.decode('utf-8'))
             child = subprocess.Popen(body['command'], cwd=body['cwd'], env=body['environment'],
                 stdin=subprocess.PIPE, close_fds=True)
         except Exception:
@@ -24,8 +30,39 @@ def main():
             return 125
         report({'started': True})
         try:
-            child.communicate(input=body['input_text'].encode('utf-8'))
+            if interactive:
+                child.stdin.write(body['input_text'].encode('utf-8'))
+                child.stdin.flush()
+                failed = []
+                def forward():
+                    try:
+                        while True:
+                            chunk = sys.stdin.buffer.read1(65536)
+                            if not chunk:
+                                break
+                            child.stdin.write(chunk)
+                            child.stdin.flush()
+                    except (OSError, ValueError):
+                        if child.poll() is None:
+                            failed.append(True)
+                            child.terminate()
+                    finally:
+                        try:
+                            child.stdin.close()
+                        except (OSError, ValueError):
+                            pass
+                # 子进程退出不依赖父stdin EOF；阻塞读取线程由bootstrap退出收口。
+                threading.Thread(target=forward, daemon=True).start()
+                child.wait()
+                if failed:
+                    report({'error': 'external_process_failed'})
+                    os._exit(125)
+            else:
+                child.communicate(input=body['input_text'].encode('utf-8'))
             report({'exit_code': child.returncode})
+            if interactive:
+                # 控制管道无缓冲且已报告实际退出；避免CPython等待daemon持有的stdin锁。
+                os._exit(0)
             return 0
         except Exception:
             report({'error': 'external_process_failed'})

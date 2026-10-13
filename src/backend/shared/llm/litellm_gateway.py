@@ -17,6 +17,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
+from openai import APIStatusError
 
 from backend.shared.llm.message_metadata import (
     _dump_messages, _estimate_input_tokens, _build_json_mode_messages,
@@ -30,7 +31,7 @@ from backend.shared.llm.json_mode import (PartialJSONField, StructuredResponseDe
 from backend.shared.llm.model_capabilities import ModelCapabilities, resolve_model_capabilities
 from backend.shared.llm.model_transport import ModelTransportError, ModelTransportTimeout, complete_with_owned_transport
 from backend.shared.llm.openai_responses import (
-    ProviderBackgroundOptions, ResponsesBackgroundInterrupted, ResponsesCompletion, ResponsesError,
+    ProviderBackgroundOptions, ResponsesBackgroundInterrupted, ResponsesCompletion, ResponsesError, _provider_error,
 )
 
 
@@ -202,17 +203,23 @@ class ModelRetryControl:
 def _model_transport_failure(error: BaseException, now: datetime) -> tuple[str, float | None]:
     """Classify safe provider metadata only; no raw exception or headers leave."""
     cause = error
+    metadata_error = error
     seen: set[int] = set()
     while cause is not None and id(cause) not in seen:
         seen.add(id(cause))
         if isinstance(cause, ssl.SSLError) or isinstance(getattr(cause, 'reason', None), ssl.SSLError):
             return 'certificate', None
+        # LiteLLM 的包装可能丢失字段，仅回取同一状态的官方 SDK 结构化错误。
+        if (isinstance(cause, APIStatusError)
+                and cause.status_code == getattr(error, 'status_code', None)
+                and all(getattr(error, field, None) is None for field in ('body', 'code', 'type'))):
+            metadata_error = cause
         cause = cause.__cause__ or cause.__context__
-    # 原生协议已解析的永久额度事实优先于通用 HTTP 429 分类。
-    if isinstance(error, ResponsesError) and error.category == 'usage_limit':
-        return 'quota', None
-    body = getattr(error, 'body', None)
-    response = getattr(error, 'response', None)
+    # 原生适配器已消费的正文和工具输出也属于不可重新派发的阶段。
+    if isinstance(error, ResponsesError) and error.output_started:
+        return 'provider_rejected', None
+    body = getattr(metadata_error, 'body', None)
+    response = getattr(metadata_error, 'response', None)
     if body is None and callable(getattr(response, 'json', None)):
         try:
             body = response.json()
@@ -224,20 +231,33 @@ def _model_transport_failure(error: BaseException, now: datetime) -> tuple[str, 
         except (TypeError, ValueError):
             body = None
     payload = body.get('error', body) if isinstance(body, Mapping) else {}
+    payload = payload if isinstance(payload, Mapping) else {}
+    status = getattr(error, 'status_code', getattr(error, 'code', None))
+    if status in {401, 403}:
+        return 'authentication', None
     code = str((payload.get('code') or payload.get('type') or '') if isinstance(payload, Mapping) else '').lower()
-    code = code or str(getattr(error, 'code', '')).lower()
+    code = code or str(getattr(metadata_error, 'code', '')).lower()
     if code in {'insufficient_quota', 'quota_exceeded', 'billing_hard_limit_reached', 'usage_limit_reached'}:
         return 'quota', None
     if code in {'content_filter', 'content_policy_violation', 'safety', 'refusal'}:
         return 'content_filter', None
-    status = getattr(error, 'status_code', getattr(error, 'code', None))
-    if status in {401, 403}:
-        return 'authentication', None
+    facts = error if isinstance(error, ResponsesError) else _provider_error(
+        status if type(status) is int else 0,
+        {**(dict(body) if isinstance(body, Mapping) else {}), 'error': {
+            **(dict(payload) if isinstance(payload, Mapping) else {}),
+            **({'code': getattr(metadata_error, 'code')} if getattr(metadata_error, 'code', None) and not payload.get('code') else {}),
+            **({'type': getattr(metadata_error, 'type')} if getattr(metadata_error, 'type', None) and not payload.get('type') else {}),
+        }})
+    permanent = {'usage_limit': 'quota', 'authorization': 'authentication',
+                 'refusal': 'content_filter', 'unsupported': 'provider_rejected'}
+    if facts.category in permanent:
+        return permanent[facts.category], None
+    classified = {'capacity': 'server', 'transient': 'server', 'rate_limit': 'rate_limit'}.get(facts.category)
     if isinstance(error, (ModelTransportError, ResponsesBackgroundInterrupted)):
         return error.kind, None
     if isinstance(error, json.JSONDecodeError):
         return 'malformed_stream', None
-    if type(status) is int and (status == 429 or 500 <= status <= 599):
+    if classified is not None or type(status) is int and (status == 429 or 500 <= status <= 599):
         headers = getattr(error, 'headers', None) or getattr(response, 'headers', None)
         retry_after = None
         if isinstance(headers, Mapping):
@@ -253,7 +273,7 @@ def _model_transport_failure(error: BaseException, now: datetime) -> tuple[str, 
                         pass
                 if retry_after is not None and (not math.isfinite(retry_after) or retry_after < 0):
                     retry_after = None
-        return ('rate_limit' if status == 429 else 'server'), retry_after
+        return classified or ('rate_limit' if status == 429 else 'server'), retry_after
     if isinstance(error, TimeoutError) or type(error).__name__ in {'APITimeoutError', 'ReadTimeout', 'ConnectTimeout'}:
         return 'timeout', None
     if isinstance(error, (ConnectionError, URLError)) or type(error).__name__ == 'APIConnectionError':

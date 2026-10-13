@@ -7,10 +7,12 @@ import { subscriptionRequest } from '../../shared/ui/subscriptionApi';
 export async function settingsRequest(path, body, method = 'GET', signal) {
   const response = await fetch(libraryBackendUrl(`/api/v2/${path}`), { method, cache: 'no-store', headers: { 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}), ...(signal ? { signal } : {}) });
   const value = await readResponseJson(response);
-  if (!response.ok) { const error = new Error(response.status === 409 ? '设置已变化 · 刷新' : '操作未完成 · 重试'); error.code = response.status === 409 ? 'revision_conflict' : 'settings_request_failed'; error.status = response.status; throw error; }
+  if (!response.ok) { const error = new Error(response.status === 409 ? '设置已变化 · 刷新' : '操作未完成 · 重试'); error.code = response.status === 409 ? 'revision_conflict' : 'settings_request_failed'; error.status = response.status; error.detail = typeof value?.detail === 'string' ? value.detail : undefined; throw error; }
   return value;
 }
 export const settingsApi = {
+  loadAsrLexicon: signal => settingsRequest('asr/lexicon', undefined, 'GET', signal),
+  importAsrLexicon: (body, signal) => settingsRequest('asr/lexicon/import', body, 'POST', signal),
   integrity: () => settingsRequest('settings/integrity'),
   signals: () => settingsRequest('settings/signals'),
   saveSignals: (enabled, revision) => settingsRequest('settings/signals', { enabled, expected_revision: revision }, 'PATCH'),
@@ -18,6 +20,8 @@ export const settingsApi = {
   load: () => settingsRequest('settings'), projects: () => settingsRequest('projects'),
   savePrivacy: (ids, revision) => settingsRequest('settings/privacy', { private_projects: ids, expected_revision: revision }, 'PATCH'),
   saveExternalAgent: preferences => settingsRequest('settings/external-agent', preferences, 'PATCH'),
+  executorPlugins: signal => settingsRequest('settings/external-executor-plugins', undefined, 'GET', signal),
+  saveExecutorPlugins: preferences => settingsRequest('settings/external-executor-plugins', preferences, 'PUT'),
   connection: (projectId, signal) => settingsRequest(`settings/external-agent/connection?project_id=${encodeURIComponent(projectId)}`, undefined, 'GET', signal),
   snapshot: (body, signal) => settingsRequest('settings/external-agent/snapshot', body, 'POST', signal),
   saveExternalProxy: preferences => settingsRequest('settings/external-proxy', preferences, 'PATCH'),

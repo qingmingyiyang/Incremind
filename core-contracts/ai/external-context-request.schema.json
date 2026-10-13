@@ -5,7 +5,7 @@
   "additionalProperties": false,
   "required": ["client", "tool", "query", "scope", "budget"],
   "properties": {
-    "client": {"enum": ["claude", "codex"]},
+    "client": {"enum": ["claude", "codex", "deepseek-harness"]},
     "tool": {"enum": ["projects", "recall", "methods", "read"]},
     "query": {"type": "string", "not": {"pattern": "\u0000"}},
     "budget": {"type": "integer", "minimum": 1, "maximum": 12000},

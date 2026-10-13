@@ -1,0 +1,22 @@
+{
+  "id": "/",
+  "name": "ChriptmasAgent",
+  "short_name": "记忆",
+  "lang": "zh-CN",
+  "start_url": "/#view=workbench",
+  "scope": "/",
+  "display": "standalone",
+  "icons": [
+    { "src": "/capture-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/capture-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "share_target": {
+    "action": "/share-capture",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title", "text": "text", "url": "url",
+      "files": [{ "name": "files", "accept": ["image/*", "video/*", "audio/*", ".pdf", ".txt", ".md", ".docx"] }]
+    }
+  }
+}

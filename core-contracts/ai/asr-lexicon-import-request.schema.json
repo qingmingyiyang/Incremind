@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://default/contracts/ai/asr-lexicon-import-request.schema.json",
+  "title": "Consume one user-authorized ASR lexicon preview",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["preview_id"],
+  "properties": {"preview_id": {"type": "string", "pattern": "^lexicon-preview-[a-f0-9]{32}$"}}
+}

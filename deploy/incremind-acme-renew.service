@@ -1,0 +1,12 @@
+[Unit]
+Description=Renew Incremind public IP HTTPS certificate
+Wants=network-online.target
+After=network-online.target nginx.service
+ConditionPathExists=/etc/letsencrypt/renewal/incremind-ip.conf
+
+[Service]
+Type=oneshot
+ExecStart=/opt/incremind-acme/bin/certbot renew --quiet --cert-name incremind-ip
+ExecStartPost=/usr/local/sbin/incremind-acme-reload
+UMask=0077
+TimeoutStartSec=10min

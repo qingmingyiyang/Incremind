@@ -202,6 +202,8 @@ class WorkbenchContentTransformDomain:
                 self.object_store, namespace_id=self.namespace_id,
                 cancellation_requested=lambda: _checkpoint_requested(checkpoint),
                 settings_override=workbench_local_transcriber_settings(self.object_store, binding),
+                lexicon_snapshot=binding.get("asr_lexicon"),
+                hotwords_root=self.runtime_root,
             ).execute(audio_asset_id=asset_id)
         if transcript.status != "completed" or not transcript.output_id:
             raise ValueError(transcript.error or "audio transcription did not complete")
@@ -328,6 +330,8 @@ class WorkbenchContentTransformDomain:
                 namespace_id=self.namespace_id,
                 cancellation_requested=lambda: _checkpoint_requested(checkpoint),
                 settings_override=workbench_local_transcriber_settings(self.object_store, binding),
+                lexicon_snapshot=binding.get("asr_lexicon"),
+                hotwords_root=self.runtime_root,
             ).execute(audio_asset_id=audio.audio_asset_id)
         if transcript.status == "cancelled":
             raise EffectHandlerAbandoned("workbench_content_transform.user_cancelled")

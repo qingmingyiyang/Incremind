@@ -1,0 +1,2 @@
+# 可选独立安装；本轮核验原生运行时版本0.1.5-rc.1，不安装到共享venv。
+deepseek-harness-runtime-bin==0.1.5rc1

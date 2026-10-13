@@ -63,7 +63,7 @@ def _make_audio_transcription(
     }
 
 
-def _validated_audio_transcription(item: dict, runtime_root: Path) -> dict:
+def _validated_audio_transcription(item: dict, runtime_root: Path) -> dict | None:
     evidence = item.get("audio_transcription")
     if not isinstance(evidence, dict):
         raise HTTPException(409, "audio_transcription_evidence_invalid")
@@ -88,6 +88,7 @@ def _validated_audio_transcription(item: dict, runtime_root: Path) -> dict:
                 or binding.get("source_id") != source_id
                 or bool(binding.get("remote_processing")) != (evidence["store_kind"] == "rebuild")):
             raise ValueError("invalid binding")
+        frozen_lexicon = binding.get("asr_lexicon")
         output_store = (rebuild_store if evidence["store_kind"] == "rebuild" else JsonObjectStore(
             runtime_root / "workspace" / "asr-internal", namespace_id=storage.namespace_id,
             mutation_attribution=json_attribution(runtime_root, storage.namespace_id),
@@ -108,6 +109,20 @@ def _validated_audio_transcription(item: dict, runtime_root: Path) -> dict:
                 or output["text"].strip() != evidence["text"]
                 or asset.get("source_id") != source_id):
             raise ValueError("invalid output")
+        if frozen_lexicon is not None:
+            from core.product_core.audio_asset_transcriber import lexicon_input_identity
+            identity = metadata.get("input_identity")
+            if not isinstance(identity, dict) or identity.get("asr_lexicon") != lexicon_input_identity(frozen_lexicon):
+                raise ValueError("invalid lexicon output")
+        if binding.get("remote_processing") is False:
+            from backend.shared.asr_lexicon import user_asr_lexicon
+            current = user_asr_lexicon(runtime_root).select_for_session()
+            selection = {"revision": current.revision,
+                         "terms": [{"term": term.term, "weight": term.weight} for term in current.terms]}
+            # 原件与输出完整性先通过；词表变化只使缓存失效，原回执保留，新 run 重新转写。
+            if (frozen_lexicon is not None and frozen_lexicon != selection
+                    or frozen_lexicon is None and (current.revision or current.terms)):
+                return None
         return evidence
     except (KeyError, TypeError, ValueError, OSError):
         raise HTTPException(409, "audio_transcription_evidence_invalid") from None
@@ -204,6 +219,8 @@ def _transcribe_output(
         result = TranscribeGeneratedAudioAsset(
             asset_store, namespace_id=storage.namespace_id,
             settings_override=settings,
+            lexicon_snapshot=binding.get("asr_lexicon"),
+            hotwords_root=runtime_root,
             runner=asset_runner(runtime_root) if settings.command == (BUILTIN_FASTER_WHISPER_COMMAND,) else None,
             model_root=pool.model_path('faster-whisper') if pool is not None else None,
         ).execute(audio_asset_id=asset_id)

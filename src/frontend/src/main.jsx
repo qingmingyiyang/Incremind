@@ -4,6 +4,15 @@ import { WebEntry } from "./WebEntry";
 import "./styles.css";
 import "katex/dist/katex.min.css";
 import { bootstrapThemeAndPerformance } from "./features/rebuild/themeBootstrap";
+import { syncCaptureOwner } from './features/capture/captureQueue';
+
+// Electron 的 file:// 入口沿用原启动；网页仅安装分享接收 worker。
+if (['https:', 'http:'].includes(location.protocol) && !globalThis.electronAPI?.backendBaseUrl && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/share-worker.js').catch(() => {});
+  syncCaptureOwner().catch(() => {});
+  window.addEventListener('chriptmas-user-space', () => { syncCaptureOwner().catch(() => {}); });
+  window.addEventListener('chriptmas-device-required', () => { syncCaptureOwner().catch(() => {}); });
+}
 
 // The pet is a transparent native surface. Mark it before React and the theme
 // bootstrap run so the first packaged frame cannot inherit the main app's

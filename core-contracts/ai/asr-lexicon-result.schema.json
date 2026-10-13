@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://default/contracts/ai/asr-lexicon-result.schema.json",
+  "title": "ASR lexicon domain tool result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "receipt_ref", "payload_ref", "evidence_refs", "result"],
+  "properties": {
+    "summary": {"type": "string"},
+    "receipt_ref": {"type": ["string", "null"]},
+    "payload_ref": {"type": "null"},
+    "evidence_refs": {"type": "array", "maxItems": 0},
+    "result": {"type": "object"}
+  }
+}

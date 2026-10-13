@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 import tempfile
 from uuid import uuid4
@@ -41,36 +41,41 @@ class _PublicNote:
     description: str
     content_kind: str
     note: object
+    credential_check: Callable | None = field(default=None, repr=False)
 
 
 def read_xiaohongshu_media(
     url: str, runtime_root: Path, *, project_id: str = "default",
     item_id: str | None = None, run_id: str | None = None,
     validate_remote: Callable[[], None] | None = None,
+    platform_sessions=None,
 ) -> dict[str, str]:
     """Return caption and actual video speech, or fail with a stable code.
 
     Tracking parameters are used only for the ephemeral page fetch. They are
     removed from the canonical URL returned to the Workspace record.
     """
-    return _read_captured_note(_capture_public_note(url), runtime_root,
+    return _read_captured_note(_capture_public_note(url, platform_sessions=platform_sessions), runtime_root,
         project_id=project_id, item_id=item_id, run_id=run_id,
         validate_remote=validate_remote)
 
 
-def _capture_public_note(url):
+def _capture_public_note(url, *, platform_sessions=None):
     """Read the existing safe public page once; retain media locators in memory."""
     platform, resolved_url = resolve_media_url(url)
     if platform != "xiaohongshu":
         raise ValueError("invalid_source")
     note_id, canonical_url, request_url = _source_url(resolved_url)
     try:
-        page = SafeTextNetworkAdapter(
+        network = SafeTextNetworkAdapter(
             allowed_hosts=("xiaohongshu.com", "www.xiaohongshu.com"),
             max_redirects=0,
             max_response_bytes=1024 * 1024,
             timeout_seconds=20,
-        ).fetch_text(request_url)
+        )
+        if platform_sessions is not None:
+            network = platform_sessions.network('xiaohongshu', network)
+        page = network.fetch_text(request_url)
         note = _extract_note(page, note_id=note_id)
         metadata, _assets, content_kind, body = _normalize_note(note, note_id=note_id)
     except NetworkBoundaryError as error:
@@ -78,7 +83,8 @@ def _capture_public_note(url):
     except XiaohongshuMetadataProviderError as error:
         raise ValueError("xiaohongshu_metadata_unavailable") from error
     return _PublicNote(canonical_url, str(metadata['title']),
-        str(body['text']) if body else '', content_kind, note)
+        str(body['text']) if body else '', content_kind, note,
+        network.assert_safe if platform_sessions is not None else None)
 
 
 def _read_captured_note(capture, runtime_root, *, project_id='default',
@@ -91,6 +97,8 @@ def _read_captured_note(capture, runtime_root, *, project_id='default',
         parts = [f'标题：{title}', f'来源：{canonical_url}']
         if description:
             parts.append(f'笔记描述：{description}')
+        if capture.credential_check is not None:
+            capture.credential_check('\n\n'.join(parts))
         return {'source_text': '\n\n'.join(parts), 'title': title,
             'canonical_url': canonical_url, 'content_kind': content_kind,
             'acquisition_method': 'public_html_note'}
@@ -116,6 +124,8 @@ def _read_captured_note(capture, runtime_root, *, project_id='default',
         parts.append(f"笔记描述：{description}")
     parts.append(f"视频语音转写：\n{speech}")
     source_text = "\n\n".join(parts)
+    if capture.credential_check is not None:
+        capture.credential_check(source_text)
     if len(source_text) > _MAX_SOURCE_CHARS:
         raise ValueError("source_text_too_large")
     return {

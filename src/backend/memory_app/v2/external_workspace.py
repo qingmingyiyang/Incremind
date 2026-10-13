@@ -98,7 +98,8 @@ def _mcp(value, memory_endpoint):
         if (not {'command', 'args'} <= set(server) <= {'command', 'args', 'env'}
                 or not isinstance(server['command'], str) or not server['command']
                 or '\x00' in server['command']
-                or server['args'] != ['-I', '-m', 'backend.memory_app.mcp']):
+                or server['args'] not in (['-I', '-m', 'backend.memory_app.mcp'],
+                    ['-I', str(Path(__file__).resolve().parent.parent / 'mcp.py')])):
             _invalid()
         if (not Path(server['command']).is_absolute()
                 or Path(server['command']).resolve() != Path(sys.executable).resolve()):
@@ -106,7 +107,8 @@ def _mcp(value, memory_endpoint):
         environment = server.get('env', {})
         if (not isinstance(environment, Mapping)
                 or any(not isinstance(key, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]*', key)
-                       or not isinstance(item, str) or not _ENV.fullmatch(item)
+                       or not isinstance(item, str) or not (
+                           _loopback_backend(item) if key == 'CHRIPTMAS_MCP_BACKEND_URL' else _ENV.fullmatch(item))
                        for key, item in environment.items())):
             _invalid()
     elif 'url' in server:
@@ -137,6 +139,16 @@ def _mcp(value, memory_endpoint):
     if '\x00' in encoded or contains_secret(encoded):
         _invalid()
     return encoded.encode('utf-8')
+
+
+def _loopback_backend(value):
+    try:
+        parsed = urlsplit(value)
+        return (parsed.scheme == 'http' and parsed.hostname in {'127.0.0.1', '::1'}
+            and parsed.port is not None and 1 <= parsed.port <= 65535 and not parsed.username
+            and not parsed.password and parsed.path in {'', '/'} and not parsed.query and not parsed.fragment)
+    except (TypeError, ValueError):
+        return False
 
 
 def validate_memory_mcp_config(value, *, memory_endpoint=None):

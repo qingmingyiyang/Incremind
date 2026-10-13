@@ -68,6 +68,9 @@ CORE_CAPABILITY_INVENTORY = (
     CoreCapabilityInventoryItem("agent.plan", 1, "2026.09.02"),
     CoreCapabilityInventoryItem("external.context.execute", 1, "2026.10.05"),
     CoreCapabilityInventoryItem("external.task.execute", 1, "2026.10.06"),
+    CoreCapabilityInventoryItem("asr.lexicon.read", 1, "2026.10.13"),
+    CoreCapabilityInventoryItem("asr.lexicon.preview", 1, "2026.10.13"),
+    CoreCapabilityInventoryItem("asr.lexicon.import", 1, "2026.10.13"),
 )
 _CORE_BY_ID = {item.capability_id: item for item in CORE_CAPABILITY_INVENTORY}
 if len(_CORE_BY_ID) != len(CORE_CAPABILITY_INVENTORY):  # pragma: no cover - import-time authoring guard

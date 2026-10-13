@@ -45,6 +45,7 @@ def test_reviewed_core_inventory_is_explicit_unique_and_versioned() -> None:
         "companion.chat.context.read", "companion.chat.message.write",
         "agent.spawn", "agent.message", "agent.interrupt", "agent.wait",
         "agent.fan_in", "agent.list", "agent.plan", "external.context.execute", "external.task.execute",
+        "asr.lexicon.read", "asr.lexicon.preview", "asr.lexicon.import",
     )
 
 

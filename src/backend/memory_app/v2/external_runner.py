@@ -13,6 +13,7 @@ from core.ai_kernel.turn_kinds import freeze_turn_request
 from core.ai_tooling import ToolDefinition, ToolRetryPolicy, tool_contract_identity
 
 from .budget import text_tokens
+from .external_executor_plugins import EXECUTOR_CLIENTS
 from .external_adapters import build_launch_plan
 from .external_workspace import (create_task_workspace, task_material_payloads, task_path_identity,
     validate_memory_mcp_config, validate_task_path, verify_task_material)
@@ -98,8 +99,8 @@ class ExternalRunner:
         from .external_host import ExternalHostError
         try:
             return require_memory_service(self.application, config=config,
-                client={'codex':'codex', 'claude-code':'claude'}.get(executor),
-                environment=self.host._memory_environment())
+                client=EXECUTOR_CLIENTS.get(executor),
+                environment=self.host._memory_environment(config))
         except (MemoryAdmissionError, ExternalHostError):
             raise ExternalRunnerError('external_runner_memory_unavailable') from None
 
@@ -108,8 +109,8 @@ class ExternalRunner:
         from .external_host import ExternalHostError
         try:
             check_memory_configuration(self.application, config=config,
-                client={'codex':'codex', 'claude-code':'claude'}.get(executor),
-                environment=self.host._memory_environment())
+                client=EXECUTOR_CLIENTS.get(executor),
+                environment=self.host._memory_environment(config))
         except (MemoryAdmissionError, ExternalHostError):
             raise ExternalRunnerError('external_runner_memory_unavailable') from None
 
@@ -127,7 +128,7 @@ class ExternalRunner:
             self._composition_current()
             self._check_memory_configuration(config, executor)
             revalidate_memory_service(self.application, proof,
-                client={'codex':'codex', 'claude-code':'claude'}.get(executor))
+                client=EXECUTOR_CLIENTS.get(executor))
         except MemoryAdmissionError:
             raise ExternalRunnerError('external_runner_memory_unavailable') from None
 
@@ -204,7 +205,7 @@ class ExternalRunner:
             if replay is not None:
                 return replay
             self._check_memory_configuration(mcp_config, executor)
-            client = {'codex':'codex', 'claude-code':'claude'}.get(executor)
+            client = EXECUTOR_CLIENTS.get(executor)
             delivery = self.context.qualified_delivery(delivery_turn_id)
             if delivery['owner_id'] != self.owner_id or delivery['client'] != client:
                 _reject()
@@ -274,6 +275,12 @@ class ExternalRunner:
             create_task_workspace(material_root, turn_id, task=task, handoff=delivery['handoff'],
                 mcp_config=mcp_config, attachments=attachments, memory_endpoint=self.host.memory_endpoint,
                 expected_root_identity=root_identity)
+            if executor == 'deepseek-harness':
+                from .external_harness_profile import install_profile
+                install_profile(cwd, mcp_config)
+            elif registration.controlled_api:
+                from .external_host import create_executor_home
+                create_executor_home(cwd)
             self.bind(frozen, delivery_turn_id=delivery_turn_id, plan=plan, mcp_config=mcp_config,
                 host_permission_refs=host_permission_refs, memory_proof=memory_proof, attachments=attachments)
             return deepcopy(frozen)
@@ -288,7 +295,7 @@ class ExternalRunner:
 
     def _delivery(self, request, delivery_turn_id):
         delivery = self.context.qualified_delivery(delivery_turn_id)
-        client = {'codex':'codex','claude-code':'claude'}
+        client = EXECUTOR_CLIENTS
         if (delivery['owner_id'] != self.owner_id
                 or delivery['project_id'] != request['scope']['project_id']
                 or _encoded(delivery['privacy']) != _encoded(request['privacy'])

@@ -15,7 +15,7 @@ import sqlite3
 from backend.recognition import WorkScope
 from ..source_egress import SourceEgressService
 from ..transaction_records import TransactionRecords
-from .external_agent_settings import external_agent_settings
+from .external_executor_plugins import effective_external_agent_settings as external_agent_settings
 from .privacy import (
     external_catalog_allowed, external_egress_allowed, is_private_project, privacy_revision, resolve_turn_material,
 )
@@ -48,7 +48,7 @@ def _identifier(value):
 
 def _request(value, owner):
     if (not isinstance(value, Mapping) or set(value) != _REQUEST_FIELDS
-            or not isinstance(value['client'], str) or value['client'] not in {'claude', 'codex'}
+            or not isinstance(value['client'], str) or value['client'] not in {'claude', 'codex', 'deepseek-harness'}
             or not isinstance(value['tool'], str) or value['tool'] not in {'projects', 'recall', 'methods', 'read'}
             or not isinstance(value['query'], str) or '\x00' in value['query']
             or type(value['budget']) is not int or not 1 <= value['budget'] <= MAX_BUDGET
@@ -66,7 +66,7 @@ def _encoded(value):
 
 def _write_request(client, tool, project_id, owner_id):
     project_id = _identifier(project_id)
-    if (not isinstance(client, str) or client not in {'claude', 'codex'}
+    if (not isinstance(client, str) or client not in {'claude', 'codex', 'deepseek-harness'}
             or not isinstance(tool, str) or tool not in {'remember', 'propose_insight'}):
         raise ExternalAgentGuardError('external_agent_request_invalid')
     return {'client': client, 'tool': tool,

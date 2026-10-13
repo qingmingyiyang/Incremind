@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "crp://default/contracts/ai/asr-lexicon-read-request.schema.json",
+  "title": "Read current user ASR lexicon or bundled method",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["view"],
+  "properties": {"view": {"enum": ["skill", "terms"]}}
+}

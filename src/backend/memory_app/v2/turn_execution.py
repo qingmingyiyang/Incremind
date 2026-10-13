@@ -12,7 +12,11 @@ from .turn_timings import turn_timing
 REQUESTS = "v2_turn_requests"
 _REQUEST_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _INTERNAL_REQUEST_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?::[0-2])?")
-SAFE_ERRORS = {"answer_generation_failed", "source_changed_retry", "remote_disabled",
+SAFE_ERRORS = {'external_host_isolation_unavailable', 'external_executor_not_installed',
+    'external_executor_version_unverified', 'external_executor_version_unsupported',
+    'external_executor_credentials_unavailable', 'external_agent_disabled',
+    'external_task_runtime_unavailable', 'external_task_not_prepared', 'external_task_backend_unavailable',
+    'invalid_executor', 'invalid_executor_request',"answer_generation_failed", "source_changed_retry", "remote_disabled",
     "private_project_remote_blocked", "ask_model_target_changed", "turn_in_progress",
     "turn_interrupted", "workbench_not_found", "invalid_turn", "question_too_long",
     "invalid_idempotency_key", "idempotency_key_conflict"}

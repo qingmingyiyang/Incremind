@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
 import sys
 from pathlib import Path
@@ -52,6 +53,7 @@ class FasterWhisperTranscriber:
         self._decode_options = _build_decode_options(transcription_mode)
         self._model = shared_model('recognition', (model_size, resolved_device, compute_type),
             lambda: WhisperModel(model_size, device=resolved_device, compute_type=compute_type))
+        self.hotword_receipt = None
 
     def transcribe(
         self,
@@ -59,6 +61,7 @@ class FasterWhisperTranscriber:
         output_stem: Path,
         on_progress: Callable[[float], None] | None = None,
         control_check: Callable[[], None] | None = None,
+        hotwords: tuple[str, ...] = (),
     ) -> Transcript:
         output_stem.parent.mkdir(parents=True, exist_ok=True)
         invoke = self._model.transcribe
@@ -66,11 +69,19 @@ class FasterWhisperTranscriber:
             invoke = lambda *args, **kwargs: self._model.controlled_call('transcribe',control_check,*args,**kwargs)
         if control_check is not None:
             control_check()
+        extra = {}
+        if hotwords:
+            selected, self.hotword_receipt = _select_hotwords(self._model, hotwords)
+            if selected:
+                extra["hotwords"] = selected
+        else:
+            self.hotword_receipt = {"applied_count": 0, "truncated_count": 0, "token_count": 0}
         segments_iter, info = invoke(
             str(audio_path),
             language=self._language,
             vad_filter=True,
             **self._decode_options,
+            **extra,
         )
         total_duration = getattr(info, "duration", None)
         segments = []
@@ -89,6 +100,25 @@ class FasterWhisperTranscriber:
             if on_progress is not None and total_duration:
                 on_progress(float(segment.end) / float(total_duration))
         return Transcript(language=getattr(info, "language", self._language), segments=segments)
+
+
+def _select_hotwords(model, words):
+    engine = getattr(model, "engine", model)
+    parameters = inspect.signature(engine.transcribe).parameters
+    if "hotwords" not in parameters and not any(value.kind == inspect.Parameter.VAR_KEYWORD for value in parameters.values()):
+        raise RuntimeError("local_asr_hotwords_unsupported")
+    tokenizer = engine.hf_tokenizer
+    # 上游会在半窗口直接截断 token；这里先按完整词裁剪，并给 SOT 与历史留空间。
+    budget = int(engine.max_length) // 2 - 8
+    selected, tokens = [], 0
+    for word in words:
+        proposed = ", ".join([*selected, word])
+        size = len(tokenizer.encode(" " + proposed, add_special_tokens=False).ids)
+        if size > budget:
+            continue
+        selected.append(word)
+        tokens = size
+    return ", ".join(selected), {"applied_count": len(selected), "truncated_count": len(words) - len(selected), "token_count": tokens}
 
 
 def _resolve_device(device: str) -> str:

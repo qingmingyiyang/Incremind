@@ -40,6 +40,10 @@ def interfaces_for_turn(kind):
         recipe = (*PIPELINES[pipeline], *DEPENDENCIES[pipeline])
     except KeyError as error:
         raise ValueError('unknown_policy_pipeline') from error
+    if kind in {'memory.organize', 'memory.propose_insights'} and version('organize') == '@2':
+        recipe = (*recipe, 'material_analysis')
+        if version('material_analysis') in {'@2', '@3', '@4'}:
+            recipe = (*recipe, 'context_preparation')
     return tuple(sorted(set(recipe)))
 
 

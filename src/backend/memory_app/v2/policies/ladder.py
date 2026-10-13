@@ -1331,3 +1331,129 @@ v15.post_fit_gain = gain_v15
 v15.dedup_gain = dedup_gain_v15
 v15.context_spans = context_spans_v15
 register('ladder', '@15')(v15)
+
+
+def demand_v16(question, *, reference_score=0, semantic_anchors=()):
+    import re
+    demand = demand_v12(question, reference_score=reference_score, semantic_anchors=semantic_anchors)
+    # 只扩大明确的感情/婚姻属性发现；工作、客户和朋友关系仍由原需求判断。
+    status = re.search(r'\b(?:relationship|marital|romantic|dating)\s+status\b'
+        r'|(?:感情|恋爱|婚姻|婚恋)(?:状态|状况)|是否(?:单身|已婚)', question, re.I)
+    other_relation = re.search(r'\b(?:work|business|professional|employment|customers?|clients?|friends?|friendship)\b'
+        r'|工作|职业|业务|客户|同事|朋友|人际', question, re.I)
+    demand['relationship_status_clues'] = bool(status and not other_relation)
+    return demand
+
+
+def relationship_clues_v16(candidate, demand):
+    import re
+    if (not demand.get('relationship_status_clues') or candidate.get('persona')
+            or candidate.get('_discovered_chain') or gap_v12(candidate['excerpt'])):
+        return set()
+    result = set()
+    actors = '|'.join(re.escape(actor) for actor in demand['actors'])
+    subject = r"(?:i(?:['’](?:m|ve|d|ll)|\s+(?:am|was|got|have|had|will|might|may|stay|remain))|we(?:['’](?:re|ve|d|ll)|\s+(?:are|were|got|have|had|will|might)))"
+    if actors:
+        subject += r'|(?:'+actors+r')\s+(?:is|was|got|has|had|will|might)'
+    predicate = (r'(?:^|[,;]\s*)(?:'+subject+r')\s+(?:(?:not|never|still|currently|now|no longer|been|be|stay|remain|happily|recently)\s+)*'
+        r'(?:single\b(?!-|\s+(?:ticket|file|room|piece))|married\b(?!\s+to\s+(?:my\s+)?(?:work|job))'
+        r'|engaged\b(?!\s+(?:in|with))|divorced\b|separated\b|widowed\b|partnered\b|dating\b|in a relationship\b)')
+    personal_event = (r'\b(?:my|our)\s+(?:(?:recent|tough|painful|difficult|past)\s+)*(?:break[ -]?up|divorce|separation)\b'
+        r'|^(?:i|we)(?:\s+(?:went|go|am going|are going|have gone|had gone|got|am getting|are getting)'
+        r'|[\x27’]ve\s+gone)\s+(?:through\s+)?(?:(?:a|the|my|our|tough|painful|recent|difficult)\s+)*'
+        r'(?:break[ -]?up|divorce|separation)\b')
+    parenting_subject = (r"(?:i(?:['’](?:m|ll|d)|\s+(?:am|will|would|might|may|plan|hope|want|expect|intend))"
+        r"|we(?:['’](?:re|ll|d)|\s+(?:are|will|would|might|may|plan|hope|want|expect|intend)))")
+    parent_plan = (r'^'+parenting_subject+r'\s+(?:(?:not|never|still|planning|hoping|trying|going|ready|to|be|become|becoming|a)\s+)*'
+        r'(?:single|solo|lone)\s+parent\b')
+    parent_anchor = (r'^'+parenting_subject+r'\s+(?:(?:thrilled|excited|ready|planning|hoping|trying|going|to|a)\s+)*'
+        r'(?:make|start|build|raise|adopt)\b[^.!?]*\b(?:family|kids?|children)\b')
+    chinese_state = (r'^(?:我|我们)(?:(?:目前|现在|仍然|还是|还|已经|曾经|从未|没有|尚未|不再|不|未|已|刚|准备|打算|计划|希望|可能|将|会|要|是|正在|考虑|决定|选择|一直))*'
+        r'(?:单身|未婚|已婚|结婚|离婚|分手|订婚|丧偶|独自养育)')
+    for _, body in local_units_v11(candidate, demand):
+        # 图注及第三人的单身描述不承担目标人物的状态发现；同主体计划仍保留原句。
+        body = re.sub(r'\[Image caption:[\s\S]*?\]', '', body, flags=re.I)
+        previous_parenting = False
+        for statement in statements_v9([{'excerpt': body}]):
+            # 只为匹配遮住转述引号，最终保留的仍是完整原文，不能把引号内的我移给说话人。
+            unquoted = re.sub(r'"[^"\n]*"|“[^”\n]*”|(?<!\w)\x27[^\x27\n]+\x27(?!\w)', ' ', statement)
+            explicit = re.search(predicate, unquoted, re.I)
+            continuation = re.search(r"^it(?:['’](?:ll|s)|\s+(?:is|will))\b[^.!?]*\bas a (?:single|solo|lone) parent\b", unquoted, re.I)
+            # 养育角色之前明确写for时，只允许本人me/us承接；句尾up for等无关搭配不参与。
+            own_continuation = bool(continuation and not re.search(r'\bfor\s+(?!me\b|us\b)', continuation[0], re.I))
+            contextual = (re.search(personal_event, unquoted, re.I) or re.search(parent_plan, unquoted, re.I)
+                or re.search(chinese_state, unquoted)
+                or previous_parenting and own_continuation)
+            if explicit or contextual:
+                result.add(statement)
+            # 只有同记录紧邻的本人养育意向可以承接下一句it，普通自述不构成状态资格。
+            previous_parenting = bool(re.search(parent_anchor, unquoted, re.I))
+    return result
+
+
+def relationship_gain_v16(candidate, chosen, demand):
+    previous = set().union(*(relationship_clues_v16(row, demand) for row in chosen)) if chosen else set()
+    return bool(relationship_clues_v16(candidate, demand) - previous)
+
+
+def marginal_v16(candidate, chosen, demand):
+    return marginal_v15(candidate, chosen, demand) or (1.0 if relationship_gain_v16(candidate, chosen, demand) else 0.0)
+
+
+def gain_v16(candidate, chosen, demand):
+    return gain_v15(candidate, chosen, demand) or relationship_gain_v16(candidate, chosen, demand)
+
+
+def dedup_gain_v16(candidate, chosen, demand):
+    return dedup_gain_v15(candidate, chosen, demand) or relationship_gain_v16(candidate, chosen, demand)
+
+
+def seed_scores_v16(chunks, question, title, summary, vectors):
+    from . import get
+    demand = demand_v16(question)
+    scores = {index: (score, index, similarity) for score, index, similarity in
+        seed_scores_v11(chunks, question, title, summary, vectors)}
+    for index, chunk in enumerate(chunks):
+        if relationship_clues_v16({'excerpt': chunk.text}, demand):
+            similarity = max(0.0, min(1.0, float(vectors.get(index, 0))))
+            # 明确的原文属性线索按既有词面命中排序，不降低向量或独立链的准入阈值。
+            meaning = getattr(get('rank'), 'meaning', None)
+            score = meaning(1, similarity if index in vectors else None) if meaning else 1.0
+            if index not in scores or score > scores[index][0]:
+                scores[index] = (float(score), index, similarity)
+    return tuple(sorted(scores.values(), key=lambda row: (-row[0], row[1])))
+
+
+def seed_order_v16(chunks, question, title, summary, vectors):
+    return tuple(index for _, index, _ in seed_scores_v16(chunks, question, title, summary, vectors))
+
+
+def context_spans_v16(content, ranges, first, last, seed, question, score, similarity):
+    spans = list(context_spans_v15(content, ranges, first, last, seed, question, score, similarity))
+    demand = demand_v16(question)
+    for index in range(first, last + 1):
+        left, right = ranges[index]
+        if relationship_clues_v16({'excerpt': content[left:right]}, demand):
+            start, end = context_neighborhood_v12(content, ranges, index, index)
+            spans.append((start, end, similarity if start <= seed.start and seed.end <= end else 0.0))
+    return tuple(dict.fromkeys(spans))
+
+
+def v16():
+    """关系状态问法保留同主体的原文状态线索，不据此断言当前状态。"""
+    return v15()
+
+
+for _attribute in ('limits', 'context_window', 'input_budget', 'progress', 'context_ranges',
+        'context_neighborhood', 'refine_context', 'refresh_demand',
+        'merge_vector_seeds', 'prepare_frontier', 'semantic_rerank', 'bounded_discovery'):
+    setattr(v16, _attribute, getattr(v15, _attribute))
+v16.demand = demand_v16
+v16.marginal = marginal_v16
+v16.relational_gain = gain_v16
+v16.post_fit_gain = gain_v16
+v16.dedup_gain = dedup_gain_v16
+v16.seed_scores = seed_scores_v16
+v16.seed_order = seed_order_v16
+v16.context_spans = context_spans_v16
+register('ladder', '@16')(v16)

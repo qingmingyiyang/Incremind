@@ -41,7 +41,7 @@ def install_v2_routes(application, *, runtime_root, records, models, documents, 
     install_mcp_intake_routes(application, workspace=workspace, records=records,
         service=service, reserve_write=external_context.guard.reserve_write)
     application.state.external_runner_installer = install_external_runner
-    install_local_host(application.state, runtime_root=runtime_root, records=records, context=external_context)
+    install_local_host(application.state, runtime_root=runtime_root, records=records, context=external_context, models=models)
     from .external_proxy import install_external_proxy_routes
     install_external_proxy_routes(application, runtime_root=runtime_root, records=records, workspace=workspace)
 
@@ -91,6 +91,15 @@ def install_v2_routes(application, *, runtime_root, records, models, documents, 
     install_subscription_routes(application, models=models)
     install_settings_routes(application, runtime_root=runtime_root, records=records, models=models,
                            documents=documents, workspace=workspace)
+    from .asr_lexicon import install_asr_lexicon_routes
+    install_asr_lexicon_routes(application, runtime_root=runtime_root, records=records)
+    from .agent_data_tools import AgentDataTools
+    # 产品层提供领域工具构造，内核装配只消费注入入口，不反向导入 v2。
+    application.state.product_agent_data_tools_factory = AgentDataTools
+    from .external_executor_plugins import install_executor_plugin_routes
+    install_executor_plugin_routes(application, records=records, models=models)
+    from .platform_sessions import install_platform_session_routes
+    install_platform_session_routes(application, records=records, models=models)
     install_usage_routes(application, records=records)
     from .signals import install_signal_routes
     install_signal_routes(application, records=records)

@@ -153,6 +153,8 @@ class TranscribeGeneratedAudioAsset:
         cancellation_requested: Callable[[], bool] | None = None,
         settings_override: AudioAssetTranscriberSettings | None = None,
         model_root: Path | None = None,
+        lexicon_snapshot: Mapping[str, object] | None = None,
+        hotwords_root: Path | None = None,
     ) -> None:
         self._object_store = object_store
         self._namespace_id = namespace_id
@@ -161,6 +163,8 @@ class TranscribeGeneratedAudioAsset:
         self._cancellation_requested = cancellation_requested
         self._settings_override = settings_override
         self._model_root = model_root
+        self._lexicon_snapshot = _lexicon_snapshot(lexicon_snapshot)
+        self._hotwords_root = hotwords_root
 
     def execute(self, *, audio_asset_id: str) -> AudioAssetTranscriptionResult:
         clean_audio_asset_id = _required_text(audio_asset_id, "audio_asset_id")
@@ -189,6 +193,8 @@ class TranscribeGeneratedAudioAsset:
             else f"media-output-transcript-{source_id}"
         )
         input_identity = _input_identity(audio_path, settings.model_name, settings.command, self._model_root)
+        if self._lexicon_snapshot is not None:
+            input_identity["asr_lexicon"] = lexicon_input_identity(self._lexicon_snapshot)
         existing_output = self._object_store.read("media_processing_outputs", output_id)
         if existing_output is not None:
             return self._replay_existing(
@@ -208,12 +214,22 @@ class TranscribeGeneratedAudioAsset:
             status="running",
             error=None,
         )
+        hotwords_path = None
         try:
+            if self._lexicon_snapshot is not None and settings.command == (BUILTIN_FASTER_WHISPER_COMMAND,):
+                words_root = (self._hotwords_root or _app_root()) / "workspace" / "asr-internal"
+                words_root.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix=".asr-hotwords-", suffix=".json",
+                                                 dir=words_root, delete=False) as words_file:
+                    hotwords_path = Path(words_file.name)
+                    os.chmod(hotwords_path, 0o600)
+                    json.dump(self._lexicon_snapshot, words_file, ensure_ascii=False)
             command = _command_for_audio(
                     settings.command,
                     audio_path,
                     model_profile=settings.model_profile,
                     model_name=settings.model_name,
+                    hotwords_path=hotwords_path,
                 )
             completed = (
                 self._runner(command, settings.timeout_seconds)
@@ -227,6 +243,11 @@ class TranscribeGeneratedAudioAsset:
             if completed.returncode != 0:
                 raise AudioAssetTranscriptionError(_command_error(completed, "audio asset transcription failed"))
             transcript = _transcript_from_stdout(completed.stdout)
+            if hotwords_path is not None and self._lexicon_snapshot["terms"] and transcript.hotwords is None:
+                raise AudioAssetTranscriptionError("local ASR hotword receipt is unavailable")
+            if (hotwords_path is not None and transcript.hotwords is not None
+                    and transcript.hotwords["applied_count"] + transcript.hotwords["truncated_count"] != len(self._lexicon_snapshot["terms"])):
+                raise AudioAssetTranscriptionError("local ASR hotword receipt count drifted")
             text = _segments_text(transcript.segments)
             if not text:
                 raise AudioAssetTranscriptionError("audio asset transcriber returned empty transcript")
@@ -267,6 +288,10 @@ class TranscribeGeneratedAudioAsset:
                         "model_profile": settings.model_profile,
                         "model_name": settings.model_name,
                         "input_identity": input_identity,
+                        "asr_lexicon": ({"revision": self._lexicon_snapshot["revision"],
+                                         "selected_count": len(self._lexicon_snapshot["terms"]),
+                                         "hotwords_supported": settings.command == (BUILTIN_FASTER_WHISPER_COMMAND,),
+                                         **(transcript.hotwords or {})} if self._lexicon_snapshot is not None else None),
                         "starts_summary": False,
                         "memory_publication": "not_started",
                     },
@@ -314,6 +339,7 @@ class TranscribeGeneratedAudioAsset:
                 status=terminal_status,
                 error=reason,
             )
+
             return AudioAssetTranscriptionResult(
                 status=terminal_status,
                 job_id=job_id,
@@ -330,6 +356,10 @@ class TranscribeGeneratedAudioAsset:
                 publishes_memory=False,
                 error=reason,
             )
+
+        finally:
+            if hotwords_path is not None:
+                hotwords_path.unlink(missing_ok=True)
 
     def _replay_existing(
         self,
@@ -485,6 +515,7 @@ def serialize_audio_asset_transcription_result(result: AudioAssetTranscriptionRe
 class _Transcript:
     language: str | None
     segments: tuple[AudioTranscriptSegment, ...]
+    hotwords: Mapping[str, object] | None = None
 
 
 def _settings_from_record(record: Mapping[str, object]) -> AudioAssetTranscriberSettings:
@@ -550,7 +581,32 @@ def _transcript_from_stdout(stdout: str) -> _Transcript:
     if not segments:
         raise AudioAssetTranscriptionError("audio asset transcriber returned no transcript segments")
     language = _optional_str(payload.get("language"))
-    return _Transcript(language=language, segments=tuple(segments))
+    hotwords = payload.get("hotwords")
+    if hotwords is not None and (not isinstance(hotwords, Mapping) or set(hotwords) != {"applied_count", "truncated_count", "token_count"}
+                                or any(type(value) is not int or value < 0 for value in hotwords.values())):
+        raise AudioAssetTranscriptionError("local ASR hotword receipt is invalid")
+    return _Transcript(language=language, segments=tuple(segments), hotwords=hotwords)
+
+
+def _lexicon_snapshot(value):
+    if value is None:
+        return None
+    if (not isinstance(value, Mapping) or type(value.get("revision")) is not int or value["revision"] < 0
+            or not isinstance(value.get("terms"), list) or len(value["terms"]) > 2000):
+        raise AudioAssetTranscriptionError("local ASR lexicon snapshot is invalid")
+    terms = []
+    for term in value["terms"]:
+        if (not isinstance(term, Mapping) or not isinstance(term.get("term"), str) or not term["term"].strip()
+                or type(term.get("weight")) is not int or term["weight"] not in {1, 2, 3, 4, 5, 50}):
+            raise AudioAssetTranscriptionError("local ASR lexicon snapshot is invalid")
+        terms.append({"term": term["term"], "weight": term["weight"]})
+    return {"revision": value["revision"], "terms": terms}
+
+
+def lexicon_input_identity(snapshot):
+    clean = _lexicon_snapshot(snapshot)
+    return {"revision": clean["revision"], "term_count": len(clean["terms"]),
+            "selection_sha256": hashlib.sha256(json.dumps(clean, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()}
 
 
 def _command_for_audio(
@@ -559,6 +615,7 @@ def _command_for_audio(
     *,
     model_profile: str,
     model_name: str,
+    hotwords_path: Path | None = None,
 ) -> tuple[str, ...]:
     clean_command = _command_tuple(command)
     if not clean_command:
@@ -576,7 +633,7 @@ def _command_for_audio(
             "balanced",
             "--language",
             "zh",
-        )
+        ) + (("--hotwords-file", str(hotwords_path)) if hotwords_path is not None else ())
     replaced: list[str] = []
     has_placeholder = False
     for part in clean_command:

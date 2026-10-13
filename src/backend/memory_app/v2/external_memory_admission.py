@@ -21,7 +21,7 @@ _ERROR = 'external_runner_memory_unavailable'
 _TOOLS = {'projects', 'recall', 'methods', 'read', 'remember', 'propose_insight', 'report_use'}
 _ENVIRONMENT = {'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE',
     'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
-    'CHRIPTMAS_DEVICE_KEY', 'DEVICE_KEY', 'APPROVED_DEVICE_KEY'}
+    'CHRIPTMAS_DEVICE_KEY', 'DEVICE_KEY', 'APPROVED_DEVICE_KEY', 'CHRIPTMAS_MCP_BACKEND_URL'}
 _CREDENTIALS = {'CHRIPTMAS_DEVICE_KEY', 'DEVICE_KEY', 'APPROVED_DEVICE_KEY'}
 _PROOF = {'turn_id', 'owner_id', 'client', 'immutable_ref', 'outcome_ref'}
 
@@ -44,6 +44,12 @@ def _environment(environment, aliases):
     result = {key: '' for key in DEFAULT_INHERITED_ENV_VARS}
     result.update(environment)
     for target, reference in aliases.items():
+        if target == 'CHRIPTMAS_MCP_BACKEND_URL':
+            from .external_workspace import _loopback_backend
+            if not _loopback_backend(reference) or environment.get(target) != reference:
+                _deny()
+            result[target] = reference
+            continue
         if (target not in _CREDENTIALS or not isinstance(reference, str)
                 or not reference.startswith('${') or not reference.endswith('}')):
             _deny()
@@ -55,7 +61,7 @@ def _environment(environment, aliases):
 
 
 def _preflight(application, config, client, environment):
-    if client not in {'claude', 'codex'}:
+    if client not in {'claude', 'codex', 'deepseek-harness'}:
         _deny()
     canonical = json.loads(validate_memory_mcp_config(config))
     server = canonical['mcpServers']['chriptmas-memory']
@@ -63,9 +69,15 @@ def _preflight(application, config, client, environment):
         _deny()
     # 路由和受控模块都必须真实存在，缺依赖时不导入 SDK 或启动进程。
     from fastapi.routing import APIRoute
+    candidates = []
+    for route in application.router.routes:
+        # 与原server dispatcher相同，读取当前FastAPI包含路由的有效路径。
+        effective = getattr(route, 'effective_route_contexts', None)
+        candidates.extend(effective() if callable(effective) else (route,))
     for name in _TOOLS:
-        routes = [route for route in application.routes
-            if isinstance(route, APIRoute) and route.path == '/api/v2/external-agent/mcp/' + name]
+        routes = [route for route in candidates
+            if isinstance(getattr(route, 'original_route', route), APIRoute)
+            and route.path == '/api/v2/external-agent/mcp/' + name]
         if len(routes) != 1 or routes[0].methods != {'POST'}:
             _deny()
     expected = Path(__file__).resolve().parent.parent / 'mcp.py'
@@ -78,9 +90,7 @@ def _preflight(application, config, client, environment):
     if not callable(getattr(context, 'prepare_projects', None)):
         _deny()
     validate_task_path(Path(server['command']))
-    # SDK 在启动后才绑定 Job；Windows venv 启动器可能已创建未绑定的原生子进程。
-    if os.name == 'nt' and Path(sys.executable).resolve() != Path(sys._base_executable).resolve():
-        _deny()
+    # 进程只经原run_process在绑定owner后启动，venv后代同属该生命周期。
     native = importlib.import_module('backend.memory_app.mcp')
     tools = native._tools()
     if len(tools) != len(_TOOLS) or {tool.name for tool in tools} != _TOOLS:
@@ -108,7 +118,7 @@ def _exchange(server, client, expected_tools):
         import anyio
         from jsonschema import Draft202012Validator
         from mcp import ClientSession, types
-        from mcp.client.stdio import stdio_client
+        from .external_memory_transport import owned_stdio_client as stdio_client
     except Exception:
         raise MemoryAdmissionError(_ERROR) from None
     result, failures = [], []
@@ -117,11 +127,11 @@ def _exchange(server, client, expected_tools):
         async def probe():
             # stderr 丢弃；SDK 解析异常仅在本线程关闭日志，不影响其他会话。
             with open(os.devnull, 'w', encoding='utf-8') as errlog:
-                with anyio.fail_after(3):
+                with anyio.fail_after(30):
                     async with stdio_client(server, errlog=errlog) as (reader, writer):
                         async with ClientSession(reader, writer,
-                            read_timeout_seconds=timedelta(seconds=2),
-                            client_info=types.Implementation(name=client, version='1.0.0')) as session:
+                            read_timeout_seconds=timedelta(seconds=25),
+                            client_info=types.Implementation(name='dsh-mcp-client' if client == 'deepseek-harness' else client, version='1.0.0')) as session:
                             initialized = await session.initialize()
                             if (initialized.serverInfo.name != 'chriptmas-memory'
                                     or initialized.serverInfo.version != '1.0.0'
@@ -178,7 +188,7 @@ def _context(application):
 
 def _qualification(application, turn_id, client):
     context = _context(application)
-    if client not in {'claude', 'codex'} or not isinstance(turn_id, str) or not turn_id:
+    if client not in {'claude', 'codex', 'deepseek-harness'} or not isinstance(turn_id, str) or not turn_id:
         _deny()
     ref, archive, outcome_ref = context._completed(turn_id)
     frozen = context.turns.get_request(turn_id)

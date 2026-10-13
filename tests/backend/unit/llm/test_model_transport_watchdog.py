@@ -40,16 +40,30 @@ class LoopbackProvider:
                 if mode == 'header' and call == 1:
                     sleep(.18)
                 try:
-                    if call == 1 and mode in {'server', 'rate_limit', 'quota', 'unauthorized', 'forbidden'}:
+                    if call == 1 and mode in {'server', 'rate_limit', 'quota', 'unauthorized', 'forbidden',
+                            'busy_http', 'busy_quota', 'busy_auth', 'busy_unsupported', 'busy_refusal'}:
                         status = {'server': 503, 'rate_limit': 429, 'quota': 429,
-                            'unauthorized': 401, 'forbidden': 403}[mode]
+                            'unauthorized': 401, 'forbidden': 403, 'busy_http': 400, 'busy_quota': 429,
+                            'busy_auth': 403, 'busy_unsupported': 503, 'busy_refusal': 503}[mode]
                         self.send_response(status)
                         self.send_header('Content-Type', 'application/json')
                         self.send_header('Retry-After', '2' if mode == 'server' else '0')
                         self.send_header('Connection', 'close')
                         self.end_headers()
-                        self.wfile.write(json.dumps({'error': {'code': 'insufficient_quota'
-                            if mode == 'quota' else 'synthetic_provider_failure'}}).encode())
+                        code = {'busy_http': 'server_busy', 'busy_quota': 'insufficient_quota',
+                            'busy_auth': 'server_busy', 'busy_unsupported': 'subscription_sharing_unsupported_capability',
+                            'busy_refusal': 'content_filter', 'quota': 'insufficient_quota'}.get(mode, 'synthetic_provider_failure')
+                        self.wfile.write(json.dumps({'error': {'code': code,
+                            'message': 'servers are currently busy' if mode.startswith('busy_') else 'synthetic'}}).encode())
+                        return
+                    if protocol == 'chat' and body.get('stream') is not True:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Connection', 'close')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({'choices': [{'message': {'role': 'assistant',
+                            'content': '{"answer":"done"}'}, 'finish_reason': 'stop'}],
+                            'usage': {'prompt_tokens': 4, 'completion_tokens': 2, 'total_tokens': 6}}).encode())
                         return
                     self.send_response(200)
                     self.send_header('Content-Type', 'text/event-stream')
@@ -60,6 +74,14 @@ class LoopbackProvider:
                     def event(value):
                         self.wfile.write(('data: ' + json.dumps(value) + '\n\n').encode())
                         self.wfile.flush()
+
+                    if call == 1 and mode in {'busy_stream', 'busy_body', 'busy_tool'}:
+                        if mode == 'busy_body':
+                            event({'type': 'response.output_text.delta', 'delta': '{"answer":"partial\\n\\n'})
+                        elif mode == 'busy_tool':
+                            event({'type': 'response.function_call_arguments.delta', 'delta': '{}'})
+                        event({'type': 'response.failed', 'response': {'error': {'code': 'server_busy'}}})
+                        return
 
                     if call == 1 and mode in {'early_eof', 'body_eof', 'refusal', 'explicit_incomplete'}:
                         if mode == 'body_eof':
@@ -148,7 +170,7 @@ def run_http(tmp_path, mode, protocol, *, native_capabilities=False, streaming=T
     responses, retries, deltas = [], [], []
     fake_elapsed = [0.0]
     if observation is not None:
-        observation.update(raw_bytes=0, body_closed=False)
+        observation.update(raw_bytes=0, body_closed=False, guards=0, finishes=0)
     client = httpx.Client(transport=RoutedTransport(provider.base), trust_env=False,
         event_hooks={'response': [responses.append]}) if protocol == 'responses' else None
 
@@ -169,10 +191,13 @@ def run_http(tmp_path, mode, protocol, *, native_capabilities=False, streaming=T
 
             class Lease:
                 def finish(self, *_args, **_kwargs):
-                    pass
+                    if observation is not None:
+                        observation['finishes'] += 1
 
             def authorize(*_args):
                 execution_control.checkpoint()
+                if observation is not None:
+                    observation['guards'] += 1
                 return Lease()
 
             gateway = LiteLLMCompletionGateway(provider='openai', model='gpt-5.4-mini',
@@ -186,7 +211,10 @@ def run_http(tmp_path, mode, protocol, *, native_capabilities=False, streaming=T
 
                 def observed(**kwargs):
                     result = actual(**kwargs)
-                    responses.append(result.completion_stream.response)
+                    stream = getattr(result, 'completion_stream', None)
+                    response = getattr(stream, 'response', None)
+                    if response is not None:
+                        responses.append(response)
                     return result
 
                 gateway._completion = observed

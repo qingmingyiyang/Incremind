@@ -412,8 +412,8 @@ def _settings(root: Path):
 
 
 def _lexicon(root: Path) -> RealtimeAsrLexicon:
-    store, _storage = build_rebuild_object_store(root)
-    return RealtimeAsrLexicon(store)
+    from backend.shared.asr_lexicon import user_asr_lexicon
+    return user_asr_lexicon(root)
 
 
 def _propose_confirmed_project_name(

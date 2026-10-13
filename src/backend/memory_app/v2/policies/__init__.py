@@ -11,6 +11,8 @@ ACTIVE = {
     'retry': '@1',
     'image_read': '@1',
     'organize': '@1',
+    'material_analysis': '@1',
+    'context_preparation': '@1',
     'place': '@2',
     'extract': '@5',
     'route': '@1',
@@ -117,13 +119,25 @@ def parse_overrides(options):
 # without importing a store, application, model gateway, or service instance.
 from . import organize, place, extract, route, scope, retrieve, rank, strength, forget, enough, compose, trigger, consolidate, image_read, handoff, retry
 from . import extract_comments
+from . import extract_material
+from . import material_analysis
+from . import material_analysis_fallback, context_preparation
+from . import material_analysis_nullable
+from . import material_analysis_dialogue
 from . import outcome_correction
+from . import agent_data
 
 for _module in (organize, place, extract, route, scope, retrieve, rank, strength,
                 forget, enough, compose, trigger, consolidate, image_read, handoff):
     register(_module.__name__.rsplit('.', 1)[-1], '@1')(_module.v1)
 
 register('scope', '@2')(scope.v2)
+register('organize', '@2')(organize.v1)
+register('material_analysis', '@1')(material_analysis.v1)
+register('material_analysis', '@2')(material_analysis_fallback.v2)
+register('material_analysis', '@3')(material_analysis_nullable.v3)
+register('material_analysis', '@4')(material_analysis_dialogue.v4)
+register('context_preparation', '@1')(context_preparation.v1)
 register('rank', '@2')(rank.v2)
 register('rank', '@3')(rank.v3)
 register('handoff', '@2')(handoff.v2)
@@ -131,6 +145,7 @@ register('extract', '@2')(extract.v2)
 register('extract', '@3')(extract_comments.v3)
 register('extract', '@4')(extract_comments.v4)
 register('extract', '@5')(extract_comments.v5)
+register('extract', '@6')(extract_material.v6)
 register('trigger', '@2')(trigger.v2)
 register('consolidate', '@2')(consolidate.v2)
 register('retry', '@1')(retry.decide)

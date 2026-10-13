@@ -105,8 +105,13 @@ _ERROR_CATEGORIES = {
     "subscription_sharing_user_not_eligible": "authorization", "subscription_sharing_invalid_user": "authorization",
     "chatpass_v2_scope_not_authorized": "authorization", "chatpass_v2_invalid_authorization_context": "authorization",
     "subscription_sharing_unsupported_capability": "unsupported", "subscription_sharing_route_not_supported": "unsupported",
+    "invalid_request_error": "unsupported", "invalid_request": "unsupported",
+    "unsupported_parameter": "unsupported", "unsupported_value": "unsupported", "unsupported_model": "unsupported",
     "subscription_sharing_usage_unavailable": "transient", "subscription_sharing_user_unavailable": "transient",
-    "server_error": "transient", "rate_limit_exceeded": "rate_limit", "content_filter": "refusal",
+    "server_error": "transient", "server_busy": "capacity", "rate_limit_exceeded": "rate_limit",
+    "quota_exceeded": "usage_limit", "billing_hard_limit_reached": "usage_limit", "usage_limit_reached": "usage_limit",
+    "GoUsageLimitError": "usage_limit", "FreeUsageLimitError": "usage_limit",
+    "content_filter": "refusal", "content_policy_violation": "refusal", "safety": "refusal", "refusal": "refusal",
 }
 
 
@@ -114,17 +119,31 @@ def _provider_error(status_code, body, *, output_started=False, message="subscri
     value = body if isinstance(body, dict) else {}
     value = value.get("error", value)
     value = value if isinstance(value, dict) else {}
-    raw_code = value.get("code")
-    code = raw_code if isinstance(raw_code, str) and raw_code in _ERROR_CATEGORIES else None
+    codes = [value.get("code"), value.get("type")]
+    known = [code for code in codes if isinstance(code, str) and code in _ERROR_CATEGORIES]
+    # 永久错误优先，不能被同一回复中的繁忙类型或诊断文案覆盖。
+    code = next((code for code in known if _ERROR_CATEGORIES[code] in {
+        "authorization", "usage_limit", "refusal", "unsupported"}), next(iter(known), None))
     category = _ERROR_CATEGORIES.get(code, "unknown")
+    detail = body.get("detail") if isinstance(body, dict) else None
+    texts = [value.get("message"), value.get("detail"), detail]
+    # 混合繁忙与额度诊断时采用不可重试结论，原文只在此处短暂参与判断。
+    if category in {"unknown", "transient", "rate_limit", "capacity"} and any(
+            isinstance(text, str) and any(phrase in text.lower() for phrase in (
+                "insufficient_quota", "out of budget", "quota exceeded", "billing", "available balance",
+                "gousagelimiterror", "freeusagelimiterror", "monthly usage limit reached",
+                "subscription_sharing_usage_limit_exceeded")) for text in texts):
+        category = "usage_limit"
+    if category in {"unknown", "transient", "rate_limit", "capacity"} and any(
+            isinstance(text, str) and "unsupported parameter" in text.lower() for text in texts):
+        category = "unsupported"
     if status_code in (401, 403) and category in {"transient", "rate_limit", "capacity"}:
         category = "authorization"
     if category == "unknown":
-        detail = body.get("detail") if isinstance(body, dict) else None
-        text = value.get("message", detail)
         if status_code in (401, 403):
             category = "authorization"
-        elif isinstance(text, str) and "model is at capacity" in text.lower():
+        elif any(isinstance(text, str) and any(phrase in text.lower() for phrase in (
+                "model is at capacity", "servers are currently busy", "server_busy")) for text in texts):
             category = "capacity"
         elif status_code == 429:
             category = "rate_limit"
@@ -418,7 +437,8 @@ class ResponsesCompletion:
                         raise
                     failure = error.kind
                 elif isinstance(error, ResponsesProviderError):
-                    if error.status_code not in {429, 500, 502, 503, 504} or error.code:
+                    if (error.status_code not in {429, 500, 502, 503, 504}
+                            or error.category not in {'capacity', 'transient', 'rate_limit'}):
                         raise ModelTransportError('provider_rejected') from None
                     failure = 'rate_limit' if error.status_code == 429 else 'server'
                 else:

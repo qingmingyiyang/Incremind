@@ -133,11 +133,11 @@ def verified_quote_bundle(output, selected_sources):
 def answer_response_model(compose_version, *, frozen_schema=None):
     """旧策略保持原合同；续答只能恢复实际冻结过的模型。"""
     if frozen_schema is not None:
-        for model in (AskOutput, EvidenceFirstAskOutput, SourceQuoteExtraction, EvidencePartitionOutput, GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, FirstFactsOutput, ReviewedScopeAnswerOutput, FirstReferencedFactsOutput, ReviewedReferencedScopeOutput, FocusedReferencedFactsOutput, FocusedReviewedScopeOutput):
+        for model in (AskOutput, EvidenceFirstAskOutput, SourceQuoteExtraction, EvidencePartitionOutput, GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, FirstFactsOutput, ReviewedScopeAnswerOutput, FirstReferencedFactsOutput, ReviewedReferencedScopeOutput, FocusedReferencedFactsOutput, FocusedReviewedScopeOutput, ReconstructedReviewedOutput):
             if frozen_schema == model.model_json_schema():
                 return model
         raise ValueError('answer_response_schema_unavailable')
-    return (FocusedReferencedFactsOutput if compose_version in {'@27', '@28', '@29', '@30'} else FirstReferencedFactsOutput if compose_version == '@26' else FirstFactsOutput if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else EvidencePartitionOutput if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23'} else
+    return (FocusedReferencedFactsOutput if compose_version in {'@27', '@28', '@29', '@30', '@31', '@32'} else FirstReferencedFactsOutput if compose_version == '@26' else FirstFactsOutput if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'} else EvidencePartitionOutput if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23'} else
             SourceQuoteExtraction if compose_version in {'@15', '@16', '@17'} else
             EvidenceFirstAskOutput if compose_version in ('@10', '@11') else AskOutput)
 
@@ -237,11 +237,13 @@ def coverage_required(compose_version, question):
 
 
 def final_response_model(compose_version, question):
-    if compose_version in {'@27', '@28', '@29', '@30'}:
+    if compose_version == '@32':
+        return ReconstructedReviewedOutput
+    if compose_version in {'@27', '@28', '@29', '@30', '@31', '@32'}:
         return FocusedReviewedScopeOutput
     if compose_version == '@26':
         return ReviewedReferencedScopeOutput
-    if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+    if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
         return ReviewedScopeAnswerOutput
     if compose_version == '@23':
         return GroundedScopeAnswerOutput
@@ -427,18 +429,18 @@ def build_partition_messages(chosen, question, *, history='', profile=None, part
     from .policies import get
     from .budget import _ask_instruction, user_text
     from .profile import _profile_messages
-    if compose_version not in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+    if compose_version not in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
         raise ValueError('invalid_partition_compose_version')
     catalog = build_evidence_catalog(chosen)
-    if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} and partition is not None:
+    if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'} and partition is not None:
         raise ValueError('first_facts_required')
     final = partition is not None or first_output is not None
     data = {'evidence_catalog': catalog}
-    if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+    if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
         from .policies.date_grounding import bind_date_provenance, build_date_ref_catalog
-        data['date_provenance'] = bind_date_provenance(catalog, chosen) if compose_version not in {'@26', '@27', '@28', '@29', '@30'} else build_date_ref_catalog(catalog, chosen)
+        data['date_provenance'] = bind_date_provenance(catalog, chosen) if compose_version not in {'@26', '@27', '@28', '@29', '@30', '@31', '@32'} else build_date_ref_catalog(catalog, chosen)
         if final:
-            if compose_version in {'@26', '@27', '@28', '@29', '@30'}:
+            if compose_version in {'@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
                 first, _, data['first_fact_diagnostics'] = inspect_referenced_first_draft(first_output, catalog, chosen=chosen, question=question, compose_version=compose_version)
             elif compose_version == '@25':
                 first, data['first_fact_diagnostics'] = inspect_first_fact_draft(first_output, catalog, chosen=chosen, question=question)
@@ -446,22 +448,32 @@ def build_partition_messages(chosen, question, *, history='', profile=None, part
                 first = validate_first_facts(first_output, catalog, chosen=chosen, question=question)
             data['untrusted_first_fact_plan'] = first.model_dump()
             data['first_fact_positions'] = list(range(1, len(first.facts) + 1))
-    if final and compose_version not in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+    if final and compose_version not in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
         data['untrusted_first_partition'] = validate_partition(partition, catalog).model_dump()
     instruction = get('compose', version=compose_version)(_ask_instruction, chosen,
         operation='partition_final_instruction' if final else 'instruction', question=question,
         **({'response_schema': final_response_model(compose_version, question).model_json_schema()}
            if compose_version in {'@21', '@22', '@23'} and final else
-           {'response_schema': (final_response_model(compose_version, question) if final else answer_response_model(compose_version)).model_json_schema()} if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else {}),
-        **({'unit_ids': tuple(unit['id'] for unit in catalog['units'])} if compose_version in {'@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} else {}))
-    if compose_version in {'@29', '@30'} and final:
+           {'response_schema': (final_response_model(compose_version, question) if final else answer_response_model(compose_version)).model_json_schema()} if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'} else {}),
+        **({'unit_ids': tuple(unit['id'] for unit in catalog['units'])} if compose_version in {'@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'} else {}))
+    if compose_version == '@31' or compose_version == '@32' and final:
+        data['review_queue'] = get('compose', version=compose_version)(None, operation='review_queue',
+            catalog=catalog, first_output=data.get('untrusted_first_fact_plan'),
+            diagnostics=data.get('first_fact_diagnostics', ()), date_refs=data['date_provenance'])
+    if compose_version == '@32' and final:
+        data['first_evidence_plan'] = [{key: value for key, value in {'fact_index': index, **fact}.items()
+            if key != 'text'} for index, fact in enumerate(data.pop('untrusted_first_fact_plan')['facts'], 1)]
+        data = {key: data[key] for key in ('first_evidence_plan', 'first_fact_positions',
+            'first_fact_diagnostics', 'review_queue', 'date_provenance', 'evidence_catalog')}
+    elif compose_version in {'@29', '@30', '@31'} and final:
         # 先呈现待审草稿，真实完整资料放在问题前；嵌套值仍由冻结输入确定性重建。
         data = {key: data[key] for key in ('untrusted_first_fact_plan', 'first_fact_positions',
-            'first_fact_diagnostics', 'date_provenance', 'evidence_catalog')}
+            'first_fact_diagnostics', *(('review_queue',) if compose_version == '@31' else ()),
+            'date_provenance', 'evidence_catalog')}
     messages = _profile_messages(profile or {}, [
         {'role': 'system', 'content': instruction},
-        {'role': 'user', 'content': user_text([json.dumps(data, ensure_ascii=False, sort_keys=compose_version not in {'@29', '@30'},
-            **({'separators': (',', ':')} if compose_version in {'@29', '@30'} else {}))], question, history)}])
+        {'role': 'user', 'content': user_text([json.dumps(data, ensure_ascii=False, sort_keys=compose_version not in {'@29', '@30', '@31', '@32'},
+            **({'separators': (',', ':')} if compose_version in {'@29', '@30', '@31', '@32'} else {}))], question, history)}])
     if part_context:
         messages.insert(1 if (profile or {}).get('text') else 0, {'role': 'user', 'content': part_context['text']})
     return messages
@@ -619,8 +631,36 @@ class FocusedReviewedScopeOutput(ReviewedReferencedScopeOutput):
         description='Concise final requested facts or meanings, each once; no repeated recap. Actually repair diagnosed kind/date_refs or exclude that first position.')]
 
 
+class LocalSourceClause(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    unit_id: StrictInt
+    quote: Annotated[StrictStr, Field(min_length=1)]
+
+
+class ReconstructedStatement(ReviewedReferencedStatement):
+    stance: Literal['asserted', 'planned', 'missed', 'conditional', 'question', 'inference', 'unknown']
+    source_clauses: list[LocalSourceClause]
+
+
+class ReviewDisposition(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    item_ids: Annotated[list[Annotated[StrictInt, Field(ge=1)]], Field(min_length=1)]
+    action: Literal['include', 'exclude']
+    statement_indices: list[Annotated[StrictInt, Field(ge=1)]]
+    reason: Annotated[StrictStr, Field(min_length=1, max_length=240)]
+
+
+class ReconstructedReviewedOutput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    statements: list[ReconstructedStatement]
+    unused: UnreferencedEvidenceScope
+    uncertain: list[EvidenceWithdrawal]
+    excluded_facts: list[ExcludedFacts]
+    review_dispositions: list[ReviewDisposition]
+
+
 def first_fact_partition(output, catalog, *, compose_version='@24'):
-    if compose_version not in {'@26', '@27', '@28', '@29', '@30'}:
+    if compose_version not in {'@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
         return output['partition']
     # 仅供旧末guard计算撤回的内部资格集合；补集是未引用/未审核，绝非模型无关判断。
     # 此view不发送或写回首原件，也不限制末轮使用目录中的其它证据。
@@ -629,7 +669,7 @@ def first_fact_partition(output, catalog, *, compose_version='@24'):
         raise ValueError('first_unreviewed_reason_empty')
     used = {item.unit_id for fact in first.facts for item in fact.evidence}
     complete = {unit['id'] for unit in catalog['units']}
-    if compose_version in {'@29', '@30'}:
+    if compose_version in {'@29', '@30', '@31', '@32'}:
         # 首稿未知单元只有诊断资格，内部预选不能把它投影为有效证据。
         used &= complete
     if not used <= complete:
@@ -638,7 +678,7 @@ def first_fact_partition(output, catalog, *, compose_version='@24'):
 
 
 def first_fact_empty(compose_version, catalog):
-    if compose_version in {'@26', '@27', '@28', '@29', '@30'}:
+    if compose_version in {'@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
         return {'facts': [], 'unreviewed': {'scope': 'all_unreferenced', 'reason': 'No first facts have been generated; all evidence remains unreviewed.'}}
     return {'partition': {'selected_ids': [unit['id'] for unit in catalog['units']],
         'irrelevant_ids': [], 'uncertain_ids': []}, 'facts': []}
@@ -657,18 +697,18 @@ def _resolve_reference_statements(statements, catalog, chosen, *, compose_versio
 
 
 def inspect_referenced_first_draft(output, catalog, *, chosen, question, compose_version='@26'):
-    if compose_version in {'@29', '@30'}:
+    if compose_version in {'@29', '@30', '@31', '@32'}:
         return _inspect_repairable_first_draft(output, catalog, chosen=chosen, question=question, compose_version=compose_version)
     from .policies.date_grounding import validate_calendar_statements_v1, validate_calendar_statements_v2
-    raw = (FocusedReferencedFactsOutput if compose_version in {'@27', '@28', '@29', '@30'} else FirstReferencedFactsOutput).model_validate(output)
+    raw = (FocusedReferencedFactsOutput if compose_version in {'@27', '@28', '@29', '@30', '@31', '@32'} else FirstReferencedFactsOutput).model_validate(output)
     partition = first_fact_partition(raw.model_dump(), catalog, compose_version=compose_version)
     statements, bindings = _resolve_reference_statements(raw.facts, catalog, chosen, compose_version=compose_version)
     normalized = FirstFactsOutput.model_validate({'facts': statements, 'partition': partition})
-    calendar_validate = validate_calendar_statements_v2 if compose_version in {'@27', '@28', '@29', '@30'} else validate_calendar_statements_v1
+    calendar_validate = validate_calendar_statements_v2 if compose_version in {'@27', '@28', '@29', '@30', '@31', '@32'} else validate_calendar_statements_v1
     _, diagnostics = inspect_first_fact_draft(normalized, catalog, chosen=chosen, question=question,
         _calendar_validate=lambda values, cat, rows, text: calendar_validate(
             values, cat, rows, text, record_bindings=bindings))
-    if compose_version in {'@27', '@28', '@29', '@30'}:
+    if compose_version in {'@27', '@28', '@29', '@30', '@31', '@32'}:
         codes = {item['fact_index']: list(item['codes']) for item in diagnostics}
         seen = set()
         for index, statement in enumerate(raw.facts, 1):
@@ -759,12 +799,12 @@ def _inspect_repairable_first_draft(output, catalog, *, chosen, question, compos
             calendar_issues.append({'field_path': 'text', 'condition': 'calendar_value_not_authorized_by_cited_evidence',
                 'text_span': list(value['span']), 'calendar_value': {key: value[key] for key in ('start', 'end', 'precision')},
                 'matching_date_ref_ids': matching_refs,
-                **({'actual_kind': original.kind, 'date_refs_grant_calculation': original.kind == 'date'} if compose_version == '@30' else {}),
+                **({'actual_kind': original.kind, 'date_refs_grant_calculation': original.kind == 'date'} if compose_version in {'@30', '@31', '@32'} else {}),
                 'repair': ('Actually remove unsupported dates or explicitly label a verified same-source record anchor. '
                     'Computed event dates need kind=date, full sentence and legal result. Merge into a valid date with all first positions accounted for, or exclude; reason alone changes nothing.'
-                    if compose_version == '@30' else 'Remove the unsupported calendar text, not merely date_refs; or use kind=date with a real matching full-sentence ref and legal full precision, or exclude.')})
+                    if compose_version in {'@30', '@31', '@32'} else 'Remove the unsupported calendar text, not merely date_refs; or use kind=date with a real matching full-sentence ref and legal full precision, or exclude.')})
         def calendar_validate(values, cat, rows, text):
-            return (validate_calendar_statements_v4 if compose_version == '@30' else validate_calendar_statements_v3)([*accepted, *values], cat, rows, text,
+            return (validate_calendar_statements_v4 if compose_version in {'@30', '@31', '@32'} else validate_calendar_statements_v3)([*accepted, *values], cat, rows, text,
                 record_bindings=bindings, _on_invalid=on_calendar_error)
         try:
             _, found = inspect_first_fact_draft({'facts': [statement], 'partition': partition},
@@ -798,16 +838,18 @@ def _inspect_repairable_first_draft(output, catalog, *, chosen, question, compos
 
 def _referenced_statement_key(statement, *, compose_version='@26'):
     # 28的普通声明附带ref没有计算资格，不能靠改编号让完整重复看似不同。
-    refs = [] if compose_version in {'@28', '@29', '@30'} and statement.kind in {'fact', 'inference'} else statement.date_refs
+    refs = [] if compose_version in {'@28', '@29', '@30', '@31', '@32'} and statement.kind in {'fact', 'inference'} else statement.date_refs
     return (statement.kind, statement.text.strip(), frozenset((item.unit_id, item.quote, item.role)
         for item in statement.evidence), frozenset(refs))
 
 
 def reviewed_referenced_answer(output, catalog, first_output, *, chosen, question, compose_version='@26'):
+    if compose_version == '@32':
+        return reviewed_reconstructed_answer(output, catalog, first_output, chosen=chosen, question=question)
     from .policies.date_grounding import validate_calendar_statements_v1, validate_calendar_statements_v2, validate_calendar_statements_v3, validate_calendar_statements_v4
     _, first, diagnostics = inspect_referenced_first_draft(first_output, catalog, chosen=chosen,
         question=question, compose_version=compose_version)
-    value = (FocusedReviewedScopeOutput if compose_version in {'@27', '@28', '@29', '@30'} else ReviewedReferencedScopeOutput).model_validate(output)
+    value = (FocusedReviewedScopeOutput if compose_version in {'@27', '@28', '@29', '@30', '@31', '@32'} else ReviewedReferencedScopeOutput).model_validate(output)
     invalid = {item['fact_index'] for item in diagnostics}
     seen = set()
     for statement in value.statements:
@@ -829,10 +871,10 @@ def reviewed_referenced_answer(output, catalog, first_output, *, chosen, questio
     normalized = ReviewedScopeAnswerOutput.model_validate({**value.model_dump(exclude={'statements'}),
         'statements': [{**statement.model_dump(), 'first_fact_uses': raw.first_fact_uses}
             for statement, raw in zip(statements, value.statements)]})
-    if compose_version in {'@27', '@28', '@29', '@30'}:
+    if compose_version in {'@27', '@28', '@29', '@30', '@31', '@32'}:
         # 旧25会再用整份来源注释/v1复审，造成新ref合同被旧锚规则误拦；共用原处置核验后只跑本版日期核验。
         return _reviewed_scope_answer(normalized, catalog, first, invalid, chosen=chosen, question=question,
-            calendar_validate=lambda values, cat, rows, text: (validate_calendar_statements_v4 if compose_version == '@30' else validate_calendar_statements_v3 if compose_version == '@29' else validate_calendar_statements_v2)(values, cat, rows, text,
+            calendar_validate=lambda values, cat, rows, text: (validate_calendar_statements_v4 if compose_version in {'@30', '@31', '@32'} else validate_calendar_statements_v3 if compose_version == '@29' else validate_calendar_statements_v2)(values, cat, rows, text,
                 record_bindings={id(item): bindings[id(original)] for item, original in zip(values, statements)}))
     result = reviewed_scope_answer(normalized, catalog, first.model_dump(), chosen=chosen, question=question, compose_version='@25')
     # 旧mapper重建了实例，重新将当前声明的真实refs绑定给对应结果实例。
@@ -916,7 +958,7 @@ def first_fact_diagnostics(output, catalog, *, chosen, question):
 def validate_first_facts(output, catalog, *, chosen, question, compose_version='@24'):
     """首分类是预选，不要求每个预选单元都被首要点引用。"""
     from .policies.date_grounding import validate_calendar_statements_v1
-    if compose_version in {'@26', '@27', '@28', '@29', '@30'}:
+    if compose_version in {'@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
         return inspect_referenced_first_draft(output, catalog, chosen=chosen, question=question, compose_version=compose_version)[0]
     if compose_version == '@25':
         return inspect_first_fact_draft(output, catalog, chosen=chosen, question=question)[0]
@@ -939,7 +981,7 @@ def validate_first_facts(output, catalog, *, chosen, question, compose_version='
 def reviewed_scope_answer(output, catalog, first_output, *, chosen, question, compose_version='@24'):
     """逐位置审核首要点，原件经共同守卫后才映射为23采用账本。"""
     from .policies.date_grounding import validate_calendar_statements_v1
-    if compose_version in {'@26', '@27', '@28', '@29', '@30'}:
+    if compose_version in {'@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
         return reviewed_referenced_answer(output, catalog, first_output, chosen=chosen, question=question, compose_version=compose_version)
     if compose_version == '@25':
         first, diagnostics = inspect_first_fact_draft(first_output, catalog, chosen=chosen, question=question)
@@ -1134,18 +1176,24 @@ def grounded_statement_text(statement, units):
 
 def first_facts_output_minimum(catalog, *, compose_version='@24'):
     """各版本真实首外壳的容量下界；事实内容仍须首后实际预算审核。"""
-    if compose_version in {'@26', '@27', '@28', '@29', '@30'}:
+    if compose_version in {'@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
         return len('{"facts":[],"unreviewed":{"scope":"all_unreferenced","reason":"x"}}') + 3
     return partition_output_tokens(catalog) + len('{"partition":{},"facts":[]}')
 
 
-def grounded_output_minimum(catalog, *, compose_version='@20'):
+def grounded_output_minimum(catalog, *, compose_version='@20', review_queue=None):
     """分类全集加最小外壳的保守容量下界；不承诺任意声明都能装入。"""
-    if compose_version in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+    if compose_version in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
         import json
         shell = {'statements': [], 'unused': {'scope': 'all_unreferenced', 'reason': 'x'}, 'uncertain': []}
-        if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+        if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
             shell['excluded_facts'] = []
+        if compose_version == '@32':
+            from .policies import get
+            queue = review_queue if review_queue is not None else get('compose', version='@32')(
+                None, operation='review_queue', catalog=catalog)
+            shell['review_dispositions'] = [{'item_ids': [row['item_id'] for row in queue['items']],
+                'action': 'exclude', 'statement_indices': [], 'reason': 'x'}] if queue['items'] else []
         return len(json.dumps(shell, ensure_ascii=True)) + 3
     if compose_version == '@22':
         import json
@@ -1193,3 +1241,128 @@ def render_grounded_answer(output, catalog, first_partition, *, max_output_token
             or text_tokens(raw) > max_output_tokens or text_tokens(answer) > max_output_tokens + overhead):
         raise ValueError('grounded_answer_render_limit_exceeded')
     return AskOutput(answer=answer, citations=citations)
+
+
+def review_output_minimum(catalog, first_output, *, chosen, question):
+    """按本轮全部去重位置计算输出外壳下界，不通过截掉任务伪装预算可用。"""
+    from .policies import get
+    from .policies.date_grounding import build_date_ref_catalog
+    raw, _, diagnostics = inspect_referenced_first_draft(first_output, catalog, chosen=chosen,
+        question=question, compose_version='@32')
+    queue = get('compose', version='@32')(None, operation='review_queue', catalog=catalog,
+        first_output=raw.model_dump(), diagnostics=diagnostics, date_refs=build_date_ref_catalog(catalog, chosen))
+    return grounded_output_minimum(catalog, compose_version='@32', review_queue=queue)
+
+
+def _revision_evidence_covers(evidence, unit, span, *, whole):
+    import re
+    """仅同单元support原引文具有采用资格；整行任务不宣称整行意义完整。"""
+    if evidence.role != 'support' or evidence.unit_id != unit['id']:
+        return False
+    for match in re.finditer(re.escape(evidence.quote), unit['text']):
+        if (match.start() <= span[0] and span[1] <= match.end()) if whole else (
+                match.start() < span[1] and span[0] < match.end()):
+            return True
+    return False
+
+
+def reviewed_reconstructed_answer(output, catalog, first_output, *, chosen, question):
+    from .policies import get
+    value = ReconstructedReviewedOutput.model_validate(output)
+    raw, _, diagnostics = inspect_referenced_first_draft(first_output, catalog, chosen=chosen,
+        question=question, compose_version='@32')
+    from .policies.date_grounding import build_date_ref_catalog
+    queue = get('compose', version='@32')(None, operation='review_queue', catalog=catalog,
+        first_output=raw.model_dump(), diagnostics=diagnostics, date_refs=build_date_ref_catalog(catalog, chosen))
+    items = {row['item_id']: row for row in queue['items']}
+    units = {unit['id']: unit for unit in catalog['units']}
+    seen = []
+    for group in value.review_dispositions:
+        if not group.reason.strip() or len(set(group.statement_indices)) != len(group.statement_indices):
+            raise ValueError('review_disposition_invalid')
+        seen.extend(group.item_ids)
+        if group.action == 'exclude':
+            if group.statement_indices:
+                raise ValueError('review_exclusion_has_statement')
+            continue
+        if not group.statement_indices or any(index > len(value.statements) for index in group.statement_indices):
+            raise ValueError('review_statement_position_invalid')
+        for identity in group.item_ids:
+            if identity not in items:
+                raise ValueError('review_item_position_invalid')
+            item = items[identity]
+            if not any(_revision_evidence_covers(evidence, units[item['unit_id']], item['span'], whole=item['scope'] == 'span_review')
+                    for index in group.statement_indices for evidence in value.statements[index - 1].evidence):
+                raise ValueError('review_inclusion_span_not_supported')
+        for index in group.statement_indices:
+            if not any(_revision_evidence_covers(evidence, units[items[identity]['unit_id']], items[identity]['span'],
+                    whole=items[identity]['scope'] == 'span_review')
+                    for identity in group.item_ids for evidence in value.statements[index - 1].evidence):
+                raise ValueError('review_inclusion_statement_not_supported')
+    if len(set(seen)) != len(seen) or set(seen) != set(items):
+        raise ValueError('review_item_coverage_invalid')
+    render = get('compose', version='@32')(None, operation='stance_render', question=question)
+    prefixes = render['prefixes']
+    statements = []
+    for statement in value.statements:
+        clauses = []
+        anchor_keys = {(anchor.unit_id, anchor.quote) for anchor in statement.source_clauses}
+        if len(anchor_keys) != len(statement.source_clauses):
+            raise ValueError('modal_source_clause_duplicate')
+        anchored_spans = set()
+        for anchor in statement.source_clauses:
+            if anchor.unit_id not in units:
+                raise ValueError('modal_source_clause_invalid')
+            import re
+            unit = units[anchor.unit_id]
+            local = get('compose', version='@32')(None, operation='modal_clauses', text=unit['text'])
+            starts, ends = {row['span'][0] for row in local}, {row['span'][1] for row in local}
+            # 完整连续引文可覆盖多个相邻分句，避免名词并列被拆分后没有合法引用方式。
+            occurrences = [match.span() for match in re.finditer(re.escape(anchor.quote), unit['text'])
+                if match.start() in starts and match.end() in ends]
+            valid = [span for span in occurrences if any(_revision_evidence_covers(evidence, unit, span, whole=True)
+                for evidence in statement.evidence)]
+            matches = [row for row in local if any(left <= row['span'][0] and row['span'][1] <= right for left, right in valid)]
+            if not matches:
+                raise ValueError('modal_source_clause_invalid')
+            clauses.extend(matches)
+            anchored_spans.update((anchor.unit_id, *row['span']) for row in matches)
+        for evidence in statement.evidence:
+            if evidence.role != 'support' or evidence.unit_id not in units:
+                continue
+            unit = units[evidence.unit_id]
+            supported_clauses = [clause for clause in get('compose', version='@32')(
+                None, operation='modal_clauses', text=unit['text']) if _revision_evidence_covers(evidence, unit, clause['span'], whole=True)]
+            if not supported_clauses or not any((evidence.unit_id, *clause['span']) in anchored_spans for clause in supported_clauses):
+                raise ValueError('modal_support_clause_unreviewed')
+        if statement.kind != 'limitation' and not clauses:
+            raise ValueError('modal_source_clause_missing')
+        # 只核被声明实际引用的局部分句；其他单元或邻句中的未来词、问号没有权限。
+        marked = {clause['stance'] for clause in clauses} - {'asserted'}
+        if marked and (len(marked) != 1 or statement.stance not in marked | {'inference'}):
+            raise ValueError('modal_source_stance_mismatch')
+        if not marked and statement.stance in prefixes:
+            raise ValueError('modal_source_stance_mismatch')
+        if statement.stance == 'unknown' and statement.kind != 'limitation':
+            raise ValueError('modal_unknown_kind_invalid')
+        if statement.stance == 'inference' and statement.kind != 'inference':
+            raise ValueError('modal_inference_kind_invalid')
+        actual = statement.model_dump(exclude={'stance', 'source_clauses'})
+        prefix = prefixes.get(statement.stance, '')
+        if statement.stance == 'inference' and marked:
+            # 推断与前提状态分开；实际公开文本必须保留前提仍为计划/求证，不能只改reason。
+            premise = next(iter(marked))
+            prefix = render['inference_premise'][premise]
+        if prefix:
+            actual['text'] = prefix + actual['text']
+        # 比较实际公开字段，合法可见的模态限定和kind-only修复也属于真实修改。
+        for use in statement.first_fact_uses:
+            if use.action == 'correct' and 1 <= use.fact_index <= len(raw.facts):
+                before = raw.facts[use.fact_index - 1].model_dump()
+                if {key: actual[key] for key in before} == before:
+                    raise ValueError('first_fact_replacement_unchanged')
+        statements.append(actual)
+    legacy = {**value.model_dump(exclude={'statements', 'review_dispositions'}), 'statements': statements}
+    # 32未给日期算法增加权限；最终原字段仍交30/31同一严格出处与日历守卫。
+    return reviewed_referenced_answer(legacy, catalog, first_output, chosen=chosen,
+        question=question, compose_version='@31')

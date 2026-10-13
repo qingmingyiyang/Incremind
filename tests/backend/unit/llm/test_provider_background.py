@@ -63,6 +63,15 @@ class BackgroundProvider:
 
             def do_GET(self):
                 owner.calls.append(('GET', self.path))
+                if owner.mode in {'get_busy', 'get_quota'} and len(owner.calls) == 2:
+                    raw = json.dumps({'error': {'code': 'server_busy' if owner.mode == 'get_busy'
+                        else 'insufficient_quota', 'message': 'servers are currently busy'}}).encode()
+                    self.send_response(503)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
                 events = [{'type': 'response.output_text.delta', 'sequence_number': 1,
                             'delta': '{"answer":"hel'},
                            {'type': 'response.output_text.delta', 'sequence_number': 2,
@@ -222,6 +231,23 @@ def test_background_marker_classifies_safe_transport_without_general_provider_re
     ordinary = RuntimeError('synthetic_provider_rejected')
     ordinary.kind = kind
     assert _model_transport_failure(ordinary, now) == ('provider_rejected', None)
+
+
+@pytest.mark.parametrize('mode,completed,gets', [('get_busy', True, 2), ('get_quota', False, 1)])
+def test_background_busy_resumes_get_without_another_post(tmp_path, mode, completed, gets):
+    provider = BackgroundProvider(mode)
+    try:
+        receipt, terminals, clients, responses, deltas, decisions = background_call(
+            tmp_path, provider, resume_budget=2)
+        assert receipt.status == ('completed' if completed else 'failed')
+        assert len(terminals) == 1
+        assert [method for method, _ in provider.calls] == ['POST'] + ['GET'] * gets
+        assert all('resp_local?stream=true&starting_after=1' in path for _, path in provider.calls[1:])
+        assert clients and all(client.is_closed for client in clients)
+        assert responses and all(response.is_closed for response in responses)
+        assert len(decisions) == gets
+    finally:
+        provider.close()
 
 
 def test_closed_background_body_interruption_is_transport_but_never_new_attempt(tmp_path):

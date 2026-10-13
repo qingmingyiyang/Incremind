@@ -90,7 +90,7 @@ class _MainCompletionMetadata:
 class ProductTaskPlanner:
     def __init__(self, *, models, store, composition, guard, builder, fallback,
                  profile_reader=None, drafts=None, context_reader=None,
-                 records=None, runtime_root=None, read_control_type=None, frame_factory=None, outcome=None):
+                 records=None, runtime_root=None, read_control_type=None, frame_factory=None, outcome=None, data_tools=None):
         self.models, self.store, self.composition = models, store, composition
         self.guard, self.builder, self.fallback = guard, builder, fallback
         self.routing = ProductGenerationRouting(models, store, records=records,
@@ -103,6 +103,7 @@ class ProductTaskPlanner:
         self.continuations = (TaskContinuations(self, records, runtime_root, read_control_type=read_control_type)
             if records is not None and runtime_root is not None else None)
         self.outcome = outcome
+        self.data_tools = data_tools
 
     def profile_request(self, request):
         current, seen = request, set()
@@ -196,6 +197,8 @@ class ProductTaskPlanner:
                 lambda records, _: self.outcome.validate(records, profile_request))
         def validate():
             owner.guard(request)
+            if owner.data_tools:
+                owner.data_tools.validate_context(profile_request)
             if profile_request['turn_id'] != request['turn_id']:
                 owner.guard(profile_request)
             if owner.profile_reader:
@@ -211,7 +214,15 @@ class ProductTaskPlanner:
             def invoke(self, model_request):
                 validate()
                 profile = owner.profile_reader(profile_request) if owner.profile_reader else {}
-                messages = [{'role':'user','content':model_request.input}]
+                text = (owner.data_tools.model_input(request, model_request.input)
+                        if owner.data_tools else model_request.input)
+                messages = [{'role':'user','content':text}]
+                if owner.data_tools:
+                    visible = json.loads(model_request.input).get('capabilities', [])
+                    catalog = (owner.data_tools.catalog(profile_request)
+                        if any(row.get('capability_id') == 'asr.lexicon.read' for row in visible) else '')
+                    if catalog:
+                        messages.insert(0, {'role': 'system', 'content': catalog})
                 if owner.context_reader and profile_request['turn_id'] != request['turn_id']:
                     context = owner.context_reader(profile_request)
                     if context:
@@ -261,6 +272,7 @@ class ProductTaskPlanner:
                     messages = retry_policy_for(profile_request)({'kind': 'continue_task_messages',
                         'messages': continuation['messages'], 'partial': continuation['partial']})
                 frames, interrupted = None, False
+                controlled_refusal = False
                 resumed_text = {'full': '', 'sent': 0}
                 if 'decision_contract' in json.loads(model_request.input):
                     frames = owner._main_frames(request, recipe, continuation)
@@ -289,7 +301,7 @@ class ProductTaskPlanner:
                     if frames is not None:
                         options['on_retry'] = frames.retry
                 def complete():
-                    nonlocal interrupted
+                    nonlocal interrupted, controlled_refusal
                     try:
                         output, metadata = owner.models.complete_governed(
                             messages, routing_snapshot=route.generation_binding(),
@@ -325,6 +337,12 @@ class ProductTaskPlanner:
                         if not is_outcome_main:
                             raise
                         decision = None
+                    if (owner.data_tools and isinstance(decision, dict)
+                            and request.get('execution_policy', {}).get('template_version') == 3
+                            and request.get('agent_binding', {}).get('role') == 'main'):
+                        constrained = owner.data_tools.constrain_decision(request, decision)
+                        controlled_refusal = constrained is not decision
+                        decision = constrained
                     if resume_source is not None:
                         # 完整正文的前缀一致只是数据校验，原动作和租约仍分别复核。
                         if (decision.get('type') != 'complete' or type(decision.get('summary')) is not str
@@ -343,6 +361,11 @@ class ProductTaskPlanner:
                     if is_outcome_main and (not isinstance(value, dict) or value.get('type') != 'tool'):
                         fallback = False
                         for attempt in range(2):
+                            if controlled_refusal:
+                                # 本地拒绝交付新的提示稿，不修改旧稿，也不为拒绝追加模型请求。
+                                patched = {'markdown': value['summary'], 'changes': []}
+                                fallback = True
+                                break
                             try:
                                 patched = owner.outcome.patch(outcome['current_markdown'], outcome['birth_ai_markdown'],
                                     value.get('patches') if isinstance(value, dict) and value.get('type') == 'complete' else None)
@@ -378,4 +401,5 @@ class ProductTaskPlanner:
                 proposal_validator=is_valid_steward_proposal,
                 proposal_builder=lambda value,*_: self.builder.build(value)),
             main=MainCoordinationPlanner(remote=worker,wait_timeout_ms=30000))
-        return planner.plan(request,events,capabilities,payloads,execution_control=execution_control)
+        decision = planner.plan(request,events,capabilities,payloads,execution_control=execution_control)
+        return decision

@@ -134,6 +134,8 @@ class WorkspaceReview:
                 draft = generation._draft(body, row.payload["source_text"])
             except ValueError:
                 raise HTTPException(422, "invalid_draft_evidence") from None
+            from .v2.material_analysis import save_reviewed_draft
+            save_reviewed_draft(tx, row, draft)
             updated = tx.put(_COLLECTION, item_id,
                              {**row.payload, "draft": draft, "title": draft["title"]},
                              expected_revision=row.revision)
@@ -168,10 +170,16 @@ class WorkspaceReview:
                                          "locator": f"text:{evidence['start']}:{evidence['end']}",
                                          "quote": evidence["quote"]})
                     repository = SQLiteDocumentRepository(self.items.records, namespace_id=self.documents.namespace_id, now=_now())
+                    from .v2.material_analysis import freeze_publication, analysis_source_refs, commit_publication
+                    markdown = self._frozen_markdown(tx, row, item['draft'])
+                    publication = freeze_publication(tx, row, item['draft'], markdown)
+                    refs.extend(analysis_source_refs(publication.payload['analysis'] if publication else None, item_id))
                     document = repository.create_or_replay_generated_in_uow(DocumentDraft(
                         title=item["draft"]["title"], document_type=item_id,
-                        markdown=self.image_markdown(item_id, project_id, item["draft"]), source_refs=tuple(refs),
+                        markdown=markdown, source_refs=tuple(refs),
                         project_id=project_id), tx)
+                    commit_publication(tx, row, {'id': 'confirm-' + item_id,
+                        'draft': item['draft'], 'markdown': markdown}, document)
                     updated = tx.put(_COLLECTION, item_id, {**item, "document_id": document["id"],
                                                            "status": "confirmed", "reviewed_revision": row.revision},
                                      expected_revision=row.revision)
@@ -184,7 +192,8 @@ class WorkspaceReview:
                 if row.payload.get('status') == 'confirming':
                     self._validate_pending_comment_markdown(row)
                 self.confirmations.confirm(item_id, project_id, revision,
-                    lambda draft: self.image_markdown(item_id, project_id, draft))
+                    lambda draft: self.image_markdown(item_id, project_id, draft),
+                    frozen_markdown=self._frozen_markdown)
                 return self.items.public_row(self.items.item_for(item_id, project_id))
             except ValueError as exc:
                 if str(exc) == "draft_revision_conflict":
@@ -203,8 +212,9 @@ class WorkspaceReview:
         frozen = operation.payload
         base = generation._markdown(frozen['draft'])
         body = frozen.get('markdown')
+        # 材料分析位于正文与评论之间；撤回评论凭据后仍需识别冻结稿中的评论。
         generated_comments = (isinstance(body, str) and body.startswith(base)
-            and body[len(base):].startswith(COMMENT_SECTION_PREFIX))
+            and COMMENT_SECTION_PREFIX in body[len(base):])
         proof = records.read(SECTIONS, row.object_id)
         # Validate malformed/revoked records even when they project no entries.
         comment_section_for_item(records, row)
@@ -219,6 +229,11 @@ class WorkspaceReview:
         from .v2.image_read import draft_markdown
         row = self.items.item_for(item_id, project_id)
         return draft_markdown(self.items.records, row, draft)
+
+    @staticmethod
+    def _frozen_markdown(reader, row, draft):
+        from .v2.image_read import draft_markdown
+        return draft_markdown(reader, row, draft)
 
     def source(self, item_id: str, project_id: str = "default"):
         item = self.items.item_for(item_id, _project(project_id)).payload

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
+import logging
 
 from backend.api.ai_turn_runner import AITurnRunner
 from backend.api.agent_assignment_resolvers import build_agent_assignment_resolvers
@@ -201,6 +202,7 @@ from core.search_and_recall import RecallHit, RecallQuery
 
 
 _RUNTIME_LOCK = Lock()
+_LOGGER = logging.getLogger(__name__)
 _RUNTIME_ASSET_SEARCH_DEPTH = 6
 _RUNTIME_EXECUTABLE_NAMES = ("python.exe", "python")
 
@@ -649,6 +651,7 @@ def build_ai_runtime(container: object, *, application: object | None = None) ->
             profile_registry.update(replace(main_profile, revision=main_profile.revision + 1,
                 capability_ids=tuple(sorted(permitted))), expected_revision=main_profile.revision)
     profile_registry.upgrade_untouched_builtin_limits()
+    profile_registry.upgrade_untouched_lexicon_tools()
     evolution_policy = build_recursive_evolution_policy_authority(
         runtime_root=Path(runtime_root), world=personal_world,
         turns=session_store, profiles=profile_registry,
@@ -1181,6 +1184,20 @@ def build_ai_runtime(container: object, *, application: object | None = None) ->
         main=MainCoordinationPlanner(remote=default_planner, wait_timeout_ms=30_000),
     )
     task_planner = None
+    data_tools = None
+    lexicon = getattr(application_state, 'asr_lexicon', None)
+    data_tools_factory = getattr(application_state, 'product_agent_data_tools_factory', None)
+    if lexicon is not None and callable(data_tools_factory):
+        from core.application_skill.package_catalog import ApplicationSkillError
+        try:
+            data_tools = data_tools_factory(lexicon, turns=session_store,
+                request_loader=agent_runtime_composition.request_loader,
+                skill_root=asset_root.root_dir / 'config' / 'application-skills')
+        except (OSError, ValueError, ApplicationSkillError):
+            # 缺少本轮新增的内置包不妨碍原普通任务，工具保持未注册。
+            _LOGGER.warning('Agent ASR lexicon tools are unavailable')
+        else:
+            data_tools.install(registry)
     task_guard = getattr(application_state,'product_task_guard',None)
     if callable(task_guard):
         from .task_planner import ProductTaskPlanner
@@ -1192,7 +1209,7 @@ def build_ai_runtime(container: object, *, application: object | None = None) ->
             builder=steward_proposal_builder,fallback=planner, drafts=task_drafts,
             records=application_state.recognition_service.records, runtime_root=runtime_root,
             read_control_type=getattr(application_state, 'product_task_read_control_type', None),
-            frame_factory=getattr(application_state, 'product_task_frame_factory', None))
+            frame_factory=getattr(application_state, 'product_task_frame_factory', None), data_tools=data_tools)
         planner = task_planner
     privacy_planner = getattr(application_state,"source_privacy_planner_wrapper",None)
     if privacy_planner is not None:
@@ -1364,6 +1381,7 @@ def build_ai_runtime(container: object, *, application: object | None = None) ->
         max_steps=profile_registry.get("main.orchestrator").max_steps,
     )
     runtime.task_continuations = task_planner.continuations if task_planner is not None else None
+    runtime.agent_data_tools = data_tools
     # Compatibility adapters must project the same immutable composition
     # snapshot used by the capability.  A configured gateway without existing
     # egress consent remains local-only.

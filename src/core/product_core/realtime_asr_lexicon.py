@@ -116,6 +116,45 @@ class RealtimeAsrLexicon:
         self._store.write(_TERM_COLLECTION, str(payload["id"]), payload, expected_revision=None)
         return _term_record(payload)
 
+    def bulk_upsert(self, entries: tuple[tuple[str, int], ...]) -> tuple[RealtimeAsrLexiconTerm, ...]:
+        """复用逐词规则，先完整校验，再在调用方事务内更新一次语义版本。"""
+        normalized_entries = []
+        seen = {}
+        previous_terms = {}
+        for row in self._store.list(_TERM_COLLECTION):
+            normalized = str(row["normalized_term"])
+            if normalized in previous_terms:
+                raise RealtimeAsrLexiconError("lexicon term authority is duplicated")
+            previous_terms[normalized] = row
+        active = {normalized: dict(row) for normalized, row in previous_terms.items() if row.get("status") == "active"}
+        for term, weight in entries:
+            clean, normalized = _term(term)
+            clean_weight = _weight(weight, is_super=weight == SUPER_WEIGHT)
+            if normalized in seen:
+                if seen[normalized] != clean_weight:
+                    raise RealtimeAsrLexiconError("duplicate lexicon weights conflict")
+                continue
+            seen[normalized] = clean_weight
+            existing = previous_terms.get(normalized)
+            normalized_entries.append((clean, normalized, clean_weight, existing))
+            active[normalized] = {"weight": clean_weight}
+        if len(active) > MAX_SESSION_TERMS or sum(row["weight"] == SUPER_WEIGHT for row in active.values()) > MAX_SUPER_TERMS:
+            raise RealtimeAsrLexiconError("lexicon capacity exceeded")
+        changed = [(term, normalized, weight, existing) for term, normalized, weight, existing in normalized_entries
+                   if existing is None or existing.get("status") != "active" or existing.get("term") != term
+                   or existing.get("weight") != weight]
+        if not changed:
+            return tuple(_term_record(existing) for _term_text, _normalized, _weight_value, existing in normalized_entries)
+        revision = self._advance_revision()
+        for term, normalized, weight, existing in changed:
+            payload = {"schema_version": "1.0.0", "id": existing["id"] if existing else _term_id(),
+                       "term": term, "normalized_term": normalized, "weight": weight, "status": "active",
+                       "origin": "manual", "revision": revision,
+                       "created_at": existing.get("created_at") if existing else self._now(), "updated_at": self._now()}
+            self._store.write(_TERM_COLLECTION, str(payload["id"]), payload, expected_revision=None)
+            previous_terms[normalized] = payload
+        return tuple(_term_record(previous_terms[normalized]) for _term_text, normalized, _weight_value, _existing in normalized_entries)
+
     def retire(self, term: str) -> RealtimeAsrLexiconTerm:
         """Retire an active term; it will no longer appear in sessions."""
 

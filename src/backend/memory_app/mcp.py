@@ -1,4 +1,4 @@
-"""Local stdio MCP adapter: SDK protocol handling and loopback HTTP only."""
+"""固定stdio记忆适配器：连接本机loopback或既有设备鉴权的HTTPS服务器。"""
 from __future__ import annotations
 
 import os
@@ -17,7 +17,8 @@ from mcp.shared.message import SessionMessage
 
 
 _CLIENTS = {'claude': 'claude', 'claude-code': 'claude', 'Claude Code': 'claude',
-            'codex': 'codex', 'Codex': 'codex'}
+            'codex': 'codex', 'Codex': 'codex', 'codex-mcp-client': 'codex',
+            'dsh-mcp-client': 'deepseek-harness'}
 _READ = ('projects', 'recall', 'methods', 'read')
 _SAFE_ERRORS = frozenset({
     'external_agent_remote_blocked', 'external_agent_binding_invalid', 'external_agent_client_disabled',
@@ -59,7 +60,7 @@ def _output_schema(name, handoff):
                 'items': {'type': 'string', 'pattern': '^[MP][1-9][0-9]*$'}}}}
     else:
         properties = {'receipt_id': _STRING, 'revision': {'type': 'integer', 'minimum': 1},
-            'project_id': _STRING, 'client': {'enum': ['claude', 'codex']},
+            'project_id': _STRING, 'client': {'enum': ['claude', 'codex', 'deepseek-harness']},
             'state': {'const': 'staged' if name == 'remember' else 'pending'}}
         properties['item_id' if name == 'remember' else 'candidate_id'] = _STRING
         if name == 'remember':
@@ -91,8 +92,11 @@ def _tools():
 
 def _backend_url(value):
     try:
+        if not isinstance(value, str) or len(value) > 2048 or any(ord(character) < 33 or ord(character) == 127 for character in value):
+            return None
         parsed = urlsplit(value)
-        if (parsed.scheme != 'http' or parsed.hostname not in {'127.0.0.1', '::1'}
+        if (not ((parsed.scheme == 'http' and parsed.hostname in {'127.0.0.1', '::1'})
+                or (parsed.scheme == 'https' and bool(parsed.hostname)))
                 or parsed.username is not None or parsed.password is not None
                 or parsed.query or parsed.fragment or parsed.path not in {'', '/'}):
             return None
@@ -176,7 +180,14 @@ async def _serve(reader, writer, client, backend):
 
 async def _main():
     backend = _backend_url(os.environ.get('CHRIPTMAS_MCP_BACKEND_URL', 'http://127.0.0.1:8001'))
-    async with httpx.AsyncClient(trust_env=False, follow_redirects=False,
+    headers = {}
+    if backend is not None and urlsplit(backend).scheme == 'https':
+        key = os.environ.get('CHRIPTMAS_DEVICE_KEY', '')
+        if not key or len(key) > 4096 or any(not 33 <= ord(character) <= 126 for character in key):
+            backend = None
+        else:
+            headers['Authorization'] = 'Bearer ' + key
+    async with httpx.AsyncClient(headers=headers, trust_env=False, follow_redirects=False,
         timeout=httpx.Timeout(150, connect=5)) as client, stdio_server() as (reader, writer):
         await _serve(reader, writer, client, backend)
 

@@ -8,7 +8,7 @@ from ..recall_state import is_recall_excluded
 from ..source_egress import SourceEgressService
 from ..workspace_contracts import _now
 from .external_agent_guard import ExternalAgentGuardError
-from .external_agent_settings import external_agent_settings
+from .external_executor_plugins import effective_external_agent_settings as external_agent_settings
 from .insights import insight_view
 from .policies import override, version
 from .policies.pipelines import versions_for_turn

@@ -7,6 +7,20 @@ from backend.shared.llm.openai_responses import ResponsesCompletion
 
 
 @pytest.mark.parametrize("status,body,category,retryable", [
+    (400, {"error": {"code": "server_busy"}}, "capacity", True),
+    (400, {"error": {"type": "server_busy"}}, "capacity", True),
+    (400, {"detail": "server_busy"}, "capacity", True),
+    (400, {"error": {"message": "quota exceeded; servers are currently busy"}}, "usage_limit", False),
+    (400, {"error": {"code": "server_busy", "message": "out of budget"}}, "usage_limit", False),
+    (400, {"error": {"code": "invalid_request_error", "message": "quota exceeded; servers are currently busy"}}, "unsupported", False),
+    (400, {"error": {"type": "invalid_request_error", "message": "unsupported parameter; servers are currently busy"}}, "unsupported", False),
+    (400, {"error": {"message": "The servers are currently busy"}}, "capacity", True),
+    (400, {"detail": "The servers are currently busy"}, "capacity", True),
+    (400, {"error": {"detail": "The servers are currently busy"}}, "capacity", True),
+    (401, {"error": {"code": "server_busy"}}, "authorization", False),
+    (400, {"error": {"code": "server_busy", "type": "insufficient_quota"}}, "usage_limit", False),
+    (400, {"error": {"code": "content_policy_violation", "message": "servers are currently busy"}}, "refusal", False),
+    (400, {"error": {"code": "subscription_sharing_unsupported_capability", "type": "server_busy"}}, "unsupported", False),
     (503, {"detail": "Selected model is at capacity"}, "capacity", True),
     (400, {"error": {"message": "Selected model is at capacity"}}, "capacity", True),
     (500, {"error": {"code": "server_error"}}, "transient", True),
@@ -55,6 +69,7 @@ def test_http_errors_are_safely_classified_without_hidden_retry(status, body, ca
     ("subscription_sharing_usage_limit_exceeded", "usage_limit"),
     ("subscription_sharing_usage_unavailable", "transient"),
     ("server_error", "transient"),
+    ("server_busy", "capacity"),
 ])
 @pytest.mark.parametrize("started", [False, True])
 @pytest.mark.parametrize("kind", ["response.failed", "error"])
@@ -80,7 +95,7 @@ def test_failed_stream_keeps_error_classification_and_blocks_retry_after_output(
     assert error.status_code == 200
     assert error.code == code and error.category == category
     assert error.output_started is started
-    assert error.retryable is (not started and category == "transient")
+    assert error.retryable is (not started and category in {"transient", "capacity"})
     assert "private" not in str(error) + repr(vars(error))
     assert calls == ["/v1/responses"]
 

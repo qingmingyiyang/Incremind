@@ -37,15 +37,21 @@ def external_agent_settings(reader):
 
 
 def replace_external_agent_settings(records, value, *, expected_revision):
+    with records.begin() as tx:
+        result = replace_external_agent_settings_in_transaction(tx, value, expected_revision=expected_revision)
+        tx.commit()
+        return result
+
+
+def replace_external_agent_settings_in_transaction(tx, value, *, expected_revision):
+    """插件入口在同一事务委托原偏好 owner，保留两客户端 payload 形状。"""
     wanted = _validated(value)
     if type(expected_revision) is not int or expected_revision < 0:
         raise ExternalAgentSettingsError('external_agent_settings_invalid')
-    with records.begin() as tx:
-        current = external_agent_settings(tx)
-        if current['revision'] != expected_revision:
-            raise SQLiteUnitOfWorkConflict('external_agent_revision_conflict')
-        if {key: current[key] for key in _FIELDS} == wanted:
-            return current
-        row = tx.put(COLLECTION, _ID, wanted, expected_revision=expected_revision)
-        tx.commit()
+    current = external_agent_settings(tx)
+    if current['revision'] != expected_revision:
+        raise SQLiteUnitOfWorkConflict('external_agent_revision_conflict')
+    if {key: current[key] for key in _FIELDS} == wanted:
+        return current
+    row = tx.put(COLLECTION, _ID, wanted, expected_revision=expected_revision)
     return {'revision': row.revision, **wanted}

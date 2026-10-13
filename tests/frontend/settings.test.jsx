@@ -23,6 +23,7 @@ beforeEach(() => {
   api = { load: vi.fn(async () => value), projects: vi.fn(async () => ({ items: [{ id: 'alpha', name: '阅读', revision: 2, scenes: ['读书'] }, { id: 'me', name: '我', builtin: 'me', revision: 1 }, { id: 'inbox', name: '收件箱', builtin: 'inbox', revision: 1 }] })),
     saveModel: vi.fn(async () => ({})), saveMode: vi.fn(async () => ({})), testModel: vi.fn(async () => ({ status: 'complete' })),
     saveFastModel: vi.fn(async () => ({})), fastModels: vi.fn(async () => ({ items: [] })),
+    loadAsrLexicon: vi.fn(async () => ({ revision: 0, terms: [] })),
     disableAsr: vi.fn(async () => { value.model.asr.egress_manifest.consented = false; }), enableAsr: vi.fn(async () => ({})),
     privateSources: vi.fn(async () => [{ source_id: 'x', title: '私密材料', type: 'experience', project_id: 'alpha', policy_revision: 2, source_revision: 8, inherited: false }, { source_id: 'y', title: '继承材料', type: 'recognition', project_id: 'alpha', policy_revision: 3, inherited: true }]),
     cancelPrivate: vi.fn(async () => { api.privateSources.mockResolvedValue([{ source_id: 'y', title: '继承材料', type: 'recognition', project_id: 'alpha', inherited: true }]); }),

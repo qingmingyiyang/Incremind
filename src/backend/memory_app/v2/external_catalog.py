@@ -6,7 +6,7 @@ from backend.recognition import RecognitionError, WorkScope
 
 from ..original_sources import original, resolve
 from ..source_egress import SourceEgressService
-from .external_agent_settings import external_agent_settings
+from .external_executor_plugins import effective_external_agent_settings as external_agent_settings
 from .overviews import ScopeOverviews, _Reader
 from .privacy import external_catalog_allowed, external_egress_allowed, privacy_revision, resolve_turn_material
 from .projects import _BUILTINS, DEFAULT_NAME, display_name, scene_of

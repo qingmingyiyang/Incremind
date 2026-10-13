@@ -7,7 +7,7 @@ from backend.recognition import WorkScope
 from ..recall_state import is_recall_excluded
 from ..source_egress import SourceEgressService
 from .external_agent_guard import ExternalAgentGuardError
-from .external_agent_settings import external_agent_settings
+from .external_executor_plugins import effective_external_agent_settings as external_agent_settings
 from .ladder import plan_ladder
 from .layers import summary_of
 from .overviews import _Reader

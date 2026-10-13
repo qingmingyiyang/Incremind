@@ -13,7 +13,7 @@ from .external_recall import ExternalRecall
 
 def _arguments(body):
     if (not isinstance(body, dict) or set(body) != {'client', 'arguments'}
-            or not isinstance(body['client'], str) or body['client'] not in {'claude', 'codex'}
+            or not isinstance(body['client'], str) or body['client'] not in {'claude', 'codex', 'deepseek-harness'}
             or not isinstance(body['arguments'], dict)):
         raise HTTPException(400, 'external_agent_request_invalid')
     return body['client'], body['arguments']

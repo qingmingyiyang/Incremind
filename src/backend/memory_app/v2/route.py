@@ -232,6 +232,9 @@ class RouteService:
         self._validate_input(text, project_id, request_key, has_files)
         if intent not in {None, "auto"}:
             return _fallback(text, has_files, reason="manual", intent=intent)
+        # 完整词表指令固定为单一干活，保留原文；这里只路由，不保存词表。
+        if not has_files and get('agent_data', version='@1').parse_instruction(parse_scope_tag(text)[2]) is not None:
+            return _fallback(text, False, reason='explicit_lexicon_instruction', intent='do')
         if is_fast_route(text, has_files):
             return _fallback(text, has_files, reason="fast_path")
         return self.route_model(text, project_id=project_id, request_key=request_key, has_files=has_files)

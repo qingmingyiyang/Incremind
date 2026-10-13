@@ -24,7 +24,7 @@ def _invalid():
 
 def _arguments(value, tool):
     if (not isinstance(value, dict) or set(value) != {'client', 'arguments'}
-            or not isinstance(value['client'], str) or value['client'] not in {'claude', 'codex'}
+            or not isinstance(value['client'], str) or value['client'] not in {'claude', 'codex', 'deepseek-harness'}
             or not isinstance(value['arguments'], dict) or tool not in _TOOLS):
         _invalid()
     arguments = value['arguments']

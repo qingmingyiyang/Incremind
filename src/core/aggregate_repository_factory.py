@@ -14,6 +14,7 @@ from .project_skill_core import (
     SQLiteProjectSkillRepository,
 )
 from .storage_provider import (
+    AggregateAuthorityEvidence,
     JsonObjectStore,
     SQLiteAggregateAuthorityStore,
     SQLiteStructuredRecordStore,
@@ -28,6 +29,7 @@ JSON_SOURCE_ASSET_AUTHORITY_IDENTITY = "json:object-store-v1"
 AUTHORITY_DATABASE_NAME = "aggregate-authority.sqlite3"
 STRUCTURED_DATABASE_NAME = "structured-records.sqlite3"
 _TARGET_MARKER_COLLECTION = "aggregate_authority_targets"
+_EMPTY_MIGRATION = "agent-os-empty-document-authority-v1"
 _MEMORY_PUBLICATION_MEMBERS = (
     "memory_atoms",
     "memory_publications",
@@ -113,6 +115,24 @@ class AggregateRepositoryFactory:
         self,
     ) -> ObjectStoreProjectSkillRepository | SQLiteProjectSkillRepository:
         return self.project_skill_repository_resolution().repository
+
+    def recognition_record_store_resolution(self) -> tuple[SQLiteStructuredRecordStore, str]:
+        """保持原产品装配的选库/空库激活规则，兼容入口共用唯一权威。"""
+        root = self.runtime_root.expanduser().resolve(strict=False)
+        initial = self.document_repository_resolution()
+        activate_empty_document_authority(root, self.namespace_id, initial.repository)
+        resolution = self.document_repository_resolution()
+        authority_path = root / ".rebuild-data" / AUTHORITY_DATABASE_NAME
+        authority = (SQLiteAggregateAuthorityStore(authority_path).get(self.namespace_id, "documents")
+                     if authority_path.exists() else None)
+        if isinstance(resolution.repository, SQLiteDocumentRepository):
+            evidence = authority.evidence if authority is not None else None
+            if evidence is None or getattr(evidence, "verification_method", "fingerprint") != "exact_records":
+                raise RuntimeError("recognition_document_cutover_evidence_required")
+            return resolution.repository.records, self.namespace_id
+        if resolution.repository.list(include_archived=True):
+            raise RuntimeError("recognition_document_cutover_required_for_old_documents")
+        return SQLiteStructuredRecordStore(root / "recognition.sqlite3"), "recognition"
 
     def project_skill_repository_resolution(self) -> ProjectSkillRepositoryResolution:
         authority = self._authority("project_skills")
@@ -317,3 +337,42 @@ class AggregateRepositoryFactory:
     @property
     def _rebuild_root(self) -> Path:
         return self.runtime_root.expanduser().resolve(strict=False) / ".rebuild-data"
+
+
+def activate_empty_document_authority(root: Path, namespace_id: str, old_documents: object) -> None:
+    """原空资料库激活实现下沉，路径、证据及 CAS 规则保持不变。"""
+    rebuild_root = root / ".rebuild-data"
+    authority = SQLiteAggregateAuthorityStore(rebuild_root / "aggregate-authority.sqlite3")
+    current = authority.get(namespace_id, "documents")
+    if current is not None and (current.evidence is None or current.evidence.migration_id != _EMPTY_MIGRATION):
+        return
+    if (root / "recognition.sqlite3").exists() or old_documents.list(include_archived=True):
+        return
+    records = SQLiteStructuredRecordStore(rebuild_root / "structured-records.sqlite3")
+    if any(records.list(collection) for collection in ("documents", "document_revisions", "document_markdown")):
+        return
+    evidence = AggregateAuthorityEvidence(
+        migration_id=_EMPTY_MIGRATION, source_fingerprint=None, target_fingerprint=None,
+        target_identity=TARGET_IDENTITY, verification_method="exact_records", verified_record_count=0,
+    )
+    if current is None:
+        current = authority.create_json_active(namespace_id=namespace_id, aggregate="documents",
+                                               reason="new vault has no Document records")
+    if current.state == "json_active":
+        current = authority.transition(namespace_id=namespace_id, aggregate="documents",
+                                       expected_revision=current.revision, to_state="sqlite_staged",
+                                       evidence=evidence, reason="empty stores verified")
+    marker_id = f"{namespace_id}~documents"
+    marker = records.read("aggregate_authority_targets", marker_id)
+    if marker is None:
+        with records.begin() as tx:
+            tx.put("aggregate_authority_targets", marker_id, {
+                "namespace_id": namespace_id, "aggregate": "documents", "migration_id": _EMPTY_MIGRATION,
+                "target_identity": TARGET_IDENTITY, "verification_method": "exact_records",
+                "verified_record_count": 0,
+            }, expected_revision=0)
+            tx.commit()
+    if current.state == "sqlite_staged":
+        authority.transition(namespace_id=namespace_id, aggregate="documents",
+                             expected_revision=current.revision, to_state="sqlite_active",
+                             evidence=evidence, reason="empty shared authority active")

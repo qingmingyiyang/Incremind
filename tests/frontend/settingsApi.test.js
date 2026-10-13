@@ -7,6 +7,12 @@ beforeEach(() => { calls = []; vi.stubGlobal('fetch', vi.fn(async (url, init = {
   return { ok: true, status: 200, json: async () => payload };
 })); });
 afterEach(() => vi.unstubAllGlobals());
+it('uses scoped v2 lexicon requests and explicit non-writing preview with CAS', async () => {
+  await settingsApi.loadAsrLexicon();
+  await settingsApi.importAsrLexicon({ text: '示例词', format: 'txt', preview: true, expected_revision: 3 });
+  expect(calls).toEqual([{ method: 'GET', url: '/api/v2/asr/lexicon', body: undefined },
+    { method: 'POST', url: '/api/v2/asr/lexicon/import', body: { text: '示例词', format: 'txt', preview: true, expected_revision: 3 } }]);
+});
 it('revokes ASR consent using DELETE and grants only the newly read manifest after PUT', async () => {
   await settingsApi.disableAsr(); expect(calls[0]).toMatchObject({ method: 'DELETE', url: '/api/rebuild/settings/cloud-asr-provider/egress-consent' });
   calls.length = 0; await settingsApi.enableAsr(); expect(calls.map(row => row.method)).toEqual(['PUT', 'GET', 'POST']);

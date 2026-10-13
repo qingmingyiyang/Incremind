@@ -286,6 +286,23 @@ class AgentProfileRegistry:
             upgraded.append(identity)
         return tuple(upgraded)
 
+    def upgrade_untouched_lexicon_tools(self) -> bool:
+        """只升级精确旧默认主角色，保留任何用户自定义字段和权限。"""
+        default = _BUILTINS_BY_ID['main.orchestrator']
+        stored = self._store.get('main.orchestrator') or default
+        additions = {'asr.lexicon.read', 'asr.lexicon.preview', 'asr.lexicon.import'}
+        old = set(default.capability_ids)
+        actual = set(stored.capability_ids)
+        automatic = {'recognition.task.execute', 'recognition.task.execute.local'}
+        if actual - automatic != old:
+            return False
+        comparable = replace(default, revision=stored.revision, capability_ids=stored.capability_ids)
+        if comparable != stored:
+            return False
+        self.update(replace(stored, revision=stored.revision + 1,
+            capability_ids=tuple(sorted(actual | additions))), expected_revision=stored.revision)
+        return True
+
     def create_custom(self, profile: AgentProfile) -> AgentProfile:
         _validate_custom(profile)
         if profile.revision != 1:

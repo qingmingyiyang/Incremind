@@ -35,6 +35,11 @@ _POLICY_INTERFACES = frozenset({
     "organize", "place", "extract", "route", "steer", "scope", "retrieve", "rank",
     "strength", "forget", "enough", "compose", "trigger", "consolidate", "search", "nudge", "handoff", "image_read", "retry",
     "skill_export", "skill_author",
+    # 材料分析仅增加已登记策略键，不改变 Turn 的权限或执行合同。
+    "material_analysis",
+    "context_preparation",
+    # 词表工具明确冻结纯授权规则版本，不扩大批准或领域写入权限。
+    "agent_data",
     # Product policies read during ask/do and learning turns (user 2026-10-09).
     "ladder", "vector", "rerank", "elsewhere", "continuation", "style", "gap", "reask", "review", "outcome_correction",
 })

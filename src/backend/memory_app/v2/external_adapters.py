@@ -23,6 +23,7 @@ class LaunchPlan:
     material_directory: Path | None = None
     input_policy: str | None = None
     stdin_text: str = field(default='', repr=False)
+    public_environment: tuple[tuple[str, str], ...] = ()
 
 
 def _json(value):
@@ -37,12 +38,14 @@ def _path(value):
 def build_launch_plan(executor, *, cli_version, executable, cwd, task, mcp_config,
         preset='workspace', commands='disabled', memory_endpoint=None, material_directory=None):
     """仅构造固定 argv；任务进入 stdin，完整环境和权限准入留在 host。"""
-    if (not isinstance(executor, str) or executor not in {'codex', 'claude-code'}
+    if (not isinstance(executor, str) or executor not in {'codex', 'claude-code', 'deepseek-harness'}
             or not _path(executable) or executable.suffix.lower() in {'.ps1','.cmd','.bat','.sh','.py','.js'}
             or not _path(cwd) or not isinstance(task, str) or not task.strip()
             or not isinstance(preset, str) or preset not in {'research','workspace','folder'}
             or not isinstance(commands, str) or commands not in {'disabled','sandboxed','explicit'}):
         raise ValueError('external_adapter_request_invalid')
+    if executor == 'deepseek-harness' and (preset != 'workspace' or commands != 'disabled'):
+        raise ValueError('external_adapter_commands_invalid')
     if preset == 'research' and commands != 'disabled':
         raise ValueError('external_adapter_commands_invalid')
     stdin_text, input_policy = task, None
@@ -54,24 +57,32 @@ def build_launch_plan(executor, *, cli_version, executable, cwd, task, mcp_confi
             material_directory.relative_to(cwd).as_posix())
         input_policy = 'external_task_input@1'
     version = re.fullmatch(r'([0-9]{1,10})\.([0-9]{1,10})\.([0-9]{1,10})', cli_version) if isinstance(cli_version, str) else None
-    if (version is None or (executor == 'codex' and cli_version != '0.156.1')
+    if ((executor != 'deepseek-harness' and version is None)
+            or (executor == 'deepseek-harness' and cli_version != '0.1.5-rc.1') or (executor == 'codex' and cli_version != '0.156.1')
             or (executor == 'claude-code' and (version.group(1, 2) != ('2', '1')
                 or int(version.group(3)) < 257))):
         raise ValueError('external_adapter_version_unsupported')
     # 复用任务目录 owner 的唯一 MCP 白名单，不在适配器复制来源校验。
     encoded = validate_memory_mcp_config(mcp_config, memory_endpoint=memory_endpoint)
     server = json.loads(encoded)['mcpServers']['chriptmas-memory']
-    aliases = tuple(sorted((key, value[2:-1]) for key, value in server.get('env', {}).items()))
+    aliases = tuple(sorted((key, value[2:-1]) for key, value in server.get('env', {}).items()
+        if key != 'CHRIPTMAS_MCP_BACKEND_URL'))
+    public_environment = tuple((key, value) for key, value in server.get('env', {}).items()
+        if key == 'CHRIPTMAS_MCP_BACKEND_URL')
     enabled = commands != 'disabled'
     if executor == 'codex':
         config = [('approval_policy', 'never'), ('web_search', 'live'), ('notify', []),
+            ('project_doc_max_bytes', 0),
             ('features.shell_tool', enabled), ('features.unified_exec', enabled)]
         config.extend(('features.' + feature, False) for feature in
             ('hooks','plugins','apps','multi_agent','shell_snapshot',
                 'skill_mcp_dependency_install','code_mode_host'))
         if 'command' in server:
             mcp = {'command':server['command'], 'args':server['args'],
-                'env_vars':[key for key, _ in aliases]}
+                'env_vars':[key for key, _ in (*aliases, *public_environment)]}
+            # Codex -c消费TOML，固定空值按dotted key传入，避免JSON对象被当字符串。
+            config.extend(('mcp_servers.chriptmas-memory.env.' + key, '')
+                for key in ('CODEX_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY'))
         else:
             reference = server['headers']['Authorization'][7:]
             mcp = {'url':server['url'], 'bearer_token_env_var':reference[2:-1]}
@@ -82,6 +93,8 @@ def build_launch_plan(executor, *, cli_version, executable, cwd, task, mcp_confi
         for key, value in config:
             command.extend(('-c', key + '=' + _json(value)))
         command.append('-')
+    elif executor == 'deepseek-harness':
+        command = [str(executable), '--profile', 'chriptmas-task']
     else:
         tools = ['Read','Glob','Grep','WebSearch']
         if preset != 'research':
@@ -95,6 +108,11 @@ def build_launch_plan(executor, *, cli_version, executable, cwd, task, mcp_confi
             'permissions':{'blockReadsOutsideWorkingDirectories':True}}
         allowed = tools + ['mcp__chriptmas-memory__' + name for name in
             ('projects','recall','methods','read','remember','propose_insight','report_use')]
+        if 'command' in server:
+            # 固定覆盖模型凭据，配合 subprocess scrub 防止 MCP 子进程继承。
+            server.setdefault('env', {}).update({key: '' for key in
+                ('CODEX_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY')})
+            encoded = _json({'mcpServers': {'chriptmas-memory': server}}).encode('utf-8')
         # --restricted 保留 managed 设置；host 必须额外拒绝未受控 managed 能力。
         command = [str(executable), '-p', '--restricted', '--no-session-persistence',
             '--no-chrome', '--output-format', 'stream-json',
@@ -104,4 +122,4 @@ def build_launch_plan(executor, *, cli_version, executable, cwd, task, mcp_confi
             '--strict-mcp-config', '--mcp-config', encoded.decode('utf-8'),
             '--settings', _json(settings)]
     return LaunchPlan(executor, executor + '@1', cli_version, preset, commands,
-        tuple(command), cwd, task, aliases, material_directory, input_policy, stdin_text)
+        tuple(command), cwd, task, aliases, material_directory, input_policy, stdin_text, public_environment)

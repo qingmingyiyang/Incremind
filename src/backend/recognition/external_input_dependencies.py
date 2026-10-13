@@ -157,7 +157,7 @@ def _reference(reader, scope, client, reference, *, _sql_validator=None):
 
 
 def freeze_references(reader, scope, client, references, *, _sql_validator=None):
-    if (client not in {'claude', 'codex'} or not isinstance(references, list) or not 1 <= len(references) <= 256):
+    if (client not in {'claude', 'codex', 'deepseek-harness'} or not isinstance(references, list) or not 1 <= len(references) <= 256):
         _invalid()
     try:
         with _replaying():

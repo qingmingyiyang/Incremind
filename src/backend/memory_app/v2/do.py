@@ -16,6 +16,19 @@ def task_receipt(status, previous=None):
 
 
 def read_task(records, scope, documents, previous, *, models=None, usage_reader=None):
+    if previous.get('executor'):
+        progress = previous.get('progress')
+        if previous.get('state') == 'running' and previous.get('kernel_turn_id'):
+            from .external_runs import ExternalRuns
+            from .external_runs import ExternalRunError
+            try:
+                run = ExternalRuns(records).read(previous['kernel_turn_id'], owner_id=scope.user_id)
+                if run['status'] == 'running':
+                    progress = {'done': 1, 'total': 3}
+            except ExternalRunError:
+                pass
+        return {**previous, 'progress': progress, 'model_usage': previous.get('usage'), 'model_cost': None,
+            'model': previous['executor']}
     if previous.get('task_id') is None:
         if previous.get('kernel_turn_id'):
             from .do_context import kernel_task_context

@@ -13,6 +13,7 @@ const messages = {
 };
 export function workbenchErrorMessage(value, fallback = '操作未完成 · 重试') {
   const code = typeof value === 'string' ? value : value?.code;
+  if (typeof code === 'string' && code.startsWith('external_')) return '外部执行未完成 · 重试';
   return remoteRestriction(value)?.message || (Object.hasOwn(messages, code) ? messages[code] : null) || value?.message || fallback;
 }
 function failure(code) { const error = new Error(workbenchErrorMessage(code)); error.code = code; return error; }

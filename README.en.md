@@ -58,7 +58,7 @@ For example, an introductory article on spaced repetition might produce an insig
 | 🧪 | More input formats | Image OCR, audio and video transcription, and Bilibili favorites import; requires the corresponding models to be configured. |
 | 🧪 | Forgetting and daily organization | Adjusts recall weights by usage and a forgetting curve. Daily organization proposes patterns from recurring material for your confirmation. |
 | 🧪 | Local embeddings | Install EmbeddingGemma from Settings, approximately 1.5 GB, for semantic retrieval without a network connection. |
-| 🧪 | Claude Code and Codex integration | Let external agents query memory through MCP. Method insights can be exported as skills. See [the agent guide](docs/agents.md) (Chinese). |
+| 🧪 | Claude Code, Codex, and DeepSeek Harness | Plugins expose memory tools and let the workbench delegate tasks into new drafts. See installation requirements and validation limits in [the agent guide](docs/agents.md) (Chinese). |
 | 🧪 | Servers and multiple users | Home or cloud server deployment, device pairing, backup, and recovery. See [the server guide](docs/server.md) (Chinese). |
 
 ✅ End-to-end flows have been exercised with a real model, DeepSeek. 🧪 Implemented with automated tests; validation in real environments is still in progress.
@@ -157,7 +157,15 @@ On a receipt, use ✓ to confirm an insight or ✕ to dismiss it. The project as
 
 The **Library** groups insights, summaries, organized notes, and originals by project. Follow each layer down to its source evidence, or confirm, edit, forget, and restore insights here.
 
-**Settings** contains model configuration, privacy controls, projects, data, and backups.
+**Settings** contains model configuration, privacy controls, projects, data, backups, devices, and websites.
+
+**Speech vocabulary:** manage a personal vocabulary in Settings → Models → Transcription. Paste a batch or import UTF-8 TXT, CSV, or JSON, preview it, then add or update terms. Built-in faster-whisper transcription uses hotword hints for uploaded audio and video, prioritizes whole terms by weight, and records how many fit within the model's token capacity. Realtime Qwen uses its native vocabulary. The current Hy-ASR synchronous endpoint does not support hotwords. Local transcription still needs its dependencies and model assets; importing terms does not install or switch a model.
+
+**Agent data operations:** a bundled skill exposes scoped vocabulary read, preview, import, and verification tools. Saving requires a complete vocabulary explicitly supplied by the user; automatically discovered terms remain suggestions. Tools do not accept arbitrary SQL or database paths. See [Agent data operations](docs/agent-data-tools.md) (Chinese) for the instruction format and permission boundaries.
+
+**Mobile sharing:** install the HTTPS web app on Android to send text, links, images, and videos from other apps; use Shortcuts on iPhone. Full Xiaohongshu and Bilibili share text is accepted, and multiple images can form one original. See [mobile sharing](docs/mobile-share.md) (Chinese) for pairing, retries, and shortcut setup.
+
+**Website login:** import Bilibili or Xiaohongshu cookies in Settings → Websites so the server can reuse the session when reading that website. Bilibili also displays an official QR code for confirmation on your phone, then saves the session encrypted. Xiaohongshu browser login needs an optional runtime; a real QR code has not yet been obtained. See [website login](docs/platform-login.md) (Chinese) for usage and verification limits.
 
 Open the **Companion** through the bear avatar in the upper-left corner to chat, review what you remembered this week, focus, or plan.
 
@@ -194,6 +202,38 @@ flowchart TB
 ```
 
 **Memory layers:** original (L0) → organized note (L1) + summary (L2) → insight (L3). Material is organized from the bottom up. Retrieval works from the top down: start with insights, descend when necessary, and stop when there is enough evidence.
+
+**Analyze material before extracting insights.** Optional `organize@2 / material_analysis@1, @2, @3, or @4 / extract@6` pipelines are registered; version 2 and later use `context_preparation@1`. Active defaults remain `organize@1 / material_analysis@1 / extract@5`. These candidate pipelines are not enabled by default.
+
+1. The model reads the material and plans suitable analysis angles, without reading later questions or reference answers.
+2. Long material is grouped into complete paragraphs; oversized paragraphs split at sentence boundaries. Each worker first receives the verified full body plus its focus and actual coordinates. If both exceed capacity, version 2 uses the shared text preparation entry point: semantic sections, paragraph and argument boundaries, hierarchical summaries, focus originals, and necessary adjacent originals. Version 1 retains its explicit capacity failure and existing replay behavior. Concurrency follows the actual auxiliary route: serial locally, at most two workers remotely. Results merge in frozen segment order.
+3. Segment analysis retains actors, conditions, negations, facts, inferences, plans, and unknowns. A final model synthesizes multiple segments while covering every original claim. The organized note retains all claims and evidence; synthesis inferences are labeled separately. Version 4 requests separate citations for discontinuous evidence. Only a unique exact join of adjacent complete single-line `[id] Speaker: body` utterances can be split into actual original spans, with no additional model call. Skipped utterances, record headers, partial sentences, omissions, rewriting, and repeated bodies are rejected. Coordinates allow speaker readback; this check does not establish the semantic correctness of the claim or actor attribution.
+4. Temporal analysis runs only when the material involves dates, ordering, or freshness. A deterministic calculator resolves relative dates against the closest preceding valid record header. Original expressions, coordinates, and precision remain available; dates cannot be borrowed across records or from historical quotations. Version 3 retains events with no time expression using `null`: their time stays unknown, with no anchor or calculation, while event states such as asserted or planned remain intact. Non-null expressions use the existing parser. A limited guard rejects omitted recognizable direct relative expressions, sentence-leading dates, or explicitly introduced event dates, excluding record headers, historical quotations, and dates modifying source documents. A guard miss does not prove that the original contains no temporal information.
+5. Extraction compares the analysis with existing insights and proposes complete additions according to independent information and actual budget. Counts vary with the material, and every proposal requires human confirmation. Comments retain separate provenance. Body boundaries, source revisions, and generation records are rechecked during extraction and display. Manual note edits retain the existing revision checks and leave analysis evidence frozen.
+
+The pipeline reuses existing Turns, transmission receipts, leases, and confirmation transactions. Recovery reuses successful steps; auxiliary configuration changes fail explicitly. Automated checks use real temporary databases and domain flows with simulated model transport. Real answers, timings, and improvement on the same 12 questions still await evaluation.
+
+**Shared text context preparation.** `v2.context_preparation.prepare_context` returns fitting messages unchanged, with zero compression calls. Oversized inputs use summaries that retain goals, concepts, facts, arguments, conditions, exceptions, unresolved issues, and original coordinates. Originals remain available for scoped readback. The shared entry point audits summaries against protected prior items and original text. The `material_analysis@2` adapter and its successor `@3` separately retain progress judgments, states, evidence, and follow-up links, audit that progress, and review cross-segment consistency, omissions, duplication, and broken reasoning. Other callers must arrange their own final analysis review. Semantic audits rely on model judgment. Programmatic checks verify complete audit participation and actual quotations; they do not guarantee perfect semantic detection.
+
+Callers supply the actual auxiliary capacity, verified original spans, and their existing lawful Turn adapter. `input_limit` is the net input capacity after subtracting `max(actual reserve, output_limit)` from the window. Instructions, summaries, originals, and progress all count. This integration fragment uses variables supplied by the caller's budget and provenance checks:
+
+```python
+from backend.memory_app.v2.context_preparation import prepare_context
+from backend.memory_app.v2.policies.context_preparation import ContextPreparationInput
+
+request = ContextPreparationInput(
+    task=task, instructions=instructions, original_messages=messages,
+    focus=verified_focus, fixed=fixed_original_spans,
+    surrounding=compressible_original_spans,
+    input_limit=net_input_limit, output_limit=output_limit,
+)
+prepared = prepare_context(
+    request, read_original=read_verified_original, validate_current=validate_current,
+    complete_stage=complete_via_existing_turn,
+)
+```
+
+Each `ContextSpan` carries source identity and revision, coordinate space, actual bounds, and verbatim text. `read_original` returns the corresponding complete original; `validate_current` rechecks eligibility before dispatch and commit; `complete_stage(stage, messages, parser)` returns a parsed result through the existing Turn. The entry point currently supports text messages and spans. Images, audio, and tool-call messages require explicit future adapters. The first integrated version is `material_analysis@2`; `@3` extends its temporal contract, and `@4` adds strict separation of adjacent complete utterances. Both inherit the same entry point. Previous messages and replay remain frozen. Questions retain dynamic retrieval and current budgeting; insight extraction retains its capacity preflight. Other callers need explicitly versioned integration, preserving existing replay behavior.
 
 **Design principles:**
 
@@ -284,7 +324,7 @@ The applicable turn snapshots record `compose`, `retrieve`, `rerank`, `rank`, `l
 ## Privacy and data
 
 - **Local first.** Sources, organized notes, insights, and conversations are stored in SQLite in your local data directory.
-- **Encrypted credentials.** Model keys are encrypted with Windows DPAPI. Saved keys cannot be read back through the interface and are not written to logs.
+- **Encrypted credentials.** Model keys and website cookies use the existing encrypted secret store: DPAPI on Windows and the existing server store on servers. Saved values are not returned or logged. Website cookies are excluded from model inputs.
 - **Controlled external transmission.** External models are called only for purposes whose transmission switches you enable in **Settings → Models**. Private projects and sources are excluded. Every external request leaves a receipt recording what was sent and which model received it. See [the model guide](docs/models.md) (Chinese).
 - **Originals are retained.** Forgetting affects automatic recall. Originals, organized notes, insight text, and revision history remain available for restoration.
 
@@ -313,6 +353,7 @@ npm run build
 
 - **Speed:** remembering a source takes about 15–20 seconds, asking a question about 5–15 seconds, and confirming an insight is near-instant. A question asked in Everyday whose material lives in another project first points to that project and is then answered there, in about 10 seconds total. About a minute after each startup, a maintenance round runs (with a backup on the day's first startup), and the app is slower while it runs.
 - **Platform:** end-to-end validation has been performed on Windows. The application interface is currently Chinese only.
+- **Mobile sharing and website login:** OS sharing and iPhone Shortcuts await device validation; real-account QR confirmation has not been verified. Xiaohongshu sessions currently use cookie import.
 - **In progress:** real-environment validation of the mobile shell, shared projects, and LAN or public server deployment.
 
 ## Acknowledgments

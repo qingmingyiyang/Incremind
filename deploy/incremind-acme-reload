@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+# 每次证书检查成功后重新加载代理，使上次加载失败能在下一轮重试。
+/usr/sbin/nginx -t
+/bin/systemctl reload nginx

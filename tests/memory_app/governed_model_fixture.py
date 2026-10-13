@@ -7,7 +7,9 @@ class GovernedModel:
             "revision": 1, "allow_remote": False}, "generation_mode": {"revision": 1}}
 
     def complete_governed(self, messages, *, routing_snapshot, execution_control, metadata_sink,
-                          wire_attempt_sink, response_model=None, purpose="primary", on_delta=None, on_retry=None, **kwargs):
+                          wire_attempt_sink, response_model=None, purpose="primary", on_delta=None, on_retry=None,
+                          retry_policy=None, **kwargs):
+        # 与实际网关一样在传输层消费重试选项，不转给只负责生成正文的样本模型。
         metadata_sink.model_call_routed(snapshot_ref=routing_snapshot["payload_ref"],
             snapshot_revision=routing_snapshot["revision"], prompt_cache_scope_identity=routing_snapshot["prompt_cache_scope_identity"],
             provider="openai", model="fake", execution_location=routing_snapshot["execution_location"], purpose=purpose)

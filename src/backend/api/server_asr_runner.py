@@ -8,13 +8,15 @@ import time
 from backend.shared.server_resources import RESOURCE_POOL
 from backend.video_summary.infrastructure.faster_whisper_models import FasterWhisperModelManager
 from backend.video_summary.infrastructure.faster_whisper_transcriber import FasterWhisperTranscriber
+from backend.video_summary.infrastructure.local_asr_cli import read_hotwords_file
 
 
 def is_builtin(argv):
     values = tuple(argv)
-    return (len(values) == 11 and values[:4] == (sys.executable, '-m',
+    return (len(values) in {11, 13} and values[:4] == (sys.executable, '-m',
         'backend.video_summary.infrastructure.local_asr_cli', '--audio')
-        and values[5] == '--model' and values[7:] == ('--mode', 'balanced', '--language', 'zh'))
+        and values[5] == '--model' and values[7:11] == ('--mode', 'balanced', '--language', 'zh')
+        and (len(values) == 11 or values[11] == '--hotwords-file'))
 
 
 def run_shared_asr(argv, user_root, timeout_seconds, control_check=None):
@@ -38,9 +40,11 @@ def run_shared_asr(argv, user_root, timeout_seconds, control_check=None):
     model = argv[6]
     if not manager.is_supported(model) or not manager.is_downloaded(model):
         return subprocess.CompletedProcess(argv, 2, '', 'local_asr_model_unavailable')
-    transcript = FasterWhisperTranscriber(str(manager.resolve_model_dir(model)), device='auto',
-        compute_type='int8', transcription_mode='balanced', language='zh').transcribe(
-            audio, root / 'data/tmp/local-asr' / audio.stem,control_check=check)
+    transcriber = FasterWhisperTranscriber(str(manager.resolve_model_dir(model)), device='auto',
+        compute_type='int8', transcription_mode='balanced', language='zh')
+    words = read_hotwords_file(argv[12], root) if len(argv) == 13 else ()
+    extra = {'hotwords': words} if len(argv) == 13 else {}
+    transcript = transcriber.transcribe(audio, root / 'data/tmp/local-asr' / audio.stem, control_check=check, **extra)
     # In-process provider inference is synchronous. Keep its execution lease
     # until it really finishes; expired/cancelled work never publishes a result.
     if control_check is not None:
@@ -52,6 +56,8 @@ def run_shared_asr(argv, user_root, timeout_seconds, control_check=None):
     payload = {'language': transcript.language, 'segments': [
         {'start_seconds': part.start_seconds, 'end_seconds': part.end_seconds, 'text': part.text}
         for part in transcript.segments]}
+    if len(argv) == 13:
+        payload['hotwords'] = transcriber.hotword_receipt
     return subprocess.CompletedProcess(argv, 0, json.dumps(payload, ensure_ascii=False), '')
 
 

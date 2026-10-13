@@ -1,0 +1,5 @@
+.platform-session-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.platform-session-actions button,.platform-session-qr button{padding:8px 12px;border:1px solid var(--line2);border-radius:var(--r-control);background:transparent;color:var(--ink);font:14px var(--sans)}
+.platform-session-qr{display:flex;flex-direction:column;align-items:flex-start;gap:12px;margin:16px 0;font:13px var(--mono);color:var(--ink2)}
+.platform-session-qr img{max-width:100%;height:auto;object-fit:contain}
+.platform-session-file{flex-wrap:wrap;margin-top:16px}

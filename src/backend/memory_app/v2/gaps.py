@@ -26,9 +26,9 @@ def _frozen_coverage(group, answer, question, project, policy):
     try:
         wire = group['answer_input']
         messages = wire['messages']
-        reviewed = group['request'].get('policy_versions', {}).get('compose') in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}
-        partitioned = group['request'].get('policy_versions', {}).get('compose') in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}
-        lengths = ((2, 3, 4) if partitioned else (3, 4) if group['request'].get('policy_versions', {}).get('compose') in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}
+        reviewed = group['request'].get('policy_versions', {}).get('compose') in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}
+        partitioned = group['request'].get('policy_versions', {}).get('compose') in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}
+        lengths = ((2, 3, 4) if partitioned else (3, 4) if group['request'].get('policy_versions', {}).get('compose') in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}
                    else (4, 5)) if reviewed else (2, 3)
         if (wire.get('purpose') != 'primary' or not isinstance(messages, list)
                 or len(messages) not in lengths or messages[-1].get('role') != 'user'
@@ -78,14 +78,38 @@ def _frozen_coverage(group, answer, question, project, policy):
             from .answer_evidence import catalog_source_excerpts, validate_partition
             payload = json.loads(sources)
             expected_keys = ({'evidence_catalog', 'date_provenance', 'untrusted_first_fact_plan', 'first_fact_positions'}
-                if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else {'evidence_catalog', 'untrusted_first_partition'})
-            if compose_version in {'@25', '@26', '@27', '@28', '@29', '@30'}:
+                if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'} else {'evidence_catalog', 'untrusted_first_partition'})
+            if compose_version in {'@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
                 expected_keys = expected_keys | {'first_fact_diagnostics'}
+            if compose_version == '@31':
+                expected_keys = expected_keys | {'review_queue'}
+            elif compose_version == '@32':
+                expected_keys = (expected_keys - {'untrusted_first_fact_plan'}) | {'first_evidence_plan', 'review_queue'}
             if set(payload) != expected_keys:
                 return None
             catalog = payload['evidence_catalog']
+            if compose_version == '@31' and payload['review_queue'] != get('compose', version=compose_version)(
+                    None, operation='review_queue', catalog=catalog, first_output=payload['untrusted_first_fact_plan'],
+                    diagnostics=payload['first_fact_diagnostics'], date_refs=payload['date_provenance']):
+                return None
             from .answer_evidence import first_fact_partition
-            validate_partition(first_fact_partition(payload['untrusted_first_fact_plan'], catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else payload['untrusted_first_partition'], catalog)
+            if compose_version == '@32':
+                locations = payload['first_evidence_plan']
+                if (not isinstance(locations, list) or any(set(row) != {'fact_index', 'kind', 'evidence', 'date_refs'} for row in locations)
+                        or [row['fact_index'] for row in locations] != payload['first_fact_positions']
+                        or payload['first_fact_positions'] != list(range(1, len(locations) + 1))):
+                    return None
+                first_locations = {'facts': [{key: value for key, value in row.items() if key != 'fact_index'} for row in locations]}
+                if payload['review_queue'] != get('compose', version='@32')(None, operation='review_queue',
+                        catalog=catalog, first_output=first_locations, diagnostics=payload['first_fact_diagnostics'],
+                        date_refs=payload['date_provenance']):
+                    return None
+                complete = {unit['id'] for unit in catalog['units']}
+                used = {item['unit_id'] for row in locations for item in row['evidence']} & complete
+                validate_partition({'selected_ids': sorted(used), 'irrelevant_ids': sorted(complete - used),
+                    'uncertain_ids': []}, catalog)
+            else:
+                validate_partition(first_fact_partition(payload['untrusted_first_fact_plan'], catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31'} else payload['untrusted_first_partition'], catalog)
             if [row['source_number'] for row in catalog['sources']] != list(range(1, len(chosen) + 1)):
                 return None
             excerpts = catalog_source_excerpts(catalog)

@@ -28,7 +28,7 @@ from .v2.server_users import ServerUsers
 HOST_SETTINGS = frozenset('/api/rebuild/settings/' + suffix for suffix in (
     'local-ocr-provider', 'local-asr-provider', 'local-video-provider',
     'local-document-text-extractor', 'transcript-summary-provider'))
-INTAKE_PATHS = frozenset({'/api/v2/workbench/files',
+INTAKE_PATHS = frozenset({'/api/v2/workbench/files', '/api/v2/workbench/share',
     '/api/workspace/v1/items/text', '/api/workspace/v1/items/file', '/api/workspace/v1/items/audio'})
 LOGGER = logging.getLogger(__name__)
 _DOWNLOAD_ROUTE = re.compile(r'/api/(?:asr/faster-whisper/models|rag/models)/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}/download\Z')

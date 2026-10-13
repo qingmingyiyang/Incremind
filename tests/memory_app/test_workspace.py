@@ -1180,15 +1180,21 @@ def _failed_local_audio_with_transcript(tmp_path, monkeypatch):
         def __init__(self, object_store, *, settings_override, **_kwargs):
             self.store = object_store
             self.provider = settings_override.provider_name
+            self.lexicon_snapshot = _kwargs.get("lexicon_snapshot")
 
         def execute(self, *, audio_asset_id):
             asr_calls.append(audio_asset_id)
             output_id = f"output-{audio_asset_id}"
-            self.store.write("media_processing_outputs", output_id,
-                             _completed_audio_output(self.store, output_id=output_id,
-                                                     audio_asset_id=audio_asset_id,
-                                                     text="本机录音原文证据", provider=self.provider),
-                             expected_revision=None)
+            output = _completed_audio_output(self.store, output_id=output_id,
+                                             audio_asset_id=audio_asset_id,
+                                             text="本机录音原文证据", provider=self.provider)
+            if self.lexicon_snapshot is not None:
+                from core.product_core.audio_asset_transcriber import lexicon_input_identity
+                # 自定义本地命令替身保留新冻结证据，仍然不冒称已使用识别热词。
+                output["metadata"]["input_identity"] = {"asr_lexicon": lexicon_input_identity(self.lexicon_snapshot)}
+                output["metadata"]["asr_lexicon"] = {"revision": self.lexicon_snapshot["revision"],
+                    "selected_count": len(self.lexicon_snapshot["terms"]), "hotwords_supported": False}
+            self.store.write("media_processing_outputs", output_id, output, expected_revision=None)
             return SimpleNamespace(status="completed", output_id=output_id)
 
     class CountingModel(Model):

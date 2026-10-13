@@ -45,3 +45,17 @@ pi-ai 是 TypeScript 实现，本项目只借鉴它的协议适配和测试方�
   - [容量不足识别](https://github.com/earendil-works/pi/commit/3874b3e98983c70fa05fa193b675d42cfcb8b9f8)
 
 订阅请求固定 `store=false`、`stream=true`。依据是 OpenAI 的[订阅推理协议](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)和[错误恢复规则](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery)。
+
+### 2026-10-12 兼容性核对
+
+本次对照 pi-ai 提交 [0f4b146](https://github.com/earendil-works/pi/commit/0f4b1465a444a53274ba02df6d4d14a2f04b1596)，发布版 v1.1.0。同步范围为临时繁忙错误的识别与既有重试链的交接，参考上游 [server_busy 修复](https://github.com/earendil-works/pi/commit/8b5708dbb1b4a819f924b43a2de02c9cc8c7a46d)。重试仍由当前领域策略决定，每次尝试沿用来源复验和回执；认证、额度、拒绝、已开始正文或工具输出的请求不得因繁忙提示重发，原始提供方诊断不进入公开错误。
+
+LiteLLM 包装丢失字段时，只从相同 HTTP 状态的原始官方 SDK 异常读取结构化错误，不扫描异常字符串。后台任务遇到可恢复繁忙时，继续读取同一响应的 GET；额度错误停止续读，不重新发送 POST。
+
+其余变化按当前实现核对：
+
+- [上下文估算](https://github.com/earendil-works/pi/commit/27075fe07597fbb9ada7a0b2e3ea9b9b34505cc0)：本项目按序列化输入的 UTF-8 字节数除以 3 估算，比上游每 token 3.5 字符更保守，保持现有预算。
+- [长提示分档价格](https://github.com/earendil-works/pi/commit/943a10e744b87d9a593f3dca7406d4671910f490)：本项目未加载 models.dev、OpenRouter 或 Vercel 价格目录，只内置已核验的 DeepSeek CNY 费率，其余沿用人工配置或未知；本次不引入未经核验的目录价格。
+- [Mistral 超时](https://github.com/earendil-works/pi/commit/6b07b4e57269ebc4b3fe2b7cd3caba2d95e26cc0)：本项目没有该原生适配；受管传输已区分等待响应头、读取空闲和总时限，保留总预算及取消保护。
+- [登录应用名称](https://github.com/earendil-works/pi/commit/9ad083102aa9afd483dbb5e0da53e69f2902c6a6)：已有 `agent_name_hint=ChriptmasAgent`，不增加登录参数。
+- [Decisions 能力边界](https://github.com/earendil-works/pi/commit/ce8972a0e99cab79f2620a594a1c17baef436c67)：现有订阅只读取官方 OAuth 模型目录并调用 Responses，没有混入分类模型目录或 Decisions；本次不新增模型接口或订阅提供方。

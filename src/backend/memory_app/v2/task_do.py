@@ -19,6 +19,7 @@ from core.document_engine import SQLiteDocumentRepository
 from backend.recognition import WorkScope, RecognitionConflict
 from ..source_egress import recognition_service
 from .outcomes import validate_selection, record_outcome, prepare_continuation, validate_continuation
+from .agent_data_tools import AgentDataTools, AgentDataToolError
 
 TASK_EXECUTIONS = 'v2_task_executions'
 TERMINAL = {'completed', 'failed', 'cancelled', 'interrupted', 'timed_out',
@@ -153,7 +154,8 @@ class TaskDo:
             inspirations=[row for row in (method_plan or {}).get('chosen', []) if row.get('inspiration')],
             project_id=project, load_text=lambda item: '', text=prompt, materials=materials,
             turn_id=identity, session_id='session-'+turn_id, operation_id='op-'+identity,
-            idempotency_key='task-'+turn_id, created_at=_now(), situation=situation)
+            idempotency_key='task-'+turn_id, created_at=_now(), situation=situation, template_version=3)
+        request['policy_versions']['agent_data'] = '@1'
         from .part_context import bind_context
         bind_context(self.records, request, part_context)
         if outcome_input is not None:
@@ -201,6 +203,11 @@ class TaskDo:
                 await run_in_threadpool(self.organization.start, request, agent_turn_mode=True)
                 updates['started'] = True
             result = await run_in_threadpool(self.reader, request['turn_id'], project)
+            if result['status'] == 'waiting_approval' and self.execution_getter:
+                runtime, runner = self.execution_getter()
+                tools = getattr(runtime, 'agent_data_tools', None)
+                if tools is not None and await run_in_threadpool(tools.approve_explicit_import, request, runner):
+                    result = await run_in_threadpool(self.reader, request['turn_id'], project)
             rows = await run_in_threadpool(self.topology, request['turn_id'], project)
             receipt.update(experts=rows, division=rows,
                 progress={'done':2 if rows and all(row['state'] in {'done','failed'} for row in rows) else 1, 'total':3})
@@ -217,6 +224,12 @@ class TaskDo:
                 if failed:
                     summary += '\n\n未完成：' + '；'.join(row.get('goal',row.get('role','')) for row in failed)
                 if result['status'] == 'completed' and summary.strip():
+                    if AgentDataTools.explicit_import(request):
+                        runtime, _ = self.execution_getter() if self.execution_getter else (None, None)
+                        tools = getattr(runtime, 'agent_data_tools', None)
+                        if tools is None:
+                            raise AgentDataToolError('asr_lexicon_update_not_completed')
+                        tools.verify_completion(request)
                     validate_task_inputs(self.records, self.models, request, query=self.query)
                     composed = result.get('outcome')
                     product_input = json.loads(request['input']['text'])
@@ -249,6 +262,9 @@ class TaskDo:
                     items = [{'goal':values['task_text'], 'deliverable':'整理稿', 'capabilities':[], 'depends_on':[]}]
                 self.divisions.complete(turn_id, project=project, text=values['task_text'], items=items, outcome=receipt['state'])
             updates['failures'] = 0
+        except AgentDataToolError as error:
+            updates['failures'] = values.get('failures', 0) + 1
+            receipt.update(state='failed', error=str(error))
         except Exception:
             updates['failures'] = values.get('failures',0)+1
             if updates['failures'] >= 3:

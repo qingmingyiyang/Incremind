@@ -76,6 +76,8 @@ def freeze_workbench_asr_binding(
         binding_id = f"workbench-asr-{uuid5(NAMESPACE_URL, f'{job_id}:{source_id}').hex}"
     if not settings.enabled:
         local_settings = workbench_local_transcriber_settings(object_store)
+        from backend.shared.asr_lexicon import user_asr_lexicon
+        lexicon = user_asr_lexicon(runtime_root).select_for_session()
         record = {
             "schema_version": "1.0.0",
             "id": binding_id,
@@ -87,6 +89,8 @@ def freeze_workbench_asr_binding(
             "secret_generation": 0,
             "egress_manifest_id": "not-applicable",
             "remote_processing": False,
+            "asr_lexicon": {"revision": lexicon.revision,
+                           "terms": [{"term": term.term, "weight": term.weight} for term in lexicon.terms]},
             "local_settings": {
                 "provider_name": local_settings.provider_name,
                 "command": list(local_settings.command),
@@ -116,6 +120,10 @@ def freeze_workbench_asr_binding(
             "remote_processing": True,
         }
     existing = object_store.read("workbench_asr_bindings", binding_id)
+    if (isinstance(existing, Mapping) and "asr_lexicon" not in existing
+            and record.get("asr_lexicon") == {"revision": 0, "terms": []}):
+        # 空词表不改变旧任务的冻结事实；已有词表时必须使用新的 run。
+        record.pop("asr_lexicon")
     if existing is None:
         object_store.write("workbench_asr_bindings", binding_id, record, expected_revision=None)
     elif existing != record:

@@ -351,12 +351,13 @@ def _alias(reader, scope, identity, item):
         'incarnation': payload['_original_incarnation']}
 
 
-def _bound_source(reader, row, payload):
+def _bound_source(reader, row, payload, *, allow_processing=False):
     if (row is None or payload.get('item_id') != row.object_id
             or payload.get('project_id') != row.payload.get('project_id')
             or set(payload) != (_X_BOUND if payload.get('origin') == 'xiaohongshu' else _BOUND)
             or payload.get('state') != 'bound'
-            or row.payload.get('status') not in {'ready', 'confirming', 'confirmed'}
+            or row.payload.get('status') not in ({'processing', 'ready', 'confirming', 'confirmed'}
+                if allow_processing else {'ready', 'confirming', 'confirmed'})
             or payload.get('source_text') != row.payload.get('source_text')
             or type(payload.get('capture_owner_revision')) is not int
             or not 0 < payload['capture_owner_revision'] <= row.revision):
@@ -365,6 +366,18 @@ def _bound_source(reader, row, payload):
     _token(payload.get('capture_id'))
     _identity(payload.get('capture_run_id'))
     return _model_source(row, payload, reader=reader)
+
+
+def analysis_body_for_item(reader, row):
+    """新材料分析只读已证明的正文；评论保留原独立来源路径。"""
+    proof = reader.read(SECTIONS, row.object_id)
+    if proof is None or proof.payload.get('state') == 'unbound':
+        # 普通原件没有评论区间，沿用完整正文，不根据自然标题猜测来源。
+        comment_section_for_item(reader, row)
+        return {'start': 0, 'end': len(row.payload['source_text']), 'section_binding': None}
+    source = _bound_source(reader, row, proof.payload, allow_processing=True)
+    body = source['body'] if source is not None else proof.payload['body']
+    return {**body, 'section_binding': {'id': proof.object_id, 'revision': proof.revision}}
 
 
 def comment_section_for_item(reader, row):
@@ -514,7 +527,7 @@ def _exact(left, right):
     return left == right
 
 
-def _comment_generation(reader, turn_id):
+def _comment_generation(reader, turn_id, *, include_manifest=False):
     """Read the existing MemoryTurn authority without constructing its runtime."""
     path = getattr(reader, 'database_path', None)
     if path is None:
@@ -532,7 +545,14 @@ def _comment_generation(reader, turn_id):
         request = connection.execute('SELECT request_json FROM ai_turns WHERE turn_id=?', (turn_id,)).fetchone()
         output = connection.execute('SELECT payload_json FROM ai_turn_immutable_payloads WHERE turn_id=? AND kind=?',
             (turn_id, 'memory-generation-output-v1')).fetchone()
-        return (json.loads(request[0]), json.loads(output[0])) if request and output else None
+        if not request or not output:
+            return None
+        result = (json.loads(request[0]), json.loads(output[0]))
+        if not include_manifest:
+            return result
+        manifest = connection.execute('SELECT payload_json FROM ai_turn_immutable_payloads WHERE turn_id=? AND kind=?',
+            (turn_id, 'memory-insights-plan-v2')).fetchone()
+        return (*result, json.loads(manifest[0]) if manifest else None)
     finally:
         connection.close()
 
@@ -561,7 +581,7 @@ def comment_source_for_candidate(reader, scope, candidate):
         request, generated = immutable
         if (request['turn_id'] != turn_id or request['desired_outcome'] != 'memory.propose_insights'
                 or request['scope']['project_id'] != scope.project_id
-                or request.get('policy_versions', {}).get('extract') not in {'@3', '@4', '@5'}
+                or request.get('policy_versions', {}).get('extract') not in {'@3', '@4', '@5', '@6'}
                 or not _exact(request, index.payload['request'])
                 or index.payload['identity']['kind'] != 'memory.propose_insights'
                 or index.payload['identity']['project'] != scope.project_id
@@ -584,15 +604,28 @@ def comment_source_for_candidate(reader, scope, candidate):
                 for source in frozen['sources']):
             return None
         from .policies import get
-        from .policies.extract_comments import CommentExtractDecodeInput
-        decoded = get('extract', version=request['policy_versions']['extract']).decide(CommentExtractDecodeInput(generated['output'],
-            normalize_conditions, comparative.payload['neighbors'], comparative.payload['projects'],
-            scope.project_id, frozen['sources']))
+        manifest = None
+        if request['policy_versions']['extract'] == '@6':
+            # 新版本从实际单轮immutable计划读取动态索引，不能使用候选自报的清单。
+            actual = _comment_generation(reader, turn_id, include_manifest=True)
+            if actual is None or not _exact(actual[:2], immutable) or actual[2] is None:
+                return None
+            manifest = actual[2]
+            from .material_insights import resolve_material_comment_candidate_inputs
+            decode_inputs = resolve_material_comment_candidate_inputs(reader, scope, candidate,
+                turn_id=turn_id, request=request, generated=generated,
+                comment_inputs=inputs.payload, comparative_inputs=comparative.payload, manifest=manifest)
+        else:
+            from .policies.extract_comments import CommentExtractDecodeInput
+            decode_inputs = CommentExtractDecodeInput(generated['output'], normalize_conditions,
+                comparative.payload['neighbors'], comparative.payload['projects'], scope.project_id, frozen['sources'])
+        decoded = get('extract', version=request['policy_versions']['extract']).decide(decode_inputs)
         if not decoded.valid:
             return None
         prefix = f"candidate-v2-{frozen['document']['id']}-r{frozen['document']['revision']}-"
         for ordinal, ((text, conditions), hint) in enumerate(zip(decoded.rows, decoded.hints), 1):
-            if (candidate.object_id == prefix + str(ordinal) and candidate.payload.get('content') == text
+            identity = manifest['candidate_ids'][ordinal - 1] if manifest is not None else prefix + str(ordinal)
+            if (candidate.object_id == identity and candidate.payload.get('content') == text
                     and _exact(candidate.payload.get('conditions'), list(conditions))
                     and _exact(relation.payload, {'project_id': scope.project_id,
                         **{key: hint[key] for key in ('relation', 'target_id', 'scope_hint')}})

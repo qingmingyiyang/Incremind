@@ -12,9 +12,11 @@ import { SettingsDevices } from './SettingsDevices';
 import { ExternalAgentSettings } from './ExternalAgentSettings';
 import { SkillExports } from './SkillExports';
 import { ProviderStoreField } from './ProviderStoreField';
+import { PlatformSessionSettings } from './PlatformSessionSettings';
+import { AsrLexicon } from './AsrLexicon';
 import './Settings.css';
 
-const groups = { model: '模型', privacy: '隐私', project: '项目', data: '数据', devices: '设备' };
+const groups = { model: '模型', privacy: '隐私', project: '项目', data: '数据', devices: '设备', websites: '网站' };
 const purposes = { generation: '生成', asr: '转写', embedding: '向量', rerank: '重排', search: '搜索' };
 export default function SettingsPage({ projectId = 'default', initialSection = 'model', expandProject, api = settingsApi }) {
   const [section, setSection] = useState(initialSection in groups ? initialSection : 'model');
@@ -49,6 +51,7 @@ export default function SettingsPage({ projectId = 'default', initialSection = '
       {section === 'project' && <ProjectRows key={projectId} projects={projects} expandProject={expandProject} api={api} run={run} busy={busy}/>}
       {section === 'data' && <SettingsData projectId={projectId}/>}
       {section === 'devices' && <SettingsDevices key={projectId} projectId={projectId}/>}
+      {section === 'websites' && <PlatformSessionSettings/>}
     </>}</main></div>;
 }
 
@@ -78,7 +81,7 @@ function ModelRows({ projectId, model, externalAgent, externalProxy, api, run, b
         {purpose === 'generation' && <FastModelField key={`${actualMode}:${row.model}:${row.revision}:${row.fast_model?.revision}:${row.subscription_binding?.selection}:${row.subscription_binding?.account}`} row={row} mode={actualMode} modeRevision={model.generation_mode.revision} api={api} run={run} busy={busy}/>}
         {purpose === 'generation' && <ProviderStoreField projectId={projectId} mode={mode} generationRevision={row.revision} modeRevision={model.generation_mode.revision} busy={busy}/>}
         {!asr && <PriceFields key={`${purpose}:${row.revision}:${row.pricing?.revision}:${row.model}`} purpose={purpose} label={label} row={row} busy={busy} api={api} run={run}/>}
-        {asr && <><Row readOnly title="长音频" meta="60s · 重叠 5s"/><Row readOnly title="上限" meta={row.max_audio_bytes == null ? '—' : `${row.max_audio_bytes} B`}/></>}
+        {asr && <><Row readOnly title="长音频" meta="60s · 重叠 5s"/><Row readOnly title="上限" meta={row.max_audio_bytes == null ? '—' : `${row.max_audio_bytes} B`}/><AsrLexicon projectId={projectId} api={api}/></>}
         <div className="settings-test">{!asr && purpose !== 'search' && <button type="button" disabled={busy} title={asr ? 'asr_test_unavailable' : undefined} onClick={() => run(async () => {
           const start = performance.now(); const result = await api.testModel({ purpose });
           setTest(old => ({ ...old, [purpose]: result.status === 'complete' ? `✓ ${Math.round(performance.now() - start)}ms` : `✕ ${result.status || 'test_failed'}` }));
@@ -86,7 +89,7 @@ function ModelRows({ projectId, model, externalAgent, externalProxy, api, run, b
       </div>}
     </section>;
   })}<VisionRow row={model.vision} open={open === 'vision'} onOpen={() => setOpen(old => old === 'vision' ? null : 'vision')} api={api} run={run} busy={busy}/>
-    {externalAgent && <ExternalAgentSettings projectId={projectId} value={externalAgent} proxy={externalProxy} expanded={open === 'external-agent'} onOpen={() => setOpen(old => old === 'external-agent' ? null : 'external-agent')} api={api} run={run} busy={busy}/>}</div>;
+    {externalAgent && <ExternalAgentSettings projectId={projectId} value={externalAgent} proxy={externalProxy} expanded={open === 'external-agent'} onOpen={() => setOpen(old => old === 'external-agent' ? null : 'external-agent')} onConfigureGeneration={() => setOpen('generation')} api={api} run={run} busy={busy}/>}</div>;
 }
 function FastModelField({ row, mode, modeRevision, api, run, busy }) {
   const [model, setModel] = useState(row.fast_model?.configured ? row.fast_model.model : '');

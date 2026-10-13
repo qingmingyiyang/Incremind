@@ -34,8 +34,13 @@ _TASK_V1_CAPABILITIES = (
 def _template(kind, version=1):
     if kind not in TURN_KINDS:
         raise ValueError("unknown product turn kind")
-    if type(version) is not int or version not in {1, 2} or (version == 2 and kind not in {"project.answer", "project.task"}):
+    if (type(version) is not int or version not in {1, 2, 3}
+            or version == 2 and kind not in {"project.answer", "project.task"}
+            or version == 3 and kind != "project.task"):
         raise ValueError("execution template version is invalid")
+    if version == 3:
+        # 旧模板不随新领域工具扩权，只有新产品请求显式选择第三版。
+        return (*_TASK_V1_CAPABILITIES, 'asr.lexicon.read', 'asr.lexicon.preview', 'asr.lexicon.import'), 64, 600_000
     if version == 2 and kind == "project.task":
         return ("external.task.execute",), 1, 1_230_000
     if version == 2:
@@ -92,7 +97,7 @@ def validate_execution_policy(request):
         args = exact.get("arguments")
         scope = args.get("scope") if isinstance(args, Mapping) else None
         if (not isinstance(args, Mapping) or set(args) != {"client", "tool", "query", "scope", "budget"}
-                or not isinstance(args.get("client"), str) or args["client"] not in {"claude", "codex"}
+                or not isinstance(args.get("client"), str) or args["client"] not in {"claude", "codex", "deepseek-harness"}
                 or not isinstance(args.get("tool"), str) or args["tool"] not in {"projects", "recall", "methods", "read"}
                 or not isinstance(args.get("query"), str) or '\x00' in args["query"]
                 or type(args.get("budget")) is not int or not 1 <= args["budget"] <= 12000

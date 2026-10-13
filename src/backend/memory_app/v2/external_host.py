@@ -24,7 +24,7 @@ from .external_permissions import HostPermissions, PERMISSIONS
 _IDENTITY = re.compile(r'[A-Za-z0-9][A-Za-z0-9._~-]{0,127}\Z')
 _ENV_NAME = re.compile(r'[A-Z][A-Z0-9_]{0,127}\Z')
 _BASE_ENV = frozenset({'SystemRoot','WINDIR','TEMP','TMP'})
-_CREDENTIAL_ENV = frozenset({'OPENAI_API_KEY','ANTHROPIC_API_KEY','CHRIPTMAS_DEVICE_KEY',
+_CREDENTIAL_ENV = frozenset({'OPENAI_API_KEY','CODEX_API_KEY','ANTHROPIC_API_KEY','CHRIPTMAS_DEVICE_KEY',
     'DEVICE_KEY','APPROVED_DEVICE_KEY'})
 _RESERVED_ENV = frozenset({'PATH','HOME','USERPROFILE','APPDATA','LOCALAPPDATA',
     'CODEX_HOME','CLAUDE_CONFIG_DIR','PYTHONPATH','PYTHONHOME','NODE_OPTIONS',
@@ -141,6 +141,26 @@ class ExecutorRegistration:
     executable: Path = field(repr=False)
     authentication_root: Path = field(repr=False)
     discovery_stamps: tuple = field(default=(), repr=False)
+    cli_version: str | None = None
+    controlled_api: bool = False
+
+
+def create_executor_home(cwd):
+    """每次任务独占空配置目录，运行时产物永不成为下个任务的配置。"""
+    home = cwd / 'executor-home'
+    validate_task_path(home)
+    if os.name == 'nt':
+        from core.external_extension_runtime.windows_handle_io import WindowsHandleTreeIo
+        if not WindowsHandleTreeIo().write_new_tree(cwd, ('executor-home',), {},
+                expected_root_identity=task_path_identity(cwd, directory=True)):
+            _reject('configuration_unknown')
+    else:
+        descriptor = os.open(cwd, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.mkdir('executor-home', mode=0o700, dir_fd=descriptor)
+        finally:
+            os.close(descriptor)
+    return home
 
 
 class HostLease:
@@ -311,7 +331,7 @@ class HostLease:
 class HostAdmission:
     """应用固定的宿主机械准入；材料与真实 Turn 身份仍由原运行器核验。"""
     def __init__(self, *, deployment: DeploymentLayout, owner_id, registrations,
-            records, environment=None, secret_environment=None, memory_endpoint=None, concurrency_limit=1):
+            records, environment=None, secret_environment=None, memory_endpoint=None, concurrency_limit=1, models=None):
         if type(concurrency_limit) is not int or concurrency_limit < 1:
             _reject('concurrency_invalid')
         self.deployment, self.owner_id = deployment, owner_id
@@ -323,6 +343,7 @@ class HostAdmission:
         self._environment = dict(environment or {})
         self._secret_environment = dict(secret_environment or {})
         self.memory_endpoint = memory_endpoint
+        self.models = models
 
     def close(self):
         failed = False
@@ -358,11 +379,34 @@ class HostAdmission:
                 _reject('environment_invalid')
         return dict(self._secret_environment)
 
+    def credential_status(self, executor):
+        if executor == 'deepseek-harness':
+            from .external_harness_profile import harness_credential_status
+            return harness_credential_status(self.models) if self.models is not None else {'has_key': False}
+        key = {'codex': 'CODEX_API_KEY', 'claude-code': 'ANTHROPIC_API_KEY'}.get(executor)
+        try:
+            return {'has_key': bool(self._approved_credentials().get(key))}
+        except ExternalHostError:
+            return {'has_key': False}
+
     @_safe
-    def _memory_environment(self):
+    def _memory_environment(self, config=None):
         """MCP 仅消费原批准设备钥匙，不交模型钥匙或继承进程环境。"""
         from .external_memory_admission import _CREDENTIALS
-        return {key:value for key, value in self._approved_credentials().items() if key in _CREDENTIALS}
+        result = {key:value for key, value in self._approved_credentials().items() if key in _CREDENTIALS}
+        if os.name == 'nt':
+            import ctypes
+            buffer = ctypes.create_unicode_buffer(32768)
+            if not ctypes.windll.kernel32.GetWindowsDirectoryW(buffer, len(buffer)):
+                _reject('environment_invalid')
+            result.update({'SystemRoot': buffer.value, 'WINDIR': buffer.value})
+        if config is not None:
+            from .external_workspace import validate_memory_mcp_config
+            import json
+            server = json.loads(validate_memory_mcp_config(config))['mcpServers']['chriptmas-memory']
+            if 'CHRIPTMAS_MCP_BACKEND_URL' in server.get('env', {}):
+                result['CHRIPTMAS_MCP_BACKEND_URL'] = server['env']['CHRIPTMAS_MCP_BACKEND_URL']
+        return result
 
     def _discovered_paths_are_local(self, registration):
         if not registration.discovery_stamps:
@@ -397,18 +441,36 @@ class HostAdmission:
                 if key in result and Path(result[key]) != Path(buffer.value):
                     _reject('environment_invalid')
                 result[key] = buffer.value
-        home = registration.authentication_root.parent
+        if plan.executor == 'deepseek-harness':
+            from .external_harness_profile import acquire_harness_credential
+            key, _ = acquire_harness_credential(self.models)
+            home = plan.cwd / 'harness-home'
+            result.update({'HOME':str(home), 'USERPROFILE':str(home), 'DSH_HOME':str(home),
+                'DEEPSEEK_API_KEY':key, **dict(plan.public_environment)})
+            return result, (key,)
+        authentication = plan.cwd / 'executor-home' if registration.controlled_api else registration.authentication_root
+        home = authentication if registration.controlled_api else authentication.parent
         result.update({'HOME':str(home), 'USERPROFILE':str(home)})
-        result['CODEX_HOME' if plan.executor == 'codex' else 'CLAUDE_CONFIG_DIR'] = str(registration.authentication_root)
+        result['CODEX_HOME' if plan.executor == 'codex' else 'CLAUDE_CONFIG_DIR'] = str(authentication)
         # 仅显式可信装配传入秘密，绝不继承进程的完整环境。
-        result.update(self._approved_credentials())
+        approved = self._approved_credentials()
+        key = 'CODEX_API_KEY' if plan.executor == 'codex' else 'ANTHROPIC_API_KEY'
+        if registration.controlled_api and key not in approved:
+            _reject('credentials_unavailable')
+        from .external_memory_admission import _CREDENTIALS
+        result.update({name: value for name, value in approved.items()
+            if not registration.controlled_api or name == key or name in _CREDENTIALS})
+        if plan.executor == 'claude-code':
+            # 官方>=2.1.251对子进程移除模型秘密；当前适配器最低2.1.257。
+            result['CLAUDE_CODE_SUBPROCESS_ENV_SCRUB'] = '1'
+        result.update(plan.public_environment)
         for target, source in plan.environment_aliases:
             if (target not in _CREDENTIAL_ENV
                     or source not in self._secret_environment
                     or (target in result and result[target] != result[source])):
                 _reject('environment_invalid')
             result[target] = result[source]
-        return result, tuple(dict.fromkeys(self._secret_environment.values()))
+        return result, tuple(dict.fromkeys(value for name, value in result.items() if name in _CREDENTIAL_ENV))
 
     def _permission_check(self, turn, plan, refs, reader):
         needed = {'folder':plan.preset == 'folder', 'commands':plan.requested_commands == 'explicit'}
@@ -434,7 +496,7 @@ class HostAdmission:
                 _reject('permission_unavailable')
 
     def _configuration_paths(self, registration, plan):
-        auth = registration.authentication_root
+        auth = plan.cwd / 'executor-home' if registration.controlled_api else registration.authentication_root
         if not auth.is_dir():
             _reject('configuration_unknown')
         # 已有登录可能加载云端策略或系统凭据。本叶不读内容，也不把本机缺文件当云端证明。
@@ -442,8 +504,10 @@ class HostAdmission:
             _reject('configuration_unknown')
         absent = list(_system_configuration(plan.executor))
         absent.append(auth.parent / '.codex' / 'managed_config.toml')
+        # 已核0.156.1固定ignore flags和doc预算跳过目录来源；旧Host保留原闭包。
+        ignored = registration.controlled_api and plan.executor == 'codex' and plan.cli_version == '0.156.1'
         for parent in (plan.cwd, *plan.cwd.parents):
-            absent.extend(parent / name for name in _PROJECT_CONFIG)
+            absent.extend(parent / name for name in (() if ignored else _PROJECT_CONFIG))
         if any(_present(path) for path in absent):
             _reject('configuration_unknown')
         return tuple(absent)
@@ -493,6 +557,18 @@ class HostAdmission:
             _path(plan.material_directory)
             if plan.material_directory != cwd / 'agent_workspaces' / _identity(turn['turn_id']):
                 _reject('request_invalid')
+        if plan.executor == 'deepseek-harness':
+            from .external_harness_profile import acquire_harness_credential, validate_profile
+            _, credential_current = acquire_harness_credential(self.models)
+            validate_profile(cwd, mcp_config)
+        elif registration.controlled_api:
+            key = 'CODEX_API_KEY' if plan.executor == 'codex' else 'ANTHROPIC_API_KEY'
+            original_key = self._approved_credentials().get(key)
+            def credential_current():
+                if not original_key or self._approved_credentials().get(key) != original_key:
+                    _reject('credentials_changed')
+        else:
+            credential_current = None
         environment, secrets = self._environment_for(registration, plan)
         # 进程 Job 不限制文件权限；本仓尚无可委托的隔离域，不能由 preset 或平台名代替。
         if (self.deployment.mode == 'server' or plan.preset == 'research'
@@ -500,9 +576,11 @@ class HostAdmission:
             _reject('isolation_unavailable')
         refs = {'folder':None,'commands':None} if host_permission_refs is None else deepcopy(dict(host_permission_refs))
         self._permission_check(turn, plan, refs, self.records)
-        absent = self._configuration_paths(registration, plan)
+        absent = () if plan.executor == 'deepseek-harness' else self._configuration_paths(registration, plan)
         stamps = {path:_stamp(path, contents=path == registration.executable)
             for path in (root, cwd, registration.executable, registration.authentication_root)}
+        if registration.controlled_api:
+            stamps[cwd / 'executor-home'] = _stamp(cwd / 'executor-home')
         if plan.material_directory is not None:
             stamps[plan.material_directory] = _stamp(plan.material_directory)
 
@@ -510,9 +588,16 @@ class HostAdmission:
             if self._validated_limit() != limit:
                 _reject('concurrency_changed')
             self._discovered_paths_are_local(registration)
-            if (any(_present(path) for path in absent) or any(registration.authentication_root.iterdir())):
+            if credential_current is not None:
+                credential_current()
+            if plan.executor == 'deepseek-harness':
+                validate_profile(cwd, mcp_config)
+            if (any(_present(path) for path in absent)
+                    or plan.executor != 'deepseek-harness' and any((cwd / 'executor-home'
+                        if registration.controlled_api else registration.authentication_root).iterdir())):
                 _reject('configuration_changed')
-            _system_configuration(plan.executor)
+            if plan.executor != 'deepseek-harness':
+                _system_configuration(plan.executor)
             for path, expected in registration.discovery_stamps:
                 if _stamp(path, contents=expected[3] is not None) != expected:
                     _reject('resource_changed')
@@ -528,9 +613,11 @@ class HostAdmission:
         try:
             lines = []
             result = run_process((str(registration.executable), '--version'), cwd=cwd,
-                environment=environment, timeout=3, output_limit=4096, on_line=lines.append,
+                environment=environment, timeout=10 if plan.executor == 'deepseek-harness' else 3,
+                output_limit=4096, on_line=lines.append,
                 secret_values=secrets, on_owner=lease._adopt_owner)
             expected = ('codex-cli ' + plan.cli_version if plan.executor == 'codex'
+                else plan.cli_version if plan.executor == 'deepseek-harness'
                 else plan.cli_version + ' (Claude Code)')
             visible = [line.strip() for line in lines if line.strip() and line.strip() != REDACTED_SECRET]
             if result.status != 'completed' or result.exit_code != 0 or visible != [expected]:

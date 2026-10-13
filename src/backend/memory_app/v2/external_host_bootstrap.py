@@ -1,4 +1,4 @@
-"""启动时发现可信本机 CLI 候选；不执行 CLI，不读取或创建认证正文。"""
+"""启动时发现并探测可信本机 CLI 版本；不读取或创建登录文件。"""
 from collections.abc import Mapping
 import json
 import os
@@ -127,7 +127,7 @@ def _npm_codex(directory, architecture, stamps):
     return vendor / target / 'bin' / 'codex.exe'
 
 
-def _discover(executor, directories, environment, profile, architecture):
+def _discover(executor, directories, environment, profile, architecture, runtime_root=None):
     name = 'codex' if executor == 'codex' else 'claude'
     stamps = {}
     executable = None
@@ -152,15 +152,29 @@ def _discover(executor, directories, environment, profile, architecture):
         return None
     _freeze(executable, stamps, file=True)
     key = 'CODEX_HOME' if executor == 'codex' else 'CLAUDE_CONFIG_DIR'
-    authentication = Path(environment[key]) if key in environment else profile / ('.codex' if executor == 'codex' else '.claude')
+    if runtime_root is not None:
+        from core.external_extension_runtime.windows_handle_io import WindowsHandleTreeIo
+        from .external_workspace import task_path_identity
+        authentication = runtime_root / 'external_executor_auth' / executor
+        _checked_path(authentication)
+        if not authentication.exists():
+            if not WindowsHandleTreeIo().write_new_tree(runtime_root, ('external_executor_auth', executor), {},
+                    expected_root_identity=task_path_identity(runtime_root, directory=True)):
+                raise ValueError('external_host_discovery_unavailable')
+        if any(authentication.iterdir()):
+            raise ValueError('external_host_discovery_unavailable')
+    else:
+        authentication = Path(environment[key]) if key in environment else profile / ('.codex' if executor == 'codex' else '.claude')
     _freeze(authentication, stamps)
     for path, identity in stamps.items():
         if _stamp(path, contents=identity[3] is not None) != identity:
             raise ValueError('external_host_discovery_unavailable')
-    return ExecutorRegistration(executor, executable, authentication, tuple(stamps.items()))
+    return ExecutorRegistration(executor, executable, authentication, tuple(stamps.items()),
+        _probe_version(executor, executable, authentication, controlled_api=runtime_root is not None),
+        controlled_api=runtime_root is not None)
 
 
-def discover_local_executors():
+def discover_local_executors(*, runtime_root=None):
     """返回元数据固定的 Windows 候选，不把候选身份当登录、隔离或运行许可。"""
     try:
         if os.name != 'nt':
@@ -179,7 +193,7 @@ def discover_local_executors():
         registrations = {}
         for executor in ('codex', 'claude-code'):
             try:
-                registration = _discover(executor, directories, environment, profile, architecture)
+                registration = _discover(executor, directories, environment, profile, architecture, runtime_root)
                 if registration is not None:
                     registrations[executor] = registration
             except (ValueError, TypeError, OSError):
@@ -190,7 +204,7 @@ def discover_local_executors():
         return {}
 
 
-def install_local_host(state, *, runtime_root, records, context):
+def install_local_host(state, *, runtime_root, records, context, models=None):
     """只在可信部署的原 routes 装配阶段固定 Host，首次 Kernel 以后不重新发现。"""
     layout = getattr(state, 'deployment', None)
     if layout is None:
@@ -215,11 +229,80 @@ def install_local_host(state, *, runtime_root, records, context):
             return None
         if layout.server_root is not None or getattr(state, 'ai_runtime', None) is not None:
             raise ValueError
-        registrations = discover_local_executors()
+        registrations = discover_local_executors(runtime_root=runtime_root)
+        harness = _discover_harness(runtime_root)
+        if harness is not None:
+            registrations['deepseek-harness'] = harness
         if not registrations:
             return None
-        host = HostAdmission(deployment=layout, owner_id=context.owner_id, records=records, registrations=registrations)
+        # 仅可信启动装配消费官方非交互API key，不继承其它模型密钥或完整环境。
+        credentials = {key: os.environ[key] for key in ('CODEX_API_KEY', 'ANTHROPIC_API_KEY')
+            if os.environ.get(key)}
+        host = HostAdmission(deployment=layout, owner_id=context.owner_id, records=records,
+            registrations=registrations, models=models, secret_environment=credentials)
         state.external_execution_host = host
         return host
     except (AttributeError, TypeError, ValueError, OSError):
         raise ValueError('external_host_bootstrap_invalid') from None
+
+
+def _probe_version(executor, executable, directory, *, controlled_api=False):
+    """只在无用户配置的候选中探测版本；未知身份保留不可执行状态。"""
+    from .external_process import run_process
+    from .external_host import _system_configuration, _PROJECT_CONFIG, _present
+    import re
+    if executor != 'deepseek-harness':
+        if any(directory.iterdir()) or any(_present(path) for path in _system_configuration(executor)):
+            return None
+        # 固定Codex版本探测不消费项目配置；执行另由canonical flags封闭。
+        names = () if controlled_api and executor == 'codex' else _PROJECT_CONFIG
+        if any(_present(parent / name) for parent in (directory, *directory.parents) for name in names
+                if parent / name != directory):
+            return None
+    environment = {}
+    if os.name == 'nt':
+        import ctypes
+        buffer = ctypes.create_unicode_buffer(32768)
+        if not ctypes.windll.kernel32.GetWindowsDirectoryW(buffer, len(buffer)):
+            return None
+        environment = {'SystemRoot': buffer.value, 'WINDIR': buffer.value}
+    lines = []
+    result = run_process((str(executable), '--version'), cwd=directory, environment=environment,
+        timeout=10 if executor == 'deepseek-harness' else 3, output_limit=4096, on_line=lines.append)
+    if result.status != 'completed' or result.exit_code != 0 or len(lines) != 1:
+        return None
+    expression = {'codex':r'codex-cli (0\.156\.1)', 'claude-code':r'(2\.1\.[0-9]+) \(Claude Code\)',
+        'deepseek-harness':r'(0\.1\.5-rc\.1)'}[executor]
+    found = re.fullmatch(expression, lines[0].strip())
+    if found is None or executor == 'claude-code' and int(found[1].split('.')[-1]) < 257:
+        return None
+    return found[1]
+
+
+def _discover_harness(runtime_root):
+    """独立可选wheel安装目录，不导入其中Python代码或SDK，不自动安装。"""
+    try:
+        from .external_harness_profile import PACKAGE_VERSION
+        root = runtime_root / 'external_executor_runtimes' / ('deepseek-harness-' + PACKAGE_VERSION)
+        package = root / 'deepseek_harness_runtime'
+        architecture = _architecture()
+        if os.name != 'nt' or architecture not in {'x64', 'arm64'}:
+            return None
+        metadata = root / ('deepseek_harness_runtime_bin-' + PACKAGE_VERSION + '.dist-info') / 'METADATA'
+        stamps = {}
+        _freeze(metadata, stamps, file=True)
+        if metadata.stat().st_size > 131072:
+            return None
+        # 元数据只核发行名与版本，不执行wheel中的入口脚本。
+        fields = metadata.read_text(encoding='utf-8').split('\n\n', 1)[0].splitlines()
+        if fields.count('Name: deepseek-harness-runtime-bin') != 1 or fields.count('Version: ' + PACKAGE_VERSION) != 1:
+            return None
+        executable = package / 'runtime' / ('deepseek-harness-sdk-runtime-win-' + architecture + '.exe')
+        _freeze(executable, stamps, file=True)
+        _freeze(executable.with_name(executable.stem + '-rg.exe'), stamps, file=True)
+        version = _probe_version('deepseek-harness', executable, root)
+        if any(_stamp(path, contents=value[3] is not None) != value for path, value in stamps.items()):
+            return None
+        return ExecutorRegistration('deepseek-harness', executable, root, tuple(stamps.items()), version)
+    except (ValueError, TypeError, OSError):
+        return None

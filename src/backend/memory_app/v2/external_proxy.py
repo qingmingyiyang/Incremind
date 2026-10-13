@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from ..kernel.ai_runtime import get_or_build_ai_runtime
-from .external_agent_settings import external_agent_settings
+from .external_executor_plugins import effective_external_agent_settings as external_agent_settings
 from .external_proxy_handoff import ProxyHandoff
 from .external_proxy_protocol import insert_context, last_user_text
 from .external_proxy_recording import ConversationRecorder, _json

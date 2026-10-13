@@ -19,6 +19,7 @@ from core.storage_provider.observability import current_observation, observation
 from .turn_timings import turn_timing
 from backend.shared.runtime_logging import bind_turn_id
 from ..workspace_media_url import media_platform
+from .share_capture import install_share_capture, share_url
 from ..workspace_contracts import _json, _now, _project, _text
 from ..model_config import ModelConfigurationError
 from .auto_confirm import process_and_confirm
@@ -153,6 +154,11 @@ def install_workbench_routes(application, *, records, models, documents, service
         query=workspace.query, service=service,
         execution_getter=lambda: (getattr(application.state, 'ai_runtime', None),
                                   getattr(application.state, 'ai_turn_runner', None)))
+    from .external_task_do import ExternalTaskDo
+    external_research = ExternalTaskDo(application, records, models, TaskDrafts(records, documents), workspace.query)
+    def task_service(turn_id):
+        state = records.read(TASK_EXECUTIONS, turn_id)
+        return external_research if state is not None and state.payload.get('executor') else research
     research_running = set()
     favorites_retry_locks = {}
     routes = RouteService(records, models)
@@ -171,7 +177,7 @@ def install_workbench_routes(application, *, records, models, documents, service
     async def research_process_measured(turn_id):
         try:
             while True:
-                await research.advance(turn_id)
+                await task_service(turn_id).advance(turn_id)
                 row = records.read("v2_turns", turn_id)
                 if (row is None or row.payload["receipt"]["do"].get("task_id")
                         or row.payload["receipt"]["do"].get("state") in {"done", "partial", "failed", "interrupted"}):
@@ -470,7 +476,7 @@ def install_workbench_routes(application, *, records, models, documents, service
                                    redo_from=None, outcome_selection=None,
                                    forced_turn_id=None, parent_turn_id=None, forced_scene=None,
                                    instruction=None, situation=None, dependency_turns=(), forced_project=None, route_meta=None, prepared_reminder=None):
-        if set(body).difference({"project_id", "thread_id", "text", "item_id", "intent", "continue_from"}):
+        if set(body).difference({"project_id", "thread_id", "text", "item_id", "intent", "continue_from", "executor"}):
             raise HTTPException(400, "invalid_turn_fields")
         text = body.get("text", "")
         if not isinstance(text, str) or len(text) > 60000:
@@ -485,7 +491,14 @@ def install_workbench_routes(application, *, records, models, documents, service
         intent = body['intent'] if 'intent' in body else get('route')(route_intent, text, bool(body.get('item_id')))
         if not isinstance(intent, str):
             raise HTTPException(400, "invalid_intent")
-        if intent == "do":
+        executor = body.get('executor', 'builtin')
+        if not isinstance(executor, str) or executor not in {'builtin', 'claude-code', 'codex', 'deepseek-harness'}:
+            raise HTTPException(400, 'invalid_executor')
+        if executor != 'builtin' and (intent != 'do' or body.get('intent') != 'do'
+                or body.get('item_id') is not None or body.get('continue_from') is not None
+                or division_override is not None or parent_turn_id is not None):
+            raise HTTPException(400, 'invalid_executor_request')
+        if intent == "do" and executor == 'builtin':
             available = getattr(organization, 'available', None)
             if organization is None or (callable(available) and not await run_in_threadpool(available)):
                 raise HTTPException(503, "task_runtime_unavailable")
@@ -542,8 +555,8 @@ def install_workbench_routes(application, *, records, models, documents, service
             if item_id:
                 item = workspace.items.item_for(item_id, project, read=initial_read)
                 item = workspace.items.public_row(item)
-                url = cleaned.split()[0] if cleaned.split() else None
-                if url is not None and media_platform(url) == 'xiaohongshu':
+                url = share_url(cleaned)
+                if item.get('input_kind') == 'image' and url is not None and media_platform(url) == 'xiaohongshu':
                     try:
                         item = await workspace.intake.bind_link_images(item_id, project, url,
                             expected_revision=item['revision'])
@@ -551,8 +564,9 @@ def install_workbench_routes(application, *, records, models, documents, service
                         raise HTTPException(409, 'item_revision_conflicted') from None
             else:
                 cleaned = _text(cleaned, "text")
-                item = await (workspace.intake.add_link({"project_id": project, "url": cleaned.split()[0]})
-                    if cleaned.lower().startswith(("http://", "https://"))
+                url = share_url(cleaned)
+                item = await (workspace.intake.add_link({"project_id": project, "url": url})
+                    if url
                     else workspace.intake.add_text({"project_id": project,
                         "text": body['text'] if parent_turn_id else cleaned},
                         preserve_text=bool(parent_turn_id)))
@@ -564,6 +578,11 @@ def install_workbench_routes(application, *, records, models, documents, service
             receipt = {"remember": {"item_id": item_id, "title": item["title"], "state": "processing",
                 "progress": {"done": 1, "total": 4}, "document_id": item.get("document_id"),
                 "verified": False, "insights": [], "related": [], "error": None}}
+        elif intent == 'do' and executor != 'builtin':
+            cleaned = _text(cleaned, 'text')
+            initial, research_state = await run_in_threadpool(external_research.initial, turn_id, project,
+                instruction or cleaned, scene, executor=executor)
+            receipt, item_id = {'do': initial}, None
         elif intent == "do":
             cleaned = _text(cleaned, "text")
             if not egress_allowed(records, models, project, 'generation'):
@@ -815,17 +834,33 @@ def install_workbench_routes(application, *, records, models, documents, service
 
     executions = TurnExecutionService(records, execute_turn, instance=instance)
     application.state.workbench_turn_execution = executions
+    install_share_capture(router, records=records, workspace=workspace, executions=executions, instance=instance, project_for_tag=project_for_tag)
 
     @router.post("/turns")
     @with_connection_scope
     async def create(request: Request):
         body = await _json(request)
-        if set(body).difference({"project_id", "thread_id", "text", "item_id", "intent", "continue_from"}):
+        if body.get('executor', 'builtin') != 'builtin':
+            from backend.security.device_identity import server_mode
+            if server_mode(request):
+                raise HTTPException(409, 'external_host_isolation_unavailable')
+            server = request.scope.get('server')
+            if (not isinstance(server, (tuple, list)) or len(server) != 2
+                    or server[0] not in {'127.0.0.1', '::1'} or type(server[1]) is not int
+                    or not 1 <= server[1] <= 65535):
+                raise HTTPException(409, 'external_task_backend_unavailable')
+            previous = getattr(application.state, 'external_mcp_backend', tuple(server))
+            if previous != tuple(server):
+                raise HTTPException(409, 'external_task_backend_unavailable')
+            application.state.external_mcp_backend = tuple(server)
+        if set(body).difference({"project_id", "thread_id", "text", "item_id", "intent", "continue_from", "executor"}):
             raise HTTPException(400, "invalid_turn_fields")
         if not isinstance(body.get("text", ""), str) or len(body.get("text", "")) > 60000:
             raise HTTPException(400, "invalid_text")
         if 'intent' in body and not isinstance(body['intent'], str):
             raise HTTPException(400, 'invalid_intent')
+        if body.get('executor', 'builtin') != 'builtin' and body.get('intent') != 'do':
+            raise HTTPException(400, 'invalid_executor_request')
         if body.get('intent') in {None, 'auto'}:
             return await routed_response(executions, body, request.headers.get('idempotency-key'),
                 request.headers.get('accept'))
@@ -874,6 +909,8 @@ def install_workbench_routes(application, *, records, models, documents, service
         if not isinstance(key, str) or not _REQUEST_KEY.fullmatch(key):
             raise HTTPException(400, 'invalid_idempotency_key')
         if turn.payload.get('intent') == 'do':
+            if turn.payload['receipt']['do'].get('executor'):
+                raise HTTPException(409, 'external_task_continuation_unsupported')
             try:
                 await research.continue_on_request(turn_id, project, key)
             except ValueError:
@@ -1127,6 +1164,9 @@ def install_workbench_routes(application, *, records, models, documents, service
         partial_tasks = {}
         for row in rows:
             if row.payload["intent"] == "do":
+                if row.payload["receipt"]["do"].get("executor"):
+                    await external_research.advance(row.object_id, observe_only=row.payload.get("instance") != instance)
+                    continue
                 if row.payload.get('instance') != instance:
                     # A restarted read cannot reclaim or start an old task.
                     try:
@@ -1164,7 +1204,7 @@ def install_workbench_routes(application, *, records, models, documents, service
                 if (row.payload["receipt"]["do"].get("kernel_turn_id")
                         and not row.payload["receipt"]["do"].get("task_id")
                         and row.payload["receipt"]["do"].get("state") not in {"done", "partial", "failed", "interrupted"}):
-                    await research.advance(row.object_id)
+                    await task_service(row.object_id).advance(row.object_id)
                     if records.read("v2_turns", row.object_id).payload["receipt"]["do"].get("state") not in {"done", "partial", "failed", "interrupted"}:
                         start_research(row.object_id)
         rows = records.list_matching("v2_turns", project_id=project, thread_id=thread_id)
@@ -1250,6 +1290,8 @@ def install_workbench_routes(application, *, records, models, documents, service
             raise HTTPException(400,'invalid_task_division')
         project = _project(body['project_id'])
         old = scoped('v2_turns',_project(turn_id),project)
+        if old.payload.get('receipt', {}).get('do', {}).get('executor'):
+            raise HTTPException(409, 'external_task_continuation_unsupported')
         try:
             sample = research.divisions.read(turn_id,project)
         except ValueError:

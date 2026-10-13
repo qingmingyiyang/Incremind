@@ -99,7 +99,7 @@
               "capability_policy": {"properties": {"allowed": {"const": ["external.context.execute"]}, "denied": {"maxItems": 0}, "require_approval": {"maxItems": 0}}},
               "capability_request": {"properties": {"mode": {"const": "execute_exact_v1"}, "capability_id": {"const": "external.context.execute"},
                 "arguments": {"type": "object", "additionalProperties": false, "required": ["client", "tool", "query", "scope", "budget"],
-                  "properties": {"client": {"enum": ["claude", "codex"]}, "tool": {"enum": ["projects", "recall", "methods", "read"]},
+                  "properties": {"client": {"enum": ["claude", "codex", "deepseek-harness"]}, "tool": {"enum": ["projects", "recall", "methods", "read"]},
                     "query": {"type": "string", "not": {"pattern": "\u0000"}}, "budget": {"type": "integer", "minimum": 1, "maximum": 12000},
                     "scope": {"type": "object", "additionalProperties": false, "required": ["user_id", "project_id"],
                       "properties": {"user_id": {"type": "string", "minLength": 1}, "project_id": {"type": "string", "minLength": 1}}}}}}},
@@ -490,6 +490,27 @@
               "desired_outcome": {
                 "const": "project.task"
               },
+              "execution_policy": {"properties": {
+                "template_version": {"const": 3}, "purpose": {"const": "primary"},
+                "budget": {"properties": {"max_steps": {"maximum": 64}, "planner_timeout_ms": {"maximum": 600000}}}
+              }},
+              "capability_policy": {"properties": {"allowed": {"items": {"enum": [
+                "agent.fan_in", "agent.interrupt", "agent.list", "agent.message", "agent.plan", "agent.spawn", "agent.wait",
+                "analyze_source", "companion.chat.context.read", "companion.chat.message.write", "companion.vision.analyze.write",
+                "companion.vision.context.read", "document.draft.propose", "image.generate", "memory.candidate.evidence.read",
+                "memory.candidate.propose.write", "memory.recall", "presentation.pptx.fixed", "project_skill.draft.propose",
+                "project_skill.evidence.read", "series.intake.organize.commit", "source.evidence.read",
+                "workbench.input.classification.context.read", "workbench.input.classification.enhance.write", "workbench.question.answer",
+                "asr.lexicon.read", "asr.lexicon.preview", "asr.lexicon.import"
+              ]}}}},
+              "context_policy": {"properties": {"max_context_bytes": {"maximum": 262144}}}
+            }
+          },
+          {
+            "properties": {
+              "desired_outcome": {
+                "const": "project.task"
+              },
               "execution_policy": {
                 "properties": {
                   "purpose": {
@@ -624,7 +645,7 @@
       "type": "object",
       "minProperties": 1,
       "propertyNames": {
-        "enum": ["organize", "place", "extract", "route", "steer", "scope", "retrieve", "rank", "strength", "forget", "enough", "compose", "trigger", "consolidate", "search", "nudge", "handoff", "image_read", "retry", "skill_export", "skill_author", "ladder", "vector", "rerank", "elsewhere", "continuation", "style", "gap", "reask", "review", "outcome_correction"]
+        "enum": ["organize", "place", "extract", "route", "steer", "scope", "retrieve", "rank", "strength", "forget", "enough", "compose", "trigger", "consolidate", "search", "nudge", "handoff", "image_read", "retry", "skill_export", "skill_author", "ladder", "vector", "rerank", "elsewhere", "continuation", "style", "gap", "reask", "review", "outcome_correction", "material_analysis", "context_preparation", "agent_data"]
       },
       "additionalProperties": {
         "type": "string",
@@ -642,7 +663,7 @@
       ],
       "properties": {
         "template_version": {
-          "enum": [1, 2]
+          "enum": [1, 2, 3]
         },
         "purpose": {
           "enum": [

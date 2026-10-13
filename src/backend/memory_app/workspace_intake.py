@@ -114,12 +114,16 @@ async def _read_media_source(reader, owner, item, project_id, item_id, run_id, v
 
 async def _read_bilibili_source(owner, item, project_id, item_id, run_id, asr_target, checkpoint, validate_remote):
     from .workspace_bilibili_media import read_bilibili_media
-    return await _read_media_source(partial(read_bilibili_media, with_sections=True), owner, item, project_id, item_id, run_id, validate_remote)
+    from .platform_sessions import PlatformSessions
+    sessions = PlatformSessions(owner.items.records, owner.models.secrets)
+    return await _read_media_source(partial(read_bilibili_media, with_sections=True, platform_sessions=sessions), owner, item, project_id, item_id, run_id, validate_remote)
 
 
 async def _read_xiaohongshu_source(owner, item, project_id, item_id, run_id, asr_target, checkpoint, validate_remote):
     from .workspace_xhs_media import read_xiaohongshu_media
-    return await _read_media_source(read_xiaohongshu_media, owner, item, project_id, item_id, run_id, validate_remote)
+    from .platform_sessions import PlatformSessions
+    sessions = PlatformSessions(owner.items.records, owner.models.secrets)
+    return await _read_media_source(partial(read_xiaohongshu_media, platform_sessions=sessions), owner, item, project_id, item_id, run_id, validate_remote)
 
 
 async def _read_audio_source(owner, item, project_id, item_id, run_id, asr_target, checkpoint, validate_remote):
@@ -393,8 +397,10 @@ class WorkspaceIntake:
                 raise HTTPException(409, 'private_project_remote_blocked' if is_private_project(
                     self.items.records, project_id) else 'remote_disabled')
             from .workspace_xhs_media import _capture_public_note
+            from .platform_sessions import PlatformSessions
             try:
-                xhs_capture = await run_in_threadpool(_capture_public_note, xhs_binding['request_url'])
+                xhs_capture = await run_in_threadpool(_capture_public_note, xhs_binding['request_url'],
+                    platform_sessions=PlatformSessions(self.items.records, self.models.secrets))
             except Exception as error:
                 xhs_error = error
             fresh = self.items.item_for(item_id, project_id)
@@ -526,7 +532,11 @@ class WorkspaceIntake:
                 models=self.models, item_id=item_id, project_id=project_id, source=source,
                 validate_current=completion_options["validate_current"],
                 lease=self.items.processing_lease, run_id=run_id)
-            if (item.get("platform") in {"bilibili", "xiaohongshu"} or item["input_kind"] == "video") and len(source) > 5000:
+            from .v2.material_analysis import selected_flow, run_analysis
+            if selected_flow(organize):
+                draft, model_meta = await run_in_threadpool(run_analysis, organize,
+                    original_title=item['title'], local_model=local_model)
+            elif (item.get("platform") in {"bilibili", "xiaohongshu"} or item["input_kind"] == "video") and len(source) > 5000:
                 draft, model_meta = await run_in_threadpool(
                     generation._complete_chunked_video_draft, source,
                     completion_options["validate_current"], local_model,
@@ -562,6 +572,10 @@ class WorkspaceIntake:
             safe_errors = {"source_text_empty", "source_text_too_large", "asr_unavailable", "audio_transcription_failed",
                            "remote_processing_target_changed", "private_source_remote_blocked", "audio_transcription_evidence_invalid",
                            "model_output_incomplete", "model_output_missing_content", "model_response_invalid",
+                           "material_analysis_budget_insufficient", "material_analysis_invalid",
+                           "material_analysis_capacity_unavailable",
+                           "material_analysis_quote_invalid", "material_analysis_binding_changed",
+                           "fast_model_binding_changed",
                            "model_not_configured", "unsupported_media_url", "invalid_source",
                            "media_short_link_unavailable", "media_short_link_target_invalid",
                            "media_short_link_redirect_limit", "media_short_link_address_blocked",

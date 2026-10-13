@@ -182,7 +182,7 @@ def create_app(
         async def local_origin_guard(request: Request, call_next):
             if request.url.path.startswith((_PREFIX, "/api/workspace/v1", "/api/v2")) and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
                 try:
-                    maximum = (UPLOAD_REQUEST_BYTES if request.url.path.startswith("/api/workspace/v1/items/file") or request.url.path == "/api/v2/workbench/files"
+                    maximum = (UPLOAD_REQUEST_BYTES if request.url.path.startswith("/api/workspace/v1/items/file") or request.url.path in {"/api/v2/workbench/files", "/api/v2/workbench/share"}
                                else _recognition_body_limit(request) if request.url.path.startswith(_PREFIX)
                                else 128 * 1024)
                     if int(request.headers.get("content-length", "0")) > maximum:

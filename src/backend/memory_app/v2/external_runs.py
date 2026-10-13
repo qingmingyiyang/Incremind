@@ -92,7 +92,7 @@ def _usage(value):
 def _metadata(turn_id, owner_id, executor, adapter_version, cli_version, preset, workspace):
     _identity(turn_id)
     _identity(owner_id)
-    if (executor not in ('codex', 'claude-code') or not isinstance(adapter_version, str)
+    if (executor not in ('codex', 'claude-code', 'deepseek-harness') or not isinstance(adapter_version, str)
             or len(adapter_version) > 64
             or not re.fullmatch(re.escape(executor) + r'@[1-9][0-9]*', adapter_version)
             or not isinstance(cli_version, str) or len(cli_version) > 64 or not _VERSION.fullmatch(cli_version)

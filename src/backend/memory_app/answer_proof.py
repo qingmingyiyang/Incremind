@@ -75,13 +75,13 @@ def _quote_plan(request, capsule):
 
 def select_answer_input(request, product, canonical_input, canonical_result, review_input=None, review_result=None, capsule=None):
     """旧轮保持原选择；新合同必须闭合草稿、审核输入和公开最终内容。"""
-    if not isinstance(request, dict) or request.get('policy_versions', {}).get('compose') not in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+    if not isinstance(request, dict) or request.get('policy_versions', {}).get('compose') not in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
         return canonical_input
     try:
         from .v2.answer_evidence import (SourceQuoteExtraction, final_response_model, render_coverage,
-            EvidencePartitionOutput, build_evidence_catalog, build_partition_messages, validate_partition, render_partition, GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, FirstFactsOutput, ReviewedScopeAnswerOutput, FirstReferencedFactsOutput, ReviewedReferencedScopeOutput, FocusedReferencedFactsOutput, FocusedReviewedScopeOutput, first_fact_partition, validate_first_facts, reviewed_scope_answer, first_facts_output_minimum, partition_output_tokens, grounded_usage_answer, grounded_scope_answer, grounded_output_limit, render_grounded_answer)
+            EvidencePartitionOutput, build_evidence_catalog, build_partition_messages, validate_partition, render_partition, GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, FirstFactsOutput, ReviewedScopeAnswerOutput, FirstReferencedFactsOutput, ReviewedReferencedScopeOutput, FocusedReferencedFactsOutput, FocusedReviewedScopeOutput, ReconstructedReviewedOutput, first_fact_partition, validate_first_facts, reviewed_scope_answer, first_facts_output_minimum, partition_output_tokens, grounded_usage_answer, grounded_scope_answer, grounded_output_limit, render_grounded_answer)
         final_model = final_response_model(request['policy_versions']['compose'], request['input']['text'])
-        first_model = (FocusedReferencedFactsOutput if request['policy_versions']['compose'] in {'@27', '@28', '@29', '@30'} else FirstReferencedFactsOutput if request['policy_versions']['compose'] == '@26' else FirstFactsOutput if request['policy_versions']['compose'] in {'@24', '@25', '@26', '@27', '@28', '@29', '@30'} else EvidencePartitionOutput if request['policy_versions']['compose'] in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'} else
+        first_model = (FocusedReferencedFactsOutput if request['policy_versions']['compose'] in {'@27', '@28', '@29', '@30', '@31', '@32'} else FirstReferencedFactsOutput if request['policy_versions']['compose'] == '@26' else FirstFactsOutput if request['policy_versions']['compose'] in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'} else EvidencePartitionOutput if request['policy_versions']['compose'] in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'} else
                        SourceQuoteExtraction if request['policy_versions']['compose'] in {'@15', '@16', '@17'} else AskOutput)
         if (request.get('desired_outcome') != 'project.answer'
                 or request.get('operation_id') != 'answer-' + request['turn_id']
@@ -93,7 +93,7 @@ def select_answer_input(request, product, canonical_input, canonical_result, rev
             return None
         draft, final = canonical_result['output'], review_result['output']
         partition_keys = {'selected_ids', 'irrelevant_ids', 'uncertain_ids'}
-        if set(draft) != ({'facts', 'unreviewed'} if first_model in (FirstReferencedFactsOutput, FocusedReferencedFactsOutput) else {'partition', 'facts'} if first_model in (FirstFactsOutput, FirstReferencedFactsOutput, FocusedReferencedFactsOutput) else partition_keys if first_model is EvidencePartitionOutput else {'sources'} if first_model is SourceQuoteExtraction else {'answer', 'citations'}) or set(final) != ({'statements', 'unused', 'uncertain', 'excluded_facts'} if final_model in (ReviewedScopeAnswerOutput, ReviewedReferencedScopeOutput, FocusedReviewedScopeOutput) else {'statements', 'unused', 'uncertain'} if final_model is GroundedScopeAnswerOutput else {'statements', 'dispositions'} if final_model is GroundedUsageAnswerOutput else {'partition', 'statements', 'withdrawals'} if final_model is GroundedAnswerOutput else partition_keys if final_model is EvidencePartitionOutput else {'answer', 'citations'} if final_model is AskOutput else {'mandatory_ids', 'additional_quotes'}):
+        if set(draft) != ({'facts', 'unreviewed'} if first_model in (FirstReferencedFactsOutput, FocusedReferencedFactsOutput) else {'partition', 'facts'} if first_model in (FirstFactsOutput, FirstReferencedFactsOutput, FocusedReferencedFactsOutput) else partition_keys if first_model is EvidencePartitionOutput else {'sources'} if first_model is SourceQuoteExtraction else {'answer', 'citations'}) or set(final) != ({'statements', 'unused', 'uncertain', 'excluded_facts', 'review_dispositions'} if final_model is ReconstructedReviewedOutput else {'statements', 'unused', 'uncertain', 'excluded_facts'} if final_model in (ReviewedScopeAnswerOutput, ReviewedReferencedScopeOutput, FocusedReviewedScopeOutput, ReconstructedReviewedOutput) else {'statements', 'unused', 'uncertain'} if final_model is GroundedScopeAnswerOutput else {'statements', 'dispositions'} if final_model is GroundedUsageAnswerOutput else {'partition', 'statements', 'withdrawals'} if final_model is GroundedAnswerOutput else partition_keys if final_model is EvidencePartitionOutput else {'answer', 'citations'} if final_model is AskOutput else {'mandatory_ids', 'additional_quotes'}):
             return None
         first_model.model_validate(draft)
         final_model.model_validate(final)
@@ -124,14 +124,18 @@ def select_answer_input(request, product, canonical_input, canonical_result, rev
                         or plan['budget'] <= 0 or max(review_input_tokens(messages, first_model),
                         review_input_tokens(expected, final_model)) > plan['budget']):
                     return None
-                if final_model in (GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, ReviewedScopeAnswerOutput, ReviewedReferencedScopeOutput, FocusedReviewedScopeOutput):
-                    if final_model in (ReviewedScopeAnswerOutput, ReviewedReferencedScopeOutput, FocusedReviewedScopeOutput):
+                if final_model in (GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, ReviewedScopeAnswerOutput, ReviewedReferencedScopeOutput, FocusedReviewedScopeOutput, ReconstructedReviewedOutput):
+                    if final_model in (ReviewedScopeAnswerOutput, ReviewedReferencedScopeOutput, FocusedReviewedScopeOutput, ReconstructedReviewedOutput):
                         final = reviewed_scope_answer(final, catalog, draft, chosen=plan['chosen'], question=question, compose_version=request['policy_versions']['compose'])
                     elif final_model is GroundedScopeAnswerOutput:
                         final = grounded_scope_answer(final, catalog, draft, chosen=plan['chosen'])
                     elif final_model is GroundedUsageAnswerOutput:
                         final = grounded_usage_answer(final, catalog, draft, chosen=plan['chosen'])
                     limit = grounded_output_limit(plan, review_input_tokens(expected, final_model))
+                    if request['policy_versions']['compose'] == '@32':
+                        from .v2.answer_evidence import review_output_minimum
+                        if review_output_minimum(catalog, draft, chosen=plan['chosen'], question=question) > limit:
+                            return None
                     final = render_grounded_answer(final, catalog, first_fact_partition(draft, catalog, compose_version=request['policy_versions']['compose']) if first_model in (FirstFactsOutput, FirstReferencedFactsOutput, FocusedReferencedFactsOutput) else draft, max_output_tokens=limit, chosen=plan['chosen'],
                         **get('compose', version=request['policy_versions']['compose'])(None, operation='grounded_render', question=question)).model_dump()
                 elif final_model is EvidencePartitionOutput:
@@ -187,7 +191,7 @@ def read_answer_input(store, identity):
     """沿同轮不可变键读取，不恢复执行或写入数据。"""
     canonical = store.get_immutable_payload(identity, 'answer-model-input-answer')
     request = store.get_request(identity)
-    if not isinstance(request, dict) or request.get('policy_versions', {}).get('compose') not in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'}:
+    if not isinstance(request, dict) or request.get('policy_versions', {}).get('compose') not in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
         return canonical
     if request.get('turn_id') != identity:
         return None

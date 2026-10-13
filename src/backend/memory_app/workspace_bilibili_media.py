@@ -41,6 +41,7 @@ def read_bilibili_media(
     item_id: str | None = None, run_id: str | None = None,
     validate_remote: Callable[[], None] | None = None,
     with_sections: bool = False,
+    platform_sessions=None,
 ) -> dict[str, object]:
     """Read a video link into a bounded, timestamped source for model review."""
     platform, resolved = resolve_media_url(url)
@@ -62,6 +63,8 @@ def read_bilibili_media(
         max_response_bytes=4 * 1024 * 1024,
         timeout_seconds=20.0,
     )
+    if platform_sessions is not None:
+        network = platform_sessions.network('bilibili', network)
     try:
         raw = network.fetch_text("https://api.bilibili.com/x/web-interface/view?" + urlencode({"bvid": bvid}))
         data = _decode_view_payload(raw, bvid=bvid)
@@ -105,6 +108,9 @@ def read_bilibili_media(
     }
     if with_sections:
         result['_source_sections'] = sections
+    if platform_sessions is not None:
+        network.assert_safe(source_text)
+        network.assert_safe(str(metadata['title']))
     return result
 
 

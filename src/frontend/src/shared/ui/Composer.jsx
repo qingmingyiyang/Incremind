@@ -10,7 +10,7 @@ function scopedText(text) {
 }
 // 记住、问、干活合并成一个输入框：平时不带意图发送，由后端路由判断和拆分；
 // 只有从别处带来的明确意图（例如"接着写"、按场景记住）才随这一次发送。
-export function Composer({ intent, onIntent, onSend, projectTag, onRecord, recording = false, disabled = false, draft, onDraft, handoff, onHandoff, prefill }) {
+export function Composer({ intent, onIntent, onSend, projectTag, onRecord, recording = false, disabled = false, draft, onDraft, handoff, onHandoff, prefill, tools }) {
   const [text,setText] = useState(draft?.text || '');
   const [files,setFiles] = useState(draft?.files || []);
   const [selection,setSelection] = useState(draft?.selection ?? null);
@@ -64,6 +64,7 @@ export function Composer({ intent, onIntent, onSend, projectTag, onRecord, recor
       <button type="button" className="ui-composer-icon" aria-label="添加文件" title="文件" disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="plus"/></button>
       <button type="button" className="ui-composer-icon" aria-label={recording ? '停止录音' : '录音'} aria-pressed={recording} title={recording ? '停止录音' : '录音'} disabled={disabled || !onRecord} onClick={async () => { const file = await onRecord?.(); if (file) setFiles(current => [...current, file]); }}><Icon name="mic"/></button>
       {tag && <span className="ui-composer-tag" title={tag}>{tag}</span>}
+      {typeof tools === 'function' ? tools({ intent: selected, files }) : tools}
       <button type="button" className="ui-composer-send" aria-label="发送" disabled={disabled || recording || !onSend || (!text.trim() && !files.length)} onClick={send}><Icon name="send"/></button>
     </div>
   </div>;

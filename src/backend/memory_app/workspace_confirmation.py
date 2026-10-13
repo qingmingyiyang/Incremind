@@ -98,6 +98,7 @@ class WorkspaceConfirmation:
     def confirm(
         self, item_id: str, project_id: str, expected_revision: int,
         markdown_for_draft: Callable[[Mapping[str, object]], str],
+        *, frozen_markdown=None,
     ) -> Mapping[str, object]:
         operation_id = "confirm-" + item_id
         with self.records.begin() as tx:
@@ -115,14 +116,19 @@ class WorkspaceConfirmation:
                 if not isinstance(row.payload.get("draft"), Mapping):
                     raise ValueError("draft_not_ready")
                 draft = row.payload["draft"]
+                markdown = (frozen_markdown(tx, row, draft) if frozen_markdown is not None
+                    else markdown_for_draft(draft))
+                from .v2.material_analysis import freeze_publication, analysis_source_refs
+                publication = freeze_publication(tx, row, draft, markdown)
                 source_id = "source-" + item_id
                 source = _source_payload(row.payload, operation_id, source_id)
                 operation = {
                     "id": operation_id, "state": "pending", "workspace_item_id": item_id,
                     "project_id": project_id, "source_id": source_id, "source_payload": source,
-                    "markdown": markdown_for_draft(draft), "draft": draft,
+                    "markdown": markdown, "draft": draft,
                     "reviewed_revision": row.revision,
-                    "source_refs": _refs(row.payload, source_id),
+                    "source_refs": [*_refs(row.payload, source_id), *analysis_source_refs(
+                        publication.payload['analysis'] if publication else None, source_id)],
                 }
                 tx.put(COLLECTION, operation_id, operation, expected_revision=0)
                 updated = tx.put(ITEMS, item_id, {**row.payload, "status": "confirming",
@@ -190,6 +196,8 @@ class WorkspaceConfirmation:
                               markdown=operation["markdown"],
                               source_refs=tuple(operation["source_refs"]),
                               project_id=operation["project_id"]), tx)
+            from .v2.material_analysis import commit_publication
+            commit_publication(tx, item_row, operation, document)
             item = {**item_row.payload, "status": "confirmed", "source_id": source_id,
                     "document_id": document["id"]}
             updated = tx.put(ITEMS, item_id, item, expected_revision=item_row.revision)

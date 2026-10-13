@@ -330,7 +330,7 @@ def resolve_date_refs(statement, catalog, chosen, refs, *, compose_version='@26'
             reject(position, 'ref_requires_matching_unit_and_complete_sentence', record)
         resolved.append(record)
     # 28先完整验ref，再把普通声明视为没有计算引用；不改原件，也不授权后续精度说明。
-    if compose_version in {'@28', '@29', '@30'} and statement.kind in {'fact', 'inference'}:
+    if compose_version in {'@28', '@29', '@30', '@31', '@32'} and statement.kind in {'fact', 'inference'}:
         return [], []
     # 完整旧注释由同一冻结来源重建，模型无需也不能改写它。
     numbers = list(dict.fromkeys(record['source_number'] for record in resolved))

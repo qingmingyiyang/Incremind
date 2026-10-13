@@ -218,8 +218,10 @@ def draft_markdown(records, row, draft):
 
 def _formatted_draft(records, row, draft):
     from ..workspace_generation import _markdown
+    from .material_analysis import item_analysis, render_analysis
     from .source_sections import comment_section_for_item
     markdown = _markdown(draft)
+    markdown += render_analysis(item_analysis(records, row, draft))
     section = None
     comments = comment_section_for_item(records, row)
     if comments is not None:

@@ -17,9 +17,9 @@ from ..privacy_policy import (
 def external_egress_allowed(reader, project_id, client):
     """Use the independent external-agent preference and existing privacy facts."""
     from backend.recognition import WorkScope
-    from .external_agent_settings import external_agent_settings
+    from .external_executor_plugins import effective_external_agent_settings as external_agent_settings
 
-    if not isinstance(client, str) or client not in {'claude', 'codex'}:
+    if not isinstance(client, str) or client not in {'claude', 'codex', 'deepseek-harness'}:
         return False
     if not isinstance(project_id, str) or not project_id:
         return False
@@ -34,9 +34,9 @@ def external_egress_allowed(reader, project_id, client):
 
 def external_catalog_allowed(reader, client):
     """Admit only the global directory call; no project or body is permitted."""
-    from .external_agent_settings import external_agent_settings
+    from .external_executor_plugins import effective_external_agent_settings as external_agent_settings
 
-    if not isinstance(client, str) or client not in {'claude', 'codex'}:
+    if not isinstance(client, str) or client not in {'claude', 'codex', 'deepseek-harness'}:
         return False
     settings = external_agent_settings(reader)
     return settings['allow_remote'] is True and settings['clients'][client] is True

@@ -12,17 +12,22 @@ from backend.memory_app.workspace import install_workspace_routes
 from backend.recognition import RecognitionService, WorkScope
 from core.document_engine import SQLiteDocumentRepository
 from core.storage_provider import SQLiteStructuredRecordStore
+from backend.security.secrets import InMemorySecretStore
+from tests.memory_app.governed_model_fixture import GovernedModel
 
 
-class Model:
+class Model(GovernedModel):
     def __init__(self):
         self.calls = 0
+        self.secrets = InMemorySecretStore()
         self.insights = [{"text": "原文证据认识一", "conditions": []}, {"text": "原文证据认识二", "conditions": []}]
         self.fail = False
         self.fail_insight = False
 
     def public(self):
-        return {"generation": {"base_url": "http://localhost/v1", "allow_remote": False}}
+        public = super().public()
+        public["generation"].update({"base_url": "http://localhost/v1", "allow_remote": False})
+        return public
 
     def complete(self, messages, *, max_tokens, validate_current=None):
         self.calls += 1
@@ -41,6 +46,10 @@ class Model:
 
 def assemble(root, records, documents, service, model):
     app = FastAPI()
+    # 与正式工厂一样登记领域所有者，启动生命周期不能靠缺失状态跳过真实运行器。
+    app.state.recognition_service = service
+    app.state.recognition_records = records
+    app.state.recognition_documents = documents
     from backend.memory_app.v2.devices import DeviceRegistry
     app.state.device_registry = DeviceRegistry(root / 'server')
     domains = install_workspace_routes(app, runtime_root=root, records=records,

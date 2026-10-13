@@ -35,9 +35,13 @@ def test_real_workspace_transcription_uses_one_engine_and_separate_outputs_with_
     calls=[]
     provider=ModuleType('faster_whisper')
     class Engine:
-        def __init__(self,*args,**kwargs): calls.append(('load',args))
+        def __init__(self,*args,**kwargs):
+            calls.append(('load',args))
+            self.max_length = 448
+            self.hf_tokenizer = SimpleNamespace(encode=lambda text, **_kwargs: SimpleNamespace(ids=list(text)))
         def transcribe(self,path,**kwargs):
             calls.append(('input',path))
+            vocabulary_calls.append(kwargs.get('hotwords'))
             return iter([SimpleNamespace(start=0,end=1,text=Path(path).read_text())]),SimpleNamespace(duration=1,language='zh')
     provider.WhisperModel=Engine
     monkeypatch.setitem(sys.modules,'faster_whisper',provider)
@@ -47,6 +51,7 @@ def test_real_workspace_transcription_uses_one_engine_and_separate_outputs_with_
         if list(argv)==['nvidia-smi']: raise FileNotFoundError('synthetic-cpu-host')
         raise AssertionError('ASR must not launch a second model process')
     monkeypatch.setattr(subprocess,'run',process)
+    vocabulary_calls = []
     with resource_context(pool):
         for user,text in [('user-a','甲文字'),('user-b','乙文字')]:
             root=tmp_path/'users'/user;root.mkdir(parents=True)
@@ -54,14 +59,19 @@ def test_real_workspace_transcription_uses_one_engine_and_separate_outputs_with_
             SaveAudioAssetTranscriberSettings(store).execute(enabled=True,command=[BUILTIN_FASTER_WHISPER_COMMAND],model_name='large-v3-turbo',confirm_enable=True)
             audio=root/'sample.wav';audio.write_text(text,encoding='utf8')
             with user_context(UserAccess(DeviceIdentity('device-admin','local-user',1),user,'admin')):
+                from backend.shared.asr_lexicon import user_asr_lexicon
+                user_asr_lexicon(root).import_text(text='甲术语' if user == 'user-a' else '乙术语', expected_revision=0, preview=False)
                 output=_transcribe_output(audio,root,'default','item-'+user,'run-'+user)
                 assert output['status']=='completed' and output['text']==text
                 store,settings=build_rebuild_object_store(root)
                 assert store.read('workbench_asr_bindings','workbench-asr-run-'+user+'-source-run-'+user)['remote_processing'] is False
                 internal=JsonObjectStore(root/'workspace/asr-internal',namespace_id=settings.namespace_id)
                 assert internal.attribution('media_processing_outputs',output['id'],internal.revision('media_processing_outputs',output['id']))['target_user_id']==user
+                assert output['metadata']['asr_lexicon']['revision'] == 1
+                assert output['metadata']['asr_lexicon']['applied_count'] == 1
     assert sum(kind=='load' for kind,*_ in calls)==1
     assert len({path for kind,path in calls if kind=='input'})==2
+    assert vocabulary_calls == ['甲术语', '乙术语']
 
 
 def test_shared_runner_checks_revocation_between_provider_segments(tmp_path,monkeypatch):

@@ -932,3 +932,272 @@ def v30(entrypoint, /, *args, **kwargs):
 
 
 register('compose', '@30')(v30)
+
+
+def _review_queue_v31(catalog, first_output=None, diagnostics=(), date_refs=()):
+    """把原件中的未引用位置和结构提示显式排队，相关性仍由模型逐项判断。"""
+    import re
+    quoted, supported = {}, set()
+    for fact in (first_output or {}).get('facts', ()):
+        for evidence in fact.get('evidence', ()):
+            quoted.setdefault(evidence['unit_id'], []).append(evidence['quote'])
+            if evidence['role'] == 'support':
+                supported.add(evidence['unit_id'])
+    unreferenced, partial, details, context_only = {}, [], [], []
+    for unit in catalog['units']:
+        text, identity = unit['text'], unit['id']
+        if not text.strip():
+            continue
+        # 说话者标签仍在原目录中；它本身未被引用不算遗漏正文。
+        label = re.match(r'\s*\[[^\]\n]+\]\s+[^:\n]+:\s*', text)
+        body_start = label.end() if label else 0
+        ranges = []
+        for quote in quoted.get(identity, ()):
+            if not quote:
+                continue
+            ranges.extend(match.span() for match in re.finditer(re.escape(quote), text))
+        if not ranges:
+            unreferenced.setdefault(unit['source_number'], []).append(identity)
+        else:
+            if identity not in supported:
+                context_only.append(identity)
+            cursor, remainder = body_start, []
+            for left, right in sorted(ranges):
+                if left > cursor and re.search(r'\w', text[cursor:left]):
+                    remainder.append([cursor, left])
+                cursor = max(cursor, right)
+            if cursor < len(text) and re.search(r'\w', text[cursor:]):
+                remainder.append([cursor, len(text)])
+            if remainder:
+                partial.append({'unit_id': identity, 'unquoted_spans': remainder})
+        caption_spans = [list(match.span()) for match in re.finditer(
+            r'\[(?:image caption|photo caption|图注|图片描述)\s*[:：][^\]\n]*(?:\]|$)', text, re.I)]
+        question_spans = []
+        for match in re.finditer(r'[^.!?。！？\n]*[?？]', text[body_start:]):
+            left, right = body_start + match.start(), body_start + match.end()
+            while left < right and text[left].isspace():
+                left += 1
+            question_spans.append([left, right])
+        if caption_spans or question_spans:
+            details.append({'unit_id': identity,
+                **({'caption_spans': caption_spans} if caption_spans else {}),
+                **({'question_spans': question_spans} if question_spans else {})})
+    known_refs = {ref['date_ref_id'] for ref in date_refs}
+    date_claim_refs = {ref for fact in (first_output or {}).get('facts', ()) if fact['kind'] == 'date'
+        for ref in fact.get('date_refs', ())}
+    repairs = []
+    for item in diagnostics:
+        refs = sorted({ref for issue in item.get('issues', ())
+            if issue.get('actual_kind') != 'date'
+            for ref in issue.get('matching_date_ref_ids', ()) if ref in known_refs})
+        if refs:
+            repairs.append({'fact_index': item['fact_index'],
+                'actual_kind': first_output['facts'][item['fact_index'] - 1]['kind'], 'date_ref_ids': refs})
+    return {
+        'boundary': 'Mechanical locations only; relevance, completeness and claim modality require source review.',
+        'unreferenced_by_source': [{'source_number': number, 'unit_ids': ids} for number, ids in unreferenced.items()],
+        'partial_units': partial, 'context_only_unit_ids': context_only, 'detail_spans': details,
+        'date_classification_repairs': repairs,
+        'unreviewed_date_refs': [{'date_ref_id': ref['date_ref_id'], 'unit_id': ref['unit_id']}
+            for ref in date_refs if ref['date_ref_id'] not in date_claim_refs],
+    }
+
+
+def v31(entrypoint, /, *args, **kwargs):
+    """显式核对未采用原句、图注与求证状态，分开保留已知事件日和剩余未知。"""
+    if kwargs.get('operation') == 'review_queue':
+        return _review_queue_v31(kwargs['catalog'], kwargs.get('first_output'),
+            kwargs.get('diagnostics', ()), kwargs.get('date_refs', ()))
+    if kwargs.get('operation') not in {'instruction', 'partition_final_instruction'} or not kwargs.get('response_schema'):
+        return v30(entrypoint, *args, **kwargs)
+    import json
+    # 新版重写重复指令以容纳实际复核队列，旧版提示和冻结消息均保持原样。
+    common = (
+        'Return only required Schema JSON. Only evidence_catalog is evidence; history/profile/titles/draft are context. '
+        'Check speaker, person, object, event, negation and precision. Preserve original terms and exact continuous support quotes. '
+        'Distinguish questions/tentative interpretations from assertions, and plans/missed/cancelled events from completion. '
+        'A question in one clause does not weaken another affirmative clause. Silence is not denial; compatible goals do not exclude each other. '
+        'Before unknown, inspect the full catalog. Infer cautiously from grounded premises; unknown is limitation. '
+        'Answer only requested facts, once each, without summaries/recap; close JSON when covered. '
+        'Lists retain every independent requested action/object/component/meaning, no fixed item count. Merge duplicates without losing detail: '
+        'a specific planned event may add to a generic role. Captions support visible shapes/names; object meanings need separate quotes, '
+        'and do not automatically map to each shape. '
+        'review_queue marks mechanical locations, not relevance/truth/completeness. Offsets are within unit.text. '
+        'Inspect unreferenced units, unquoted subparts, context-only units and detail_spans against original continuous context before excluding them. '
+        'DATE: for requested dates, inspect unreviewed_date_refs even without diagnostics. Preserve known relevant event dates separately from remaining unknowns; '
+        'different events need not share a day. Computed events require kind=date, matching real date_refs, complete cited sentence and full legal range. '
+        'Use classification repair refs only after verifying that event. fact/inference use date_refs: []; attached refs grant no calculation authority. '
+        'Explicit source dates need no ref. True record/session anchors are context, never event days or same-day authority. '
+        'No invented refs/derived_notes. Unsupported dates stay relative. Limitation refs describe only remaining precision, never erase known results. '
+    )
+    if kwargs['operation'] == 'instruction':
+        task = ('FIRST: question-directed facts, each proposition once. unreviewed has scope=all_unreferenced and a nonblank selection principle. '
+            'Unreferenced does not mean irrelevant. No unused-ID lists or invented IDs/diagnostics. Positions are one-based. ')
+    else:
+        task = ('FINAL: reconstruct from the full catalog and review unchanged untrusted_first_fact_plan. Draft absence is not evidence. '
+            'Every first position occurs once in first_fact_uses or excluded_facts. Uses have fact_index, adopt/merge/correct and concrete reason. '
+            'Adopt/merge preserves same-unit quotes/support. Diagnosed positions require actual field correction or exclusion, not adopt/merge or reason-only fixes. '
+            'Keep a supported related computed event as date; separate remaining unknown as limitation. Companion/new facts may have empty uses. '
+            'Merge/exclude duplicates without losing distinct meanings. unused has scope=all_unreferenced and one selection reason, no unused-ID lists. '
+            'uncertain lists only referenced IDs used in limitations, once each with reasons. Diagnostics and queue grant no authority; final guards remain strict. ')
+    mandatory = v3(lambda *a, **k: '', *args, operation='instruction') if args else ''
+    return common + task + 'Required JSON Schema:\n' + json.dumps(kwargs['response_schema'], ensure_ascii=False, separators=(',', ':')) + mandatory
+
+
+register('compose', '@31')(v31)
+
+
+def _modal_clauses_v32(text):
+    """保留可定位的局部分句；词面标志只约束该分句，不推断对象或事件语义。"""
+    import re
+    label = re.match(r'\s*\[[^\]\n]+\]\s+[^:\n]+:\s*', text)
+    start = label.end() if label else 0
+    cuts = [start, *(match.end() for match in re.finditer(
+        r'(?<=[.!?;\n])\s+|(?<=[。！？；\]])\s*|(?=\[(?:image caption|photo caption|图注|图片描述)\s*[:：])|'
+        r'\s+(?=(?:but|and|while|whereas)\b)', text[start:], re.I)), len(text)]
+    # finditer的偏移属于正文子串，先还原unit坐标。
+    cuts[1:-1] = [value + start for value in cuts[1:-1]]
+    captions = [match.span() for match in re.finditer(
+        r'\[(?:image caption|photo caption|图注|图片描述)\s*[:：][^\]\n]*(?:\]|$)', text, re.I)]
+    cuts = [cut for cut in cuts if not any(left < cut < right for left, right in captions)]
+    result = []
+    for left, right in zip(cuts, cuts[1:]):
+        while left < right and text[left].isspace():
+            left += 1
+        while right > left and text[right - 1].isspace():
+            right -= 1
+        if left == right:
+            continue
+        value = text[left:right]
+        if re.search(r'[?？]\s*$', value):
+            stance = 'question'
+        # missed只有明确事件宾语才强制缺席，想念亲友/家乡及代词省略不猜事件语义。
+        elif re.search(r"\b(?:cancelled|canceled|couldn't attend|did not attend|unable to attend)\b|未能参加|取消了|"
+                       r"\bmissed\s+(?:(?:the|a|an|this|that|our|their|my|his|her|your)\s+)?"
+                       r"(?:event|parade|conference|meeting|concert|workshop|festival|ceremony|lecture|class|session|"
+                       r"performance|appointment|gathering|rehearsal|wedding)\b", value, re.I):
+            stance = 'missed'
+        elif re.search(r'\b(?:if|unless|provided that)\b|如果|假如', value, re.I):
+            stance = 'conditional'
+        elif re.search(r"^(?:(?:and|but|while|whereas)\s+)?(?:[^,;.!?\n]+,\s*)?(?:(?:I|we|he|she|they|you|it)(?:['’]ll|\s+will)\b|"
+                       r"(?:(?:I|we|he|she|they|you)\s+)?(?:hope(?:s|d)?|intend(?:s|ed)?|plan(?:s|ned)?)\s+to\b|"
+                       r"(?:I(?:['’]m|\s+am)|we(?:['’]re|\s+are))\s+planning\b)|^(?:计划|打算)", value, re.I):
+            stance = 'planned'
+        else:
+            stance = 'asserted'
+        # 显式计划中的并列省主语延续原作用域；新的代词或大写主语开启独立分句。
+        if (stance == 'asserted' and result and result[-1]['stance'] == 'planned'
+                and re.match(r'and\s+[a-z]', value)
+                and not re.match(r'and\s+(?:i|we|he|she|they|you|it)\b', value, re.I)
+                and not re.search(r'[.!?。！？]\s*$', result[-1]['text'])):
+            stance = 'planned'
+        result.append({'span': [left, right], 'text': value, 'stance': stance})
+    return result
+
+
+def _review_queue_v32(catalog, first_output=None, diagnostics=(), date_refs=()):
+    """整行任务仅核存在相关摘录，特定片段任务要求完整覆盖其目标位置。"""
+    old = _review_queue_v31(catalog, first_output, diagnostics, date_refs)
+    units = {unit['id']: unit for unit in catalog['units']}
+    positions = {}
+
+    def add(identity, span, scope, tag, ref=None):
+        text = units[identity]['text']
+        left, right = span
+        while left < right and text[left].isspace():
+            left += 1
+        while right > left and text[right - 1].isspace():
+            right -= 1
+        if left == right:
+            return
+        key = identity, left, right, scope
+        row = positions.setdefault(key, {'unit_id': identity, 'span': [left, right], 'scope': scope,
+            'tags': [], 'preview_span': [left, min(right, left + 160)], 'preview': text[left:min(right, left + 160)]})
+        if tag not in row['tags']:
+            row['tags'].append(tag)
+        if ref is not None:
+            row.setdefault('date_ref_ids', []).append(ref)
+
+    for source in old['unreferenced_by_source']:
+        for identity in source['unit_ids']:
+            add(identity, [0, len(units[identity]['text'])], 'unit_review', 'unreferenced')
+    for row in old['partial_units']:
+        for span in row['unquoted_spans']:
+            add(row['unit_id'], span, 'span_review', 'unquoted')
+    for identity in old['context_only_unit_ids']:
+        add(identity, [0, len(units[identity]['text'])], 'unit_review', 'context_only')
+    for row in old['detail_spans']:
+        for key in ('caption_spans', 'question_spans'):
+            for span in row.get(key, ()):
+                add(row['unit_id'], span, 'span_review', key)
+    for identity, unit in units.items():
+        for clause in _modal_clauses_v32(unit['text']):
+            if clause['stance'] != 'asserted':
+                add(identity, clause['span'], 'span_review', 'modal_' + clause['stance'])
+    for ref in date_refs:
+        if ref['unit_id'] in units:
+            origin = units[ref['unit_id']]['span'][0]
+            add(ref['unit_id'], [position - origin for position in ref['sentence_span']],
+                'span_review', 'date_ref', ref['date_ref_id'])
+    return {'boundary': 'Exact catalog navigation only. unit_review checks an available relevant excerpt, not all meanings; '
+            'span_review requires the full target span. Preview may be shorter than span. Semantic relevance remains model review.',
+        'items': [{'item_id': index, **row} for index, row in enumerate(positions.values(), 1)]}
+
+
+def v32(entrypoint, /, *args, **kwargs):
+    """重建末稿并逐位置关联真实输出，原首稿正文不进入可直接采用的输入。"""
+    operation = kwargs.get('operation')
+    if operation == 'review_queue':
+        return _review_queue_v32(kwargs['catalog'], kwargs.get('first_output'),
+            kwargs.get('diagnostics', ()), kwargs.get('date_refs', ()))
+    if operation == 'modal_clauses':
+        return _modal_clauses_v32(kwargs['text'])
+    if operation == 'stance_render':
+        english = v20(None, operation='grounded_render', question=kwargs.get('question', ''))['inference'] == 'Inference: '
+        return {'prefixes': {'planned': 'Planned or hoped: ', 'missed': 'Not attended or cancelled: ',
+                    'conditional': 'Conditional: ', 'question': 'Unconfirmed interpretation: '} if english else
+                {'planned': '计划或期望：', 'missed': '未参加或已取消：', 'conditional': '有条件：', 'question': '待确认的解释：'},
+            'inference_premise': {'planned': 'Based on a stated plan, without confirmation of current status: ',
+                    'question': 'Based on an unconfirmed interpretation: ', 'missed': 'Based on a missed or cancelled event: ',
+                    'conditional': 'Subject to the stated condition: '} if english else
+                {'planned': '基于已表达的计划，当前状态仍未确认：', 'question': '基于待确认的解释：',
+                 'missed': '基于未参加或已取消的事件：', 'conditional': '在原文条件成立时：'}}
+    if operation not in {'instruction', 'partition_final_instruction'} or not kwargs.get('response_schema'):
+        return v31(entrypoint, *args, **kwargs)
+    if operation == 'instruction':
+        return v31(entrypoint, *args, **kwargs)
+    import json
+    instruction = (
+        'Reconstruct a concise answer only from evidence_catalog. first_evidence_plan supplies fallible positions/quotes, '
+        'not answer text. Every requested independent activity, component and meaning matters; no representative-item cap. '
+        'A specific planned event is not redundant with a general role. Image captions support visible components, '
+        'not an automatic separate meaning for each shape. Before unknown inspect all evidence. '
+        'Return exact Schema JSON. Each statement requires kind/text/evidence/date_refs/first_fact_uses/stance/source_clauses. '
+        'Quotes are exact continuous catalog text; support must actually support the proposition. '
+        'source_clauses are full local sentence/coordination quotes within actual support quotes, not titles or notes; '
+        'separate neighboring claims. stance is asserted/planned/missed/conditional/question/inference/unknown. '
+        'A local question is tentative; another affirmative clause remains affirmative. Plans/hope are not current roles, '
+        'missed events are not participation. Nonasserted stance is visibly labeled by the renderer; never use generic possibly '
+        'to evade a specific source condition. Inference must explain grounded premises without inventing status. '
+        'review_dispositions covers each deduplicated review_queue item_id exactly once. Include binds real one-based '
+        'statement_indices: a same-unit support quote must cover the whole span_review target; unit_review only requires '
+        'a related excerpt from that unit, not a claim all its meanings are covered. Exclude uses empty indices and a concrete '
+        'selection reason. Group IDs sharing one decision/reason compactly; never an all_unreferenced blanket substitute. '
+        'Previews are navigation only; inspect the complete indicated span in catalog. '
+        'Each original first position occurs once in first_fact_uses or excluded_facts. adopt/merge retains its original '
+        'quotes/support; correct must actually change kind/text/evidence/date_refs and pass final guards. '
+        'Diagnosed invalid positions require correction or exclusion, never adopt/merge. A reason alone is not a replacement. '
+        'When a draft mixed a known computed event and an unknown requested event, reconstruct separate statements: '
+        'the supported related event may be kind=date with real refs; the unknown target remains limitation. Different '
+        'events need not share a day. New companion statements may have empty first_fact_uses. '
+        'Computed dates require kind=date, exact matching date_ref IDs, full cited sentence and complete legal range; '
+        'fact/inference use empty refs. Explicit source dates need no ref. Record anchors are context, never event dates. '
+        'Never fabricate refs or derived_notes, negate known results, or claim endpoints are exact days. '
+        'unused is scope=all_unreferenced with one overall principle; review_dispositions separately records actual item decisions. '
+        'uncertain lists only referenced IDs in limitations. Merge overlaps without losing independent meanings, '
+        'do not repeat facts or recap. Final guards remain strict. Required JSON Schema:\n')
+    mandatory = v3(lambda *a, **k: '', *args, operation='instruction') if args else ''
+    return instruction + json.dumps(kwargs['response_schema'], ensure_ascii=False, separators=(',', ':')) + mandatory
+
+
+register('compose', '@32')(v32)

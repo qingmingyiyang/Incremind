@@ -11,7 +11,7 @@ from backend.memory_app.transaction_records import TransactionRecords
 from backend.recognition import WorkScope
 from backend.shared.secret_detection import REDACTED_SECRET, redact_secrets
 
-from .external_agent_settings import external_agent_settings
+from .external_executor_plugins import effective_external_agent_settings as external_agent_settings
 from .external_context import ExternalContext, DELIVERIES
 from .contextual_chunk_vectors import embedding_input_validation
 from .intent import parse_scope_tag

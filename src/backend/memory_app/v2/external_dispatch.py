@@ -46,14 +46,19 @@ def dispatch_external(plan: LaunchPlan, context: ToolExecutionContext, *, enviro
     remaining = context.remaining_timeout_ms
     if remaining <= 0:
         return DispatchResult('timed_out', None, None, (), (), 0)
-    if (not isinstance(plan, LaunchPlan) or plan.executor not in {'codex','claude-code'}
+    if (not isinstance(plan, LaunchPlan) or plan.executor not in {'codex','claude-code','deepseek-harness'}
             or (event_sink is not None and not callable(event_sink))
             or (on_started is not None and not callable(on_started))):
         return DispatchResult('failed', None, None, ('external_dispatch_request_invalid',), (), 0)
     try:
         # 解析器和进程尾部共用同一份值，避免一次性迭代器被先消费。
         secret_values = tuple(secret_values)
-        parser = ExternalEventParser(plan.executor, secret_values=secret_values)
+        if plan.executor == 'deepseek-harness':
+            from .external_harness_protocol import HarnessProtocol
+            parser = HarnessProtocol(session_id=plan.cwd.name, task=plan.stdin_text or plan.input_text,
+                cwd=plan.cwd, secret_values=secret_values)
+        else:
+            parser = ExternalEventParser(plan.executor, secret_values=secret_values)
     except (TypeError, ValueError):
         return DispatchResult('failed', None, None, ('external_dispatch_request_invalid',), (), 0)
     events = deque(maxlen=128)
@@ -84,7 +89,8 @@ def dispatch_external(plan: LaunchPlan, context: ToolExecutionContext, *, enviro
         return DispatchResult('timed_out', None, None, (), (), 0)
     try:
         process = run_process(plan.command, cwd=plan.cwd, environment=environment,
-            input_text=plan.stdin_text or plan.input_text, timeout=min(1200, remaining / 1000),
+            input_text=parser.initial_input if plan.executor == 'deepseek-harness' else plan.stdin_text or plan.input_text,
+            input_channel=parser.channel if plan.executor == 'deepseek-harness' else None, timeout=min(1200, remaining / 1000),
             output_limit=output_limit, cancel=_CancellationView(context),
             on_line=receive, on_started=started, secret_values=secret_values, on_owner=on_owner)
     except ProcessCleanupError as error:

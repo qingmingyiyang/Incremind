@@ -1,0 +1,4 @@
+.capture-page { max-width: 560px; margin: 0 auto; padding: 32px 24px; color: var(--ink); }
+.capture-page h1 { font: 700 28px var(--serif); }
+.capture-page button, .capture-page a { color: var(--ink2); margin: 16px 16px 0 0; }
+.capture-page p { color: var(--red); font: 14px var(--sans); }

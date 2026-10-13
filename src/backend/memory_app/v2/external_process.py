@@ -38,6 +38,29 @@ class ProcessCleanupError(OSError):
         self._cleanup_owner = owner
 
 
+class ProcessInputChannel:
+    """可信协议驱动的有界 stdin 通道；启动命令仍只来自原 LaunchPlan。"""
+    def __init__(self):
+        self._queue = queue.Queue(maxsize=16)
+        self._closed = False
+        self._bytes = 0
+        self._lock = threading.Lock()
+
+    def send(self, text):
+        if not isinstance(text, str) or not text.endswith('\n'):
+            raise ValueError('external_process_input_invalid')
+        raw = text.encode('utf-8')
+        with self._lock:
+            if self._closed or len(raw) > 1048576 or self._bytes + len(raw) > 2097152:
+                raise ValueError('external_process_input_invalid')
+            self._queue.put_nowait(raw)
+            self._bytes += len(raw)
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+
+
 class _WindowsJob:
     """Job 只负责禁止 breakaway 和关闭时结束全部后代，不限制文件访问。"""
 
@@ -306,7 +329,6 @@ class _Lines:
         self.decoder = codecs.getincrementaldecoder('utf-8')('replace')
         self.pending = ''
         self.secrets = sorted(set(value for value in secrets if value), key=len, reverse=True)
-        self.lookahead = max((len(value) - 1 for value in self.secrets), default=0)
         # 从原检测器取得字段前缀，只用于等待尚未收齐的跨行匹配。
         self.credential_key = re.compile(SECRET_PATTERNS[2].pattern.split(r'\s*[:=]', 1)[0])
         self.pem_end = None
@@ -334,6 +356,12 @@ class _Lines:
         self.pending = SECRET_PATTERNS[2].sub(REDACTED_SECRET, self.pending)
         hold = len(self.pending)
         if not final:
+            # 仅暂存确实可能跨块的凭据前缀，完整安全行立即交付交互协议。
+            for secret in self.secrets:
+                for length in range(min(len(secret) - 1, len(self.pending)), 0, -1):
+                    if self.pending.endswith(secret[:length]):
+                        hold = min(hold, len(self.pending) - length)
+                        break
             for match in self.credential_key.finditer(self.pending):
                 suffix = self.pending[match.end():].lstrip()
                 if suffix and suffix[0] in ':=':
@@ -342,12 +370,12 @@ class _Lines:
                 else:
                     incomplete = not suffix
                 if incomplete:
-                    hold = match.start()
+                    hold = min(hold, match.start())
                     break
-        # 留足前瞻，避免显式凭据跨行或跨块时先把前半段交给回调。
+        # 真正跨行的前缀仍在 pending 中，避免凭据前半段进入回调。
         while '\n' in self.pending:
             ending = self.pending.index('\n')
-            if not final and (ending + 1 > len(self.pending) - self.lookahead or ending + 1 > hold):
+            if not final and ending + 1 > hold:
                 break
             line, self.pending = self.pending[:ending], self.pending[ending + 1:]
             hold -= ending + 1
@@ -361,9 +389,12 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
     input_text: str = '', timeout: float = 1200, output_limit: int = 1048576,
     cancel: threading.Event | None = None, on_line: Callable[[str], None] | None = None,
     on_started: Callable[[], None] | None = None,
-    secret_values: Sequence[str] = (), on_owner: Callable[[_Owner], None] | None = None) -> ProcessResult:
+    secret_values: Sequence[str] = (), on_owner: Callable[[_Owner], None] | None = None,
+    input_channel: ProcessInputChannel | None = None) -> ProcessResult:
     """回调仅供有界的本地解析；不记录命令、环境或异常详情。"""
     if cancel is not None and cancel.is_set():
+        if isinstance(input_channel, ProcessInputChannel):
+            input_channel.close()
         return ProcessResult('cancelled', None, 0, ())
     if (isinstance(command, (str, bytes)) or not command or any(not isinstance(arg, str) or '\0' in arg for arg in command)
             or not isinstance(input_text, str) or not isinstance(environment, Mapping)
@@ -373,7 +404,10 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
             or (on_line is not None and not callable(on_line))
             or (on_started is not None and not callable(on_started))
             or (on_owner is not None and not callable(on_owner))
+            or (input_channel is not None and not isinstance(input_channel, ProcessInputChannel))
             or any(not isinstance(value, str) for value in secret_values)):
+        if isinstance(input_channel, ProcessInputChannel):
+            input_channel.close()
         return ProcessResult('failed', None, 0, ('external_process_start_failed',))
     owner = None
     process = None
@@ -427,15 +461,27 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
 
     def send(payload):
         try:
-            remaining = memoryview(payload)
-            while remaining:
-                written = process.stdin.write(remaining)
-                if not written:
-                    raise OSError('external_process_failed')
-                remaining = remaining[written:]
-            # 完整启动包交给原 bootstrap 后，EOF 可开闸；未观察回报不能证明零副作用。
+            def write(raw):
+                remaining = memoryview(raw)
+                while remaining:
+                    written = process.stdin.write(remaining)
+                    if not written:
+                        raise OSError('external_process_failed')
+                    remaining = remaining[written:]
+                process.stdin.flush()
+            write(payload + b'\n' if input_channel is not None else payload)
+            # 旧路径仍以 EOF 开闸；交互完整行只在原 owner 绑定后发送。
             with state_lock:
                 state['launch_possible'] = True
+            if input_channel is not None:
+                while not finished.is_set():
+                    try:
+                        raw = input_channel._queue.get(timeout=.05)
+                    except queue.Empty:
+                        if input_channel._closed:
+                            break
+                        continue
+                    write(raw)
         except (OSError, ValueError):
             if state['reason'] is None and process.poll() is None:
                 stop('external_process_failed')
@@ -501,7 +547,10 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
             bootstrap = Path(__file__).with_name('_external_process_bootstrap.py')
             # Windows 虚拟环境 redirector 会先派生 native 子进程，绑定后才开闸不足以约束它。
             executable = sys._base_executable if os.name == 'nt' else sys.executable
-            process = subprocess.Popen([executable, '-I', '-S', '-u', str(bootstrap), str(descriptor)],
+            bootstrap_command = [executable, '-I', '-S', '-u', str(bootstrap), str(descriptor)]
+            if input_channel is not None:
+                bootstrap_command.append('interactive')
+            process = subprocess.Popen(bootstrap_command,
                 cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 bufsize=0, close_fds=True, **options)
             owner.process = process
@@ -521,7 +570,7 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
                 threads.append(thread)
                 thread.start()
             payload = json.dumps({'command': list(command), 'cwd': str(cwd), 'environment': dict(environment),
-                'input_text': input_text}, ensure_ascii=False).encode('utf-8')
+                'input_text': input_text, 'interactive': input_channel is not None}, ensure_ascii=False).encode('utf-8')
             for name, target, args in [('stdin', send, (payload,)), ('watch', watch, ())]:
                 thread = threading.Thread(target=target, args=args, name='external-process-' + name)
                 threads.append(thread)
@@ -577,6 +626,8 @@ def run_process(command: Sequence[str], *, cwd: Path, environment: Mapping[str, 
                 on_owner(owner)
         stop('external_process_start_failed')
     finally:
+        if input_channel is not None:
+            input_channel.close()
         if owner is not None:
             try:
                 owner.close(deadline=state['cleanup_deadline'])
