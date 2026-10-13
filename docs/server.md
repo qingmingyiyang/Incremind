@@ -59,7 +59,7 @@ SSH 隧道、VPN 和端口转发用于保护或连接通信，不自动免除公
 
 ## 安装环境与准备目录
 
-准备 Linux、Python 3.12、满足 [README](../README.md#快速开始) 要求的 Node.js，以及支持 `LoadCredential` 的 systemd。将包含服务器实现的源码放到 `/opt/chriptmas`，由部署者安装依赖和构建前端：
+准备 Linux、Python 3.12、满足 [README](../README.zh-CN.md#快速开始) 要求的 Node.js，以及支持 `LoadCredential` 的 systemd。将包含服务器实现的源码放到 `/opt/chriptmas`，由部署者安装依赖和构建前端：
 
 ```sh
 cd /opt/chriptmas

@@ -1,16 +1,16 @@
 <div align="center">
 
-[简体中文](README.md) · [English](README.en.md)
+[English](README.md) · [简体中文](README.zh-CN.md)
 
-<img src="design/prototype/assets/bear-head-ready.webp" width="96" alt="Incremind 的小熊" />
+<img src="design/prototype/assets/bear-head-ready.webp" width="96" alt="The Incremind bear" />
 
-# Incremind · 积微
+# Incremind
 
-**只记增量的第二大脑**
+**A second brain that remembers what is new.**
 
-把你挑过的资料交给它：它整理、归档，只提炼你**还不知道**的部分，等你一键确认，才成为长期记忆。
+Give it the material you choose. It organizes and archives it, extracts what adds to **what you already know**, and turns proposed insights into long-term memory only after you confirm them.
 
-[快速开始](#快速开始) · [它能做什么](#它能做什么) · [测评与验收](#测评与验收) · [怎么用](#怎么用) · [架构](#架构) · [隐私](#隐私与数据) · [开发](#开发)
+[Quick start](#quick-start) · [Features](#features) · [Evaluation](#evaluation-and-verification) · [Usage](#usage) · [Architecture](#architecture) · [Privacy](#privacy-and-data) · [Development](#development)
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
@@ -19,116 +19,129 @@
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)
 
-<img src="docs/images/workbench.png" alt="工作台：三份资料被自动整理、归到项目，并提炼出增量认识" width="880" />
+<img src="docs/images/workbench.png" alt="Workbench: three sources organized, assigned to projects, and used to propose new insights" width="880" />
 
 </div>
 
-## 为什么做它
+## Why I am building it
 
-我想打造一个能长期陪我工作的第二大脑。
+I want a second brain that can work alongside me over time.
 
-这个想法来自日常调研：围绕同一个项目，每次向 AI 提问或交办任务，都要重新讲一遍背景、已有判断和之前找到的资料。知识积累了很多，对话却常常从头开始。
+The idea comes from everyday research. Whenever I ask AI a question or give it a task about the same project, I have to explain the background, my existing judgments, and the material I have already found all over again. Knowledge accumulates, but conversations often start from scratch.
 
-Incremind 的设计围绕两件事展开：
+Incremind is designed around two goals:
 
-1. **把随手投喂变成持续积累。** 接收文章、个人判断、录音、视频和随手记下的灵感，自动整理并归入对应的项目与场景，把资料沉淀成可以回看的知识和待确认的认识。
-2. **带着已有积累理解问题并完成任务。** 根据我的要求识别问题，找到相关项目与场景，结合其中已有的认识、资料和上下文调用模型，回答基础问题、完成日常任务，减少反复交代背景。
+1. **Turn things I share into lasting knowledge.** Accept articles, personal judgments, recordings, videos, and ideas captured on the go; organize them by project and scene; and turn them into knowledge I can revisit and insights I can confirm.
+2. **Use that knowledge to understand questions and complete tasks.** Identify what I am asking, find the relevant projects and scenes, and give the model their existing insights, sources, and context so it can answer everyday questions and handle routine tasks with less repeated explanation.
 
-收藏了很多文章和视频，真正记住、用上的却很少。因此，积累还需要有取舍：
+Saving articles and videos does not automatically make their contents useful or memorable. Incremind therefore focuses on **what each new source adds**:
 
-Incremind 只记**信息增量**：
+- **Compare new material with existing insights.** Extract three kinds of changes: **additions** such as new conditions, examples, or practices; **differences** from an existing claim; and **new methods**. Material that repeats what you already know adds a supporting source to the existing insight rather than creating another entry.
+- **Store methods with their conditions of use.** Each insight says when it applies, so relevant methods can be recalled when you ask a question or work on a task.
+- **Let you decide what becomes established knowledge.** Extracted insights start as pending confirmation. A single click on the receipt activates them. Confirmation, edits, and forgetting take effect immediately; further inference runs in the background.
+- **Remember and forget in a human-like way.** Frequently used knowledge becomes stronger, while unused knowledge gradually leaves automatic recall. Originals remain in the Library and can be found and restored at any time.
 
-- **每份新资料都和你已有的认识对照**，只提炼三类内容：**补充**（新条件、例子、做法）、**不同**（和你已知的主张不一样）、**新方法**（你还没有的）。只是重复已知内容的资料，不新增条目，只给原来的认识多记一个来源。
-- **方法按"什么时候该想起"来存**：每条认识都写明适用条件。问问题、干活时，按情境把该用的方法找回来。
-- **你确认的才算数**：系统提炼的认识先是"待确认"，你在回执上一键 ✓ 才生效。确认、编辑、遗忘都当场生效；系统的推断放在后台慢慢做。
-- **像人一样记和忘**：常用的越来越牢，不用的慢慢淡出自动召回，但原文永远在资料库里，随时能找回、一键恢复。
+For example, an introductory article on spaced repetition might produce an insight about reviewing on days 1, 2, 4, 7, and 15. A later article on active recall and adaptive intervals should add only the relevant differences and methods: adjust intervals to difficulty, and try answering before revealing the answer.
 
-例子：先记一篇《间隔重复入门》，系统提炼出"按第 1、2、4、7、15 天复习"。几天后再记一篇讲"主动回忆和自适应间隔"的文章，它不会把间隔重复再讲一遍，只提出："固定间隔太粗糙，应该按难度调整"（不同）、"复习时先自答再翻面"（新方法）。
+## Features
 
-## 它能做什么
-
-| | 功能 | 说明 |
+| Status | Feature | What it does |
 |---|---|---|
-| ✅ | **一个输入框** | 记住、问、干活不用选模式，系统自动判断；"记一下周五交物业费，另外问下……"这种混在一起的话会自动拆开分别处理 |
-| ✅ | **自动整理** | 原件 → 整理稿 + 摘要 → 认识，逐层沉淀；支持文字、链接、PDF |
-| ✅ | **自动归到项目** | 没写 `#项目` 时，自动归进最相关的已有项目，或为新主题新建一个；零散琐事留在"日常"。归错了一键撤销 |
-| ✅ | **增量认识** | 对照已有认识，只提炼补充、不同和新方法；在回执上一键确认 |
-| ✅ | **带引用的回答** | 先查认识，不够再查摘要、整理稿、原文，找够就停；回答里每处引用都能点开看原文。在"日常"里问不到时，自动去对应的项目里问 |
-| ✅ | **干活** | 带着你的记忆写成果文档，可以接着改、重做 |
-| ✅ | **资料库** | 认识、摘要、整理稿、原文四层下钻；确认、编辑、遗忘、恢复 |
-| ✅ | **隐私可控** | 数据保存在部署所在的电脑或服务器；私密项目不外发；每次调用外部模型都有回执 |
-| 🧪 | 更多格式 | 图片识字、录音和视频转写、B 站收藏夹导入（需要在设置里配好对应模型） |
-| 🧪 | 遗忘与每日整理 | 按使用频率和遗忘曲线降权；每天把反复出现的内容归纳成规律，等你确认 |
-| 🧪 | 本机向量 | 设置里一键安装 EmbeddingGemma（约 1.5 GB），语义召回不用联网 |
-| 🧪 | 接入 Claude Code、Codex、DeepSeek Harness | 三种客户端均可通过插件调用记忆工具；工作台派活只保存草稿，服务器目前仅开放 DeepSeek Harness。安装条件与验收范围见 [docs/agents.md](docs/agents.md) |
-| 🧪 | 服务器与多用户 | 家庭服务器或云服务器部署、设备配对、备份恢复，见 [docs/server.md](docs/server.md) |
+| ✅ | **One input box** | Automatically handles remembering, asking, and doing tasks. Mixed requests, such as a reminder followed by a question, are split and handled separately. |
+| ✅ | **Automatic organization** | Builds memory in layers: original → organized note + summary → insight. Supports text, links, and PDFs. |
+| ✅ | **Automatic project assignment** | Without an explicit `#Project`, assigns material to the most relevant existing project or creates one for a new topic. Everyday items stay in the Everyday space. Assignment can be undone with one click. |
+| ✅ | **Incremental insights** | Compares material with existing insights and proposes additions, differences, and new methods for confirmation on the receipt. |
+| ✅ | **Answers with citations** | Searches insights first, then summaries, organized notes, and originals as needed. Stops when there is enough evidence. Citations open the original source. Questions in Everyday can be routed to the relevant project. |
+| ✅ | **Task execution** | Uses relevant memory to create output documents, which you can continue revising or regenerate. |
+| ✅ | **Library** | Browse insights, summaries, organized notes, and originals; confirm, edit, forget, or restore insights. |
+| ✅ | **Privacy controls** | Keeps data on the computer or server hosting the application, excludes private projects from external model requests, and records a receipt for each external call. |
+| 🧪 | More input formats | Image OCR, audio and video transcription, and Bilibili favorites import; requires the corresponding models to be configured. |
+| 🧪 | Forgetting and daily organization | Adjusts recall weights by usage and a forgetting curve. Daily organization proposes patterns from recurring material for your confirmation. |
+| 🧪 | Local embeddings | Install EmbeddingGemma from Settings, approximately 1.5 GB, for semantic retrieval without a network connection. |
+| 🧪 | Claude Code, Codex, and DeepSeek Harness | All three clients can access memory tools through plugins. Workbench delegation saves new drafts; server-side delegation is currently limited to DeepSeek Harness. See installation requirements and validation limits in [the agent guide](docs/agents.md) (Chinese). |
+| 🧪 | Servers and multiple users | Home or cloud server deployment, device pairing, backup, and recovery. See [the server guide](docs/server.md) (Chinese). |
 
-✅ 基本使用路径已实现；🧪 需要可选依赖或进一步真实环境验收。各功能的实际验证范围见下表，图标不代表所有场景均已验证。
+✅ Basic usage paths are implemented. 🧪 Optional dependencies or further real-environment validation are required. The table below states the actual validation scope; the icons do not establish coverage of every scenario.
 
-## 测评与验收
+## Evaluation and verification
 
-更新于 2026-10-13。当前默认 `compose@30 / ladder@15 / retrieve@5 / rerank@2` 在固定 12 道 LoCoMo 开发题、19 份对话原件上，由独立 Agent 对照原文逐题核对：**8 正确、4 部分正确、0 错误、0 未发布**。模型为 DeepSeek Flash，本机向量为 EmbeddingGemma 2；有据的未知回答可判正确，仍有漏答。这批题反复参与过开发，不能代表留出集或总体正确率。
+Updated 2026-10-13. Current defaults `compose@30 / ladder@15 / retrieve@5 / rerank@2` were checked against the originals by an independent Agent on 12 fixed LoCoMo development questions over 19 conversation originals: **8 correct, 4 partially correct, 0 wrong, 0 unpublished**. The run used DeepSeek Flash and local EmbeddingGemma 2. Supported unknown answers can count as correct; omissions remain. These questions were repeatedly used during development, so this is not a held-out or overall accuracy estimate.
 
-该轮 36 次真实模型请求使用 **335,444 输入 / 12,498 输出词元**；全 12 题总耗时中位数 **22.160 秒**，召回中位数 **14.292 秒**。用量与延迟限定于该次运行，费用未按价格推算。
+The run made 36 real model requests and used **335,444 input / 12,498 output tokens**. Median total latency over all 12 questions was **22.160 s**, with **14.292 s** median retrieval latency. Usage and timings describe that run; no monetary cost was inferred from pricing.
 
-以下为工程验收，检查数与回答质量分开阅读：
+Engineering verification below is separate from answer quality:
 
-| 项目 | 环境与范围 | 实际结果 |
+| Area | Environment and scope | Observed result |
 |---|---|---|
-| **DeepSeek Harness 派活到草稿** | Ubuntu 22.04 隔离数据根、真实 Harness 与 DeepSeek Flash，包含鉴权 MCP 记忆工具 | 修复后一次真实任务 **29 项检查通过**；本轮共 2 次真实任务，累计 **4,017 输入 / 1,226 输出词元**。首次 MCP 工具调用失败保留 |
-| **Hy-ASR 转写后校对** | 真实 SQLite、Turn 与确认流程；ASR 交付及模型运输使用替身 | **30 项新增检查、13 项旧定向检查通过**；另 1 项既有评论抓取失败保留。真实识别与纠错质量待验 |
-| **服务器 CPU 向量** | Ubuntu 22.04 实例、真实模型资产与设备配对 | 已验证加载、计算、卸载和重新加载；GPU 与独立向量服务联通待验 |
+| **DeepSeek Harness task to draft** | Isolated data root on Ubuntu 22.04; real Harness and DeepSeek Flash, including authenticated MCP memory tools | After a fix, one real task passed **29 checks**. Both real attempts used **4,017 input / 1,226 output tokens** in total; the first MCP tool-call failure is retained. |
+| **Correction after Hy-ASR** | Real SQLite, Turns, and confirmation; simulated ASR delivery and model transport | **30 new checks and 13 existing targeted checks passed**; one pre-existing comment-fetch failure is retained. Real recognition and correction quality await evaluation. |
+| **Server CPU embeddings** | Ubuntu 22.04 instance, real model assets, and device pairing | Loading, encoding, unloading, and reloading verified. GPU and standalone vector-service integration remain unverified. |
 
-材料先分析再提炼的候选流程目前完成 7/19 份 L1 确认，下一份遇到引用校验失败，尚未启动新一轮 12 题问答评测。`compose@31、@32 / ladder@16` 候选复测出现错误或未发布回答，当前默认保持 `30/15`。
+The material-analysis candidate has confirmed L1 notes for 7/19 sources; the next source failed quotation validation. No new 12-question answer evaluation was run. Candidates `compose@31, @32 / ladder@16` produced wrong or unpublished answers in retests; defaults remain `30/15`.
 
-[测评总览与复现入口](docs/evaluation.md) 列出各轮版本、样本、耗时、用量、失败及验收边界；[RAG 试点评测](docs/rag-pilot.md) 保留早期协议与结果。当前没有与 OpenViking 使用同一协议的对比结果。
+The [evaluation overview and reproduction entry points](docs/evaluation.md) (Chinese) list versions, samples, latency, usage, failures, and validation limits. The [RAG pilot report](docs/rag-pilot.md) (Chinese) retains earlier protocols and results. There is no comparison with OpenViking under a shared evaluation protocol.
 
-## 快速开始
+## Quick start
 
-**需要：**
+**Requirements:**
 
-- Windows 10 / 11
-- [Python 3.12](https://www.python.org/downloads/)（安装时勾选 *Add python.exe to PATH*）
-- [Node.js](https://nodejs.org/)：推荐 22.x（≥ 22.13.0）；兼容 20.x（≥ 20.19.0）或 ≥ 24.0.0
-- 一个大模型 API Key，推荐 [DeepSeek](https://platform.deepseek.com/)；任何 OpenAI 兼容接口都可以
+- Windows 10 or 11.
+- [Python 3.12](https://www.python.org/downloads/). Select *Add python.exe to PATH* during installation.
+- [Node.js](https://nodejs.org/): 20.x ≥ 20.19.0, 22.x ≥ 22.13.0, or ≥ 24.0.0. Version 22.x ≥ 22.13.0 is recommended.
+- A model API key. [DeepSeek](https://platform.deepseek.com/) is the suggested provider; OpenAI-compatible endpoints are also supported.
 
-**三步：**
+**Three steps:**
 
-1. 下载代码，放在较短的路径下（例如 `D:\incremind`；路径太深会碰到 Windows 260 字符的路径上限）：
+1. Clone the repository into a short path, such as `D:\incremind`. Deep directory paths can encounter the Windows 260-character path limit.
 
    ```bash
    git clone https://github.com/qingmingyiyang/Incremind.git incremind
    ```
 
-2. 双击仓库里的 **`start.bat`**。第一次运行会自动安装依赖（几分钟），之后半分钟内启动，浏览器自动打开 <http://127.0.0.1:4173>。关掉这个黑色窗口就停止。
-3. 打开 **设置 · 模型**，填入模型的接口地址、模型名和 API Key。
+2. Double-click **`start.bat`** in the repository. The first run installs dependencies and takes a few minutes. Later launches normally take less than half a minute. Your browser opens at <http://127.0.0.1:4173>. Closing the terminal window stops the application.
+3. Open **Settings → Models** and enter the endpoint URL, model name, and API key. The application interface currently uses Chinese; the names in this guide are English translations of its controls.
 
-然后把 [`samples/`](samples/) 里的示例资料依次发进工作台，就能看到整理、自动归属和增量认识的效果。
+Send the example files in [`samples/`](samples/) to the Workbench in order to try organization, project assignment, and incremental insights. The sample material is in Chinese.
 
 <details>
-<summary>数据放在哪、怎么换位置</summary>
+<summary>Data location, launch options, and backups</summary>
 
-- 所有数据默认在仓库下的 `runtime/`，不进 Git。
-- 想放到别处：`start.bat -DataRoot D:\IncremindData`
-- 只启动、不自动开浏览器：`start.bat -NoBrowser`
-- 启动日志在 `logs/`。
-- 备份：停止后把整个数据目录复制一份，或用 `tools/backup.py`（见 [docs/server.md](docs/server.md#备份与恢复)）。
+- Data is stored in the repository's `runtime/` directory by default and is excluded from Git.
+- Choose another location: `start.bat -DataRoot D:\IncremindData`.
+- Start without opening a browser: `start.bat -NoBrowser`.
+- Startup logs are in `logs/`.
+- To back up data, stop the application and copy the entire data directory, or use `tools/backup.py`. See the backup and recovery section of [the server guide](docs/server.md) (Chinese).
 
 </details>
 
 <details>
-<summary>开发者：分别启动后端和网页</summary>
+<summary>Developers: start the backend and frontend separately</summary>
+
+Set up the dependencies from the repository root:
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-web.txt -r requirements-dev.txt
-cd src/frontend; npm ci; cd ../..
-
-.\run-web.ps1    # 后端 http://127.0.0.1:8001，数据根固定为 runtime/
-.\run-ui.ps1     # 网页 http://127.0.0.1:4173（Vite 开发服务器，代理 /api 到 8001）
+cd src/frontend
+npm ci
+cd ../..
 ```
 
-用临时数据目录试验时，不要用 `run-web.ps1`，改为直接启动：
+Run each command below in a separate PowerShell terminal at the repository root:
+
+```powershell
+.\run-web.ps1
+```
+
+The backend runs at <http://127.0.0.1:8001>. This script fixes the data root to `runtime/`.
+
+```powershell
+.\run-ui.ps1
+```
+
+The Vite development server runs at <http://127.0.0.1:4173> and proxies `/api` requests to port 8001.
+
+For experiments with a temporary data directory, start the backend directly:
 
 ```powershell
 $env:CHRIPTMAS_APP_ROOT = "$PWD\work\try-root"
@@ -138,91 +151,93 @@ $env:PYTHONPATH = "$PWD\src"
 
 </details>
 
-macOS 和 Linux 暂时没有一键启动；Linux 服务器部署见 [docs/server.md](docs/server.md)。
+One-click startup is currently available for Windows. For Linux server deployment, see [the server guide](docs/server.md) (Chinese).
 
-向量模型可在电脑上手动加载或卸载，也可交给独立私有服务器计算，资料库仍留在电脑。独立向量服务和整个应用的服务器部署是两条可选路径；向量配置与 Linux 模板见 [私有服务器计算向量](docs/vector-server.md)。自建模式仍受向量外发开关和私密规则约束，目前按提问填入缓存，真实服务器联通待验证。
+Recommended synchronization: use local development commits as the code source, and publish filtered code changes along the public repository's existing clean AGPL history. Update servers to a fixed release, record `deployment-version.json`, back up code before restarting, check health, and retain a rollback path. Do not push private development history, `runtime/`, credentials, model configuration, or personal material from the server. Handle data backups and migration separately.
 
-整站部署把资料和应用一起放到服务器，所有用户共用服务器本机的向量模型，各自保留独立资料与缓存。启动默认未加载，由管理员加载或卸载；CPU/CUDA 配置、模型安装和用户配对见 [服务器部署](docs/server.md)。已在 Ubuntu 22.04 CPU 实例验证安装、设备配对、向量加载、计算、卸载与重新加载，以及公网 IP 受信任 HTTPS 和多用户接口隔离；GPU 和独立向量服务联通仍待验证。
+Load or unload the vector model on your computer, or use a standalone private server for vector computation while keeping the library on your computer. The standalone vector service and full application deployment are separate options. See [Private server vectors](docs/vector-server.md) (Chinese) for configuration and Linux templates. Self-hosted mode still follows the vector egress switch and privacy rules; it fills the cache on demand during questions. Real-server integration remains unverified.
 
-建议以本机开发提交为代码源，沿公开仓库现有的干净 AGPL 历史发布过滤后的代码增量。服务器按固定发布版本更新，记录 `deployment-version.json`，先备份代码，再重启并检查健康状态，保留撤回路径。服务器不要直接推送私有开发历史、`runtime/`、密钥、模型配置或个人资料；资料备份与迁移单独处理。
+Full server deployment keeps both the application and its data on the server. Users share the server's local vector model while retaining separate libraries and caches. The model starts unloaded; an administrator controls loading and unloading. See [Server deployment](docs/server.md) (Chinese) for CPU/CUDA configuration, model installation, and device pairing. Installation, device pairing, CPU vector loading, encoding, unloading, and reloading, trusted HTTPS for the public IP address, and multi-user API isolation have been verified on an Ubuntu 22.04 instance. GPU and standalone vector-service integration remain unverified.
 
-## 怎么用
+## Usage
 
-**工作台**：唯一的输入框。
+The **Workbench** provides a single input box.
 
-| 你输入 | 系统做什么 |
+| Input | Result |
 |---|---|
-| 粘贴一段文字、一个链接，或拖进文件 | **记住**：整理成整理稿和摘要，归到项目，提炼待确认的认识 |
-| 一个问题 | **问**：从你的记忆里找答案，带引用 |
-| "帮我写……""整理一份……" | **干活**：带着相关记忆生成成果文档 |
-| 混在一起的一句话 | 自动拆成几部分，分别处理 |
-| 开头写 `#项目名` 或 `#项目名/场景` | 指定归属或提问范围；不写就自动判断 |
+| Paste text or a link, or drop a file | **Remember:** create an organized note and summary, assign a project, and propose insights for confirmation. |
+| Ask a question | **Ask:** answer using your memory, with citations. |
+| Request a document or another piece of work | **Do:** create an output document using relevant memory. |
+| Combine several requests | Split them into parts and handle each separately. |
+| Begin with `#ProjectName` or `#ProjectName/Scene` | Specify the assignment or retrieval scope. Otherwise, the system infers it. |
 
-回执上的认识可以直接 ✓ 确认或 ✕ 不要；"已移到 #项目"旁边可以撤销自动归属。
+On a receipt, use ✓ to confirm an insight or ✕ to dismiss it. The project assignment receipt also offers an undo action.
 
-**资料库**：按项目看全部认识、摘要、整理稿和原文，逐层下钻到原文证据；在这里确认、编辑、遗忘或恢复。
+The **Library** groups insights, summaries, organized notes, and originals by project. Follow each layer down to its source evidence, or confirm, edit, forget, and restore insights here.
 
-**设置**：模型、隐私（哪些项目私密）、项目、数据与备份、设备、网站。
+**Settings** contains model configuration, privacy controls, projects, data, backups, devices, and websites.
 
-**语音热词**：在设置 · 模型 · 转写维护同一份个人词表，可批量粘贴或导入 UTF-8 TXT、CSV、JSON，先预览再追加或更新。上传录音和视频的内建 faster-whisper 转写使用热词提示，按权重优先选取完整词，超过模型容量时裁剪并记录实际采用数量；实时 Qwen 使用原生词表，当前 Hy-ASR 同步接口不支持热词。使用本地转写仍需准备对应依赖和模型，导入词表不会自动安装或切换转写模型。
+**Speech vocabulary:** manage a personal vocabulary in Settings → Models → Transcription. Paste a batch or import UTF-8 TXT, CSV, or JSON, preview it, then add or update terms. Built-in faster-whisper transcription uses hotword hints for uploaded audio and video, prioritizes whole terms by weight, and records how many fit within the model's token capacity. Realtime Qwen uses its native vocabulary. The current Hy-ASR synchronous endpoint does not support hotwords. Local transcription still needs its dependencies and model assets; importing terms does not install or switch a model.
 
-**Hy-ASR 转写后校对**：默认 `organize@1` 流程在收到上传录音或视频的 Hy-ASR 转写后，读取同一份个人词表，请已配置的辅助生成模型提出局部术语修改。程序检查词表、原文位置、编辑重叠、字面接近程度和受保护内容，再生成校对稿；不接受自由重写，数字、日期、否定及已有正确术语保持原样，歧义保留为疑点。整理稿展示校对全文与修改位置，录音、视频、原始转写及引文坐标仍保留。确认时冻结这一版校对，之后更新词表不会改写旧稿；失败后重试可复用已完成的转写。
+**Vocabulary correction after Hy-ASR:** the default `organize@1` pipeline sends uploaded audio or video transcripts and the same personal vocabulary to the configured auxiliary generation model for proposed local term corrections. The program validates allowed terms, original positions, overlapping edits, literal similarity, and protected content before applying edits. It accepts no free rewriting and preserves numbers, dates, negation, and already correct terms; ambiguous cases remain uncertainties. Organized notes include the corrected transcript and edit positions. Original media, raw transcripts, and quotation coordinates stay intact. Confirmation freezes the correction version, so later vocabulary changes cannot rewrite confirmed notes; retries reuse completed transcription.
 
-校对遵守现有模型外发开关、私密限制和回执，使用真实辅助模型容量及统一上下文准备入口；模型失败或校对输出不合规则保留原始转写，容量与来源变化有明确状态。词表为空、本机原生热词转写和普通文本不增加此校对调用。长材料可能分多次调用，用量与未知费用状态分别记录；自动化验证使用合成转写交付和模型传输替身，真实识别及纠错质量待验收。可选 `organize@2 / material_analysis@1–4` 尚未接入此后校对，不据此修改旧流程的生成证明。
+Correction uses the existing transmission settings, privacy guards, receipts, actual auxiliary capacity, and shared context preparation. Model failures or invalid edit proposals retain the raw transcript; capacity and source changes have explicit states. Empty vocabularies, native local hotword transcription, and ordinary text add no correction call. Long inputs may require several calls, with known usage and unknown costs recorded separately. Automated checks use synthetic ASR delivery and model transport; real recognition and correction quality remain to be evaluated. Optional `organize@2 / material_analysis@1–4` pipelines do not yet use this correction stage.
 
-**Agent 操作数据**：干活可通过内置技能调用受控的词表读取、预览、更新和回读工具。用户直接提供完整词表时才允许保存，自动发现的术语先作建议；工具不接受任意 SQL 或数据库路径。操作格式和权限边界见 [Agent 数据操作](docs/agent-data-tools.md)。
+**Agent data operations:** a bundled skill exposes scoped vocabulary read, preview, import, and verification tools. Saving requires a complete vocabulary explicitly supplied by the user; automatically discovered terms remain suggestions. Tools do not accept arbitrary SQL or database paths. See [Agent data operations](docs/agent-data-tools.md) (Chinese) for the instruction format and permission boundaries.
 
-**手机分享**：Android 在 HTTPS 网页安装应用后，可从其他 App 的分享菜单存入文字、链接、图片和视频；iPhone 使用快捷指令。小红书和 B站的完整分享文案会自动提取网址，多图可合为一份原件。配对、重试及快捷指令配置见 [手机分享说明](docs/mobile-share.md)。
+**Mobile sharing:** install the HTTPS web app on Android to send text, links, images, and videos from other apps; use Shortcuts on iPhone. Full Xiaohongshu and Bilibili share text is accepted, and multiple images can form one original. See [mobile sharing](docs/mobile-share.md) (Chinese) for pairing, retries, and shortcut setup.
 
-**网站登录**：在设置 · 网站导入 B站或小红书 Cookie，服务器读取该站资料时复用登录态；B站还可展示平台签发的二维码，用手机扫码确认后加密保存。小红书浏览器扫码需要可选运行环境，目前尚未取得真实二维码。使用方法和验证范围见 [网站登录说明](docs/platform-login.md)。
+**Website login:** import Bilibili or Xiaohongshu cookies in Settings → Websites so the server can reuse the session when reading that website. Bilibili also displays an official QR code for confirmation on your phone, then saves the session encrypted. Xiaohongshu browser login needs an optional runtime; a real QR code has not yet been obtained. See [website login](docs/platform-login.md) (Chinese) for usage and verification limits.
 
-**伙伴**：点左上角的小熊，可以聊聊、回顾这周记住了什么、专注和安排。
+Open the **Companion** through the bear avatar in the upper-left corner to chat, review what you remembered this week, focus, or plan.
+
+The screenshots below show the current Chinese interface.
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/split.png" alt="一句话拆成记住和问" /><br/><sub>一句话拆成"记住"和"问"；"日常"里找不到答案，指向"学习方法"</sub></td>
-<td width="50%"><img src="docs/images/answer.png" alt="带引用的回答" /><br/><sub>自动转到"学习方法"项目里回答，上标数字可点开原文</sub></td>
+<td width="50%"><img src="docs/images/split.png" alt="A mixed request split into remembering and asking" /><br/><sub>A mixed request is split; a question without an answer in Everyday is directed to the Learning Methods project.</sub></td>
+<td width="50%"><img src="docs/images/answer.png" alt="An answer with source citations" /><br/><sub>The relevant project supplies the answer. Superscript citations open the original sources.</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/images/library.png" alt="资料库" /><br/><sub>资料库：认识分待确认和生效，标出补充（＋）和新增（◇）</sub></td>
-<td width="50%"><img src="docs/images/settings.png" alt="设置" /><br/><sub>设置：按用途选模型，外发开关一目了然</sub></td>
+<td width="50%"><img src="docs/images/library.png" alt="The Library" /><br/><sub>The Library separates pending and active insights and marks additions (+) and new insights (◇).</sub></td>
+<td width="50%"><img src="docs/images/settings.png" alt="Model settings and external transmission controls" /><br/><sub>Choose models by purpose and control external transmission.</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/images/mobile-dark.png" alt="手机尺寸、深色主题" width="260" /><br/><sub>手机尺寸、深色主题</sub></td>
+<td width="50%"><img src="docs/images/mobile-dark.png" alt="The interface at a mobile viewport size in dark mode" width="260" /><br/><sub>A mobile viewport in dark mode.</sub></td>
 <td width="50%"></td>
 </tr>
 </table>
 
-## 架构
+## Architecture
 
 ```mermaid
 flowchart TB
-  UI["网页（React + Vite）<br/>工作台 · 资料库 · 设置 · 伙伴"] --> API["FastAPI · /api/v2"]
-  API --> R["意图判断<br/>记住 / 问 / 干活，混合输入拆分"]
-  R --> M["记住<br/>原件 → 整理稿 + 摘要 → 自动归属 → 增量认识"]
-  R --> Q["问<br/>认识 → 摘要 → 整理稿 → 原文，找够就停"]
-  R --> D["干活<br/>研究 → 准备 → 成果文档"]
-  M & Q & D --> K["AI 内核（Turn）<br/>冻结输入 · 外发回执 · 重试 · 中断恢复"]
-  K --> P["策略注册表<br/>提示词、阈值、公式：名字@版本"]
-  K --> G["模型网关（LiteLLM）<br/>DeepSeek / OpenAI 兼容 / 本机模型"]
-  M & Q & D --> S[("SQLite 结构化记录<br/>带版本号的事务写入")]
+  UI["Web UI: React + Vite<br/>Workbench · Library · Settings · Companion"] --> API["FastAPI · /api/v2"]
+  API --> R["Intent routing<br/>Remember / Ask / Do; split mixed requests"]
+  R --> M["Remember<br/>Original → Note + Summary → Project assignment → Incremental insights"]
+  R --> Q["Ask<br/>Insights → Summaries → Notes → Originals; stop with enough evidence"]
+  R --> D["Do<br/>Research → Prepare → Output document"]
+  M & Q & D --> K["AI kernel: Turn<br/>Frozen inputs · Transmission receipts · Retries · Recovery"]
+  K --> P["Policy registry<br/>Prompts, thresholds, and formulas: name@version"]
+  K --> G["Model gateway: LiteLLM<br/>DeepSeek / OpenAI-compatible / Local models"]
+  M & Q & D --> S[("SQLite structured records<br/>Transactional writes with revision checks")]
 ```
 
-**记忆阶梯**：原件（L0）→ 整理稿（L1）+ 摘要（L2）→ 认识（L3）。存的时候自下而上沉淀，问的时候自上而下找：先查认识，不够再往下一层，找够就停。
+**Memory layers:** original (L0) → organized note (L1) + summary (L2) → insight (L3). Material is organized from the bottom up. Retrieval works from the top down: start with insights, descend when necessary, and stop when there is enough evidence.
 
-**先分析材料再提炼认识**：已注册可选的 `organize@2 / material_analysis@1、@2、@3 或 @4 / extract@6`，第二版及后续版本使用 `context_preparation@1`。当前默认仍是 `organize@1 / material_analysis@1 / extract@5`，候选流程尚未默认启用。新流程按以下顺序处理材料：
+**Analyze material before extracting insights.** Optional `organize@2 / material_analysis@1, @2, @3, or @4 / extract@6` pipelines are registered; version 2 and later use `context_preparation@1`. Active defaults remain `organize@1 / material_analysis@1 / extract@5`. These candidate pipelines are not enabled by default.
 
-1. 模型只阅读材料，先规划适合它的多个分析角度，不读取后续问题或标准答案。
-2. 长文按完整自然段组成重点段，过长的段落沿句子边界拆分。每个子模型先接收完整可信正文，再接收重点段及真实坐标。第二版在全文加重点段超容量时调用统一文本准备入口，按章节、完整段落与论证衔接组织摘要，保留重点和必要相邻原文，再分块提要、逐层归并；第一版保留明确容量失败与原回放行为。并发跟随实际辅助模型路由，本机串行、远端最多两个，结果按冻结段序合并。
-3. 各段保留主体、条件、否定、事实、推断、计划和未知。多段结果再交总模型综合，覆盖每个原条目，原条目与证据完整保留在整理稿，综合推断单独标注。第四版强调非连续依据分别引用；仅当一条拼接引用唯一对应相邻完整的 `[id] Speaker: body` 单行发言正文时，程序将其拆回多份真实原文片段，不增加模型调用。跳过发言、跨记录头、半句、省略、改写或重复体均拒绝，片段坐标可回查说话人；此校验不代替对结论与主体语义的判断。
-4. 仅当材料涉及时间、先后或时效时增加时间分析。相对日期交给确定计算器；事件使用其之前最近的有效记录日期，保留原话、真实坐标和日期精度，不能跨记录或从历史引语借用日期。第三版允许保留没有时间原词的事件：时间原词为 `null`，时间未知，不使用日期锚或计算器，陈述、计划等事件状态保持原样。有时间原词仍沿用原解析；有限守卫拒绝遗漏可识别的直接相对时间、句首日期或明确时间引导日期，隔离记录头、历史引语和修饰资料的日期。守卫未命中不证明原文没有时间信息。
-5. 对照已有认识，按独立信息和实际预算提出完整的增量认识，数量随材料变化，全部待人工确认。评论仍是独立来源；正文范围、原件修订和生成记录在提炼及显示时重新核验。人工编辑整理稿沿用原有修订检查，原分析证据保持冻结。
+1. The model reads the material and plans suitable analysis angles, without reading later questions or reference answers.
+2. Long material is grouped into complete paragraphs; oversized paragraphs split at sentence boundaries. Each worker first receives the verified full body plus its focus and actual coordinates. If both exceed capacity, version 2 uses the shared text preparation entry point: semantic sections, paragraph and argument boundaries, hierarchical summaries, focus originals, and necessary adjacent originals. Version 1 retains its explicit capacity failure and existing replay behavior. Concurrency follows the actual auxiliary route: serial locally, at most two workers remotely. Results merge in frozen segment order.
+3. Segment analysis retains actors, conditions, negations, facts, inferences, plans, and unknowns. A final model synthesizes multiple segments while covering every original claim. The organized note retains all claims and evidence; synthesis inferences are labeled separately. Version 4 requests separate citations for discontinuous evidence. Only a unique exact join of adjacent complete single-line `[id] Speaker: body` utterances can be split into actual original spans, with no additional model call. Skipped utterances, record headers, partial sentences, omissions, rewriting, and repeated bodies are rejected. Coordinates allow speaker readback; this check does not establish the semantic correctness of the claim or actor attribution.
+4. Temporal analysis runs only when the material involves dates, ordering, or freshness. A deterministic calculator resolves relative dates against the closest preceding valid record header. Original expressions, coordinates, and precision remain available; dates cannot be borrowed across records or from historical quotations. Version 3 retains events with no time expression using `null`: their time stays unknown, with no anchor or calculation, while event states such as asserted or planned remain intact. Non-null expressions use the existing parser. A limited guard rejects omitted recognizable direct relative expressions, sentence-leading dates, or explicitly introduced event dates, excluding record headers, historical quotations, and dates modifying source documents. A guard miss does not prove that the original contains no temporal information.
+5. Extraction compares the analysis with existing insights and proposes complete additions according to independent information and actual budget. Counts vary with the material, and every proposal requires human confirmation. Comments retain separate provenance. Body boundaries, source revisions, and generation records are rechecked during extraction and display. Manual note edits retain the existing revision checks and leave analysis evidence frozen.
 
-新流程复用现有 Turn、外发回执、租约和确认事务；恢复时复用成功步骤，辅助模型配置改变会明确失败。自动化检查使用真实临时数据库和领域链路，隔离模型传输；同一批 12 题的真实回答、耗时及提升仍待复测。
+The pipeline reuses existing Turns, transmission receipts, leases, and confirmation transactions. Recovery reuses successful steps; auxiliary configuration changes fail explicitly. Automated checks use real temporary databases and domain flows with simulated model transport. Real answers, timings, and improvement on the same 12 questions still await evaluation.
 
-**统一文本上下文准备**：`v2.context_preparation.prepare_context` 在完整输入能装下时原样返回，不增加压缩调用。容量不足时，摘要保留目标、概念、事实、论证、条件、例外和未决问题及原文位置。完整原件留在本地，需要核实时按真实坐标回查。统一入口逐项核对摘要的压缩前保护项与原文；`material_analysis@2` 适配器及继承它的 `@3` 另保留交接判断、状态与依据，并执行进展审核和最终跨段审阅，检查一致性、遗漏、重复与断裂。其他调用方须自行安排分析结果终审。语义审查依赖模型判断，程序校验保护项全集和真实引用，不能保证模型从不漏判。
+**Shared text context preparation.** `v2.context_preparation.prepare_context` returns fitting messages unchanged, with zero compression calls. Oversized inputs use summaries that retain goals, concepts, facts, arguments, conditions, exceptions, unresolved issues, and original coordinates. Originals remain available for scoped readback. The shared entry point audits summaries against protected prior items and original text. The `material_analysis@2` adapter and its successor `@3` separately retain progress judgments, states, evidence, and follow-up links, audit that progress, and review cross-segment consistency, omissions, duplication, and broken reasoning. Other callers must arrange their own final analysis review. Semantic audits rely on model judgment. Programmatic checks verify complete audit participation and actual quotations; they do not guarantee perfect semantic detection.
 
-调用方须提供真实辅助模型预算、可信原文范围和已有合法 Turn 适配器。`input_limit` 是窗口扣除 `max(实际预留, output_limit)` 后的净输入容量，完整提示词与摘要、原文、进展都计入。下面是领域接入片段，变量由调用方的预算和来源核验生成：
+Callers supply the actual auxiliary capacity, verified original spans, and their existing lawful Turn adapter. `input_limit` is the net input capacity after subtracting `max(actual reserve, output_limit)` from the window. Instructions, summaries, originals, and progress all count. This integration fragment uses variables supplied by the caller's budget and provenance checks:
 
 ```python
 from backend.memory_app.v2.context_preparation import prepare_context
@@ -240,142 +255,142 @@ prepared = prepare_context(
 )
 ```
 
-原文片段 `ContextSpan` 包含来源身份与修订、坐标类型、真实起止位置和逐字正文；`read_original` 返回对应原件全文，`validate_current` 在派发和提交前复验资格，`complete_stage(stage, messages, parser)` 经已有 Turn 返回已解析结果。入口目前处理文本消息和文本片段，图像、音频和工具调用消息需要后续显式适配。首个实际接入版本是 `material_analysis@2`，`@3` 扩充时间合同，`@4` 进一步支持严格分离相邻完整发言，均继承同一入口；旧版消息与回放保持冻结。问答继续使用现有动态召回与预算，认识提炼仍使用原容量预检，其他调用方需注册新版本接入，不会自动改变旧链路。
+Each `ContextSpan` carries source identity and revision, coordinate space, actual bounds, and verbatim text. `read_original` returns the corresponding complete original; `validate_current` rechecks eligibility before dispatch and commit; `complete_stage(stage, messages, parser)` returns a parsed result through the existing Turn. The entry point currently supports text messages and spans. Images, audio, and tool-call messages require explicit future adapters. The first integrated version is `material_analysis@2`; `@3` extends its temporal contract, and `@4` adds strict separation of adjacent complete utterances. Both inherit the same entry point. Previous messages and replay remain frozen. Questions retain dynamic retrieval and current budgeting; insight extraction retains its capacity preflight. Other callers need explicitly versioned integration, preserving existing replay behavior.
 
-**几条设计原则：**
+**Design principles:**
 
-- **事实只追加，推导可重建**：能重新算出来的都不当作事实存。
-- **决策点是带版本号的纯函数**：提示词、阈值、归属规则都登记成 `名字@版本`（在 `src/backend/memory_app/v2/policies/`）。换算法就是登记新版本、切换一行；改回来就是回退。
-- **三条管线，一个入口**：记住、问和干活、学习三条路径分开，共用入口、模型网关和事实日志。
-- **每个事实只有一个主人**：记忆事实归领域服务，执行事实归 AI 内核；编排层和界面不存状态。
+- **Facts are append-only; derived results can be rebuilt.** Results that can be recomputed are treated as derived data.
+- **Decision policies are versioned pure functions.** Prompts, thresholds, and assignment rules are registered as `name@version` in `src/backend/memory_app/v2/policies/`. Register a new algorithm version and switch the active selection; an earlier version can be selected again.
+- **Three pipelines share one entry point.** Remembering, asking and doing, and learning use separate paths with a shared entry point, model gateway, and fact log.
+- **Each fact has one owner.** Domain services own memory facts; the AI kernel owns execution facts. The orchestration layer and interface do not own persistent state.
 
-**目录：**
+**Repository layout:**
 
-| 路径 | 内容 |
+| Path | Contents |
 |---|---|
-| `src/backend/memory_app/` | 产品应用层，ASGI 入口 `backend.memory_app.app:app` |
-| `src/backend/memory_app/v2/` | 工作台、资料库、设置等全部 v2 接口与编排 |
-| `src/backend/memory_app/v2/policies/` | 带版本号的策略：意图、归属、提炼、召回、排序、遗忘…… |
-| `src/backend/recognition/` | 认识领域：候选、确认、修订、遗忘 |
-| `src/core/` | 领域与存储底座（AI 内核、文档引擎、SQLite 存储），不依赖 backend |
-| `src/frontend/` | 网页 |
-| `apps/desktop-electron/` | 桌面安装包外壳（发行准备中） |
-| `deploy/` | 服务器部署模板（systemd、Caddy） |
-| `tests/` | pytest 与 vitest 测试 |
-| `samples/` | 体验用的示例资料 |
+| `src/backend/memory_app/` | Product application layer; ASGI entry point: `backend.memory_app.app:app`. |
+| `src/backend/memory_app/v2/` | v2 endpoints and orchestration for the Workbench, Library, Settings, and related features. |
+| `src/backend/memory_app/v2/policies/` | Versioned policies for intent, assignment, extraction, retrieval, ranking, and forgetting. |
+| `src/backend/recognition/` | Insight domain: proposals, confirmation, revision, and forgetting. |
+| `src/core/` | Domain and storage foundations, including the AI kernel, document engine, and SQLite storage; independent of the backend layer. |
+| `src/frontend/` | Web interface. |
+| `apps/desktop-electron/` | Desktop installer shell; release preparation is in progress. |
+| `deploy/` | Server deployment templates for systemd and Caddy. |
+| `tests/` | pytest and Vitest tests. |
+| `samples/` | Example material for trying the application. |
 
-更细的设计见 [ARCHITECTURE.md](ARCHITECTURE.md)（架构与接口约定）、[DESIGN.md](DESIGN.md)（界面）和 [COMPONENTS.md](COMPONENTS.md)（可复用能力）。
+Further documentation is available in [ARCHITECTURE.md](ARCHITECTURE.md) for architecture and interface contracts, [DESIGN.md](DESIGN.md) for the interface, and [COMPONENTS.md](COMPONENTS.md) for reusable capabilities. These documents are in Chinese.
 
-## 提问时怎么找资料
+## How a question finds its evidence
 
 ```mermaid
 flowchart TB
-  Q["问题<br/>先改写成几种说法"] --> L3["认识 L3<br/>关键词 + 向量"]
-  Q --> L2["摘要 L2<br/>关键词"]
-  Q --> L1["整理稿 L1<br/>关键词 + 向量"]
-  Q --> L0["原文 L0<br/>关键词 + 向量"]
-  L3 & L2 & L1 & L0 --> S["阶梯挑选<br/>逐层往下，找够就停，相近的去重"]
-  S --> A["回答模型<br/>只按给的资料回答，标出引用"]
+  Q["Question<br/>rewritten into a few phrasings"] --> L3["Insights L3<br/>keywords + vectors"]
+  Q --> L2["Summaries L2<br/>keywords"]
+  Q --> L1["Organized notes L1<br/>keywords + vectors"]
+  Q --> L0["Originals L0<br/>keywords + vectors"]
+  L3 & L2 & L1 & L0 --> S["Ladder selection<br/>top down, stop when enough, drop near-duplicates"]
+  S --> A["Answer model<br/>answers only from the evidence, with citations"]
 ```
 
-**每一层怎么匹配**
+**How each layer matches**
 
-- **关键词**：把问题拆成整句（权重 5）、英文单词（权重 2）和相邻两个汉字（权重 1），最多 32 个，看资料里出现了几个。所以"怎么才能记得牢"和"间隔重复"在字面上对不上，要靠向量。
-- **认识的关键词优先，意思补充**（默认策略 `rank@4`）：认识召回分数以命中词数为基础，有向量时用相似度区分命中词数相同的认识；没有关键词命中但相似度 ≥ 0.55 的认识也能入选，基础分低于关键词命中。最终排名还会按使用强度、明确到期的适用条件等调整。整理稿与原文的文段采用下述评分。
-- **认识**：本机模式读取后台已缓存的认识向量，按上面的规则召回；适用条件与当前情境匹配的方法也能补充进来。关键词或向量找到的认识，都能带入与它相关、支持或矛盾的有效认识。
-- **摘要**：当前只按关键词，不单独建立摘要向量。这是工程选择；把摘要前缀放进文段向量，并不能证明独立的摘要向量没有价值。
-- **整理稿和原文**：每份资料切成几百字一块。`rank@4` 按词语在本资料中的稀缺程度加权，标题和摘要前缀作为较低权重的提示；有缓存向量时按 0.45 × 加权关键词得分 + 0.55 × 意思相似度，没有时只看关键词。`ladder@15` 在命中位置周围保留回答所需的连续正文、问答和限定条件，按问题需求与新增信息选择片段，普通资料不固定窗口数量或宽度。普通主题问题的已确认认识和非对话正文不会仅因缺少句末标点而失去增量资格；问句、说话者、日期关系和原文连续性边界保留，摘录不补造标点。选材规则仍是启发式，不能保证语义完整。
-- **块的向量带上下文**：计算文字准确为 `标题 + "\n" + 摘要[:120] + "\n" + 块正文`；这里是 120 个 Python 字符，空摘要时仍保留标题和正文。后台索引与提问读取使用同一格式，见 [EmbeddingIndex](src/backend/memory_app/v2/embedding_index.py) 和 [chunk_vector_scores](src/backend/memory_app/v2/contextual_chunk_vectors.py)。这是固定的标题与摘要前缀；[Anthropic 的 Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval) 会用模型为每块生成专属上下文，效果需要分别评测。
-- **可选重排**：工作台在每层选取证据前使用已配置并启用的重排模型；云端调用还需打开该用途的外发开关。默认 `rerank@2` 按实际输入成本选择有限片段，不固定前 12 条；问题与片段合计仍不超过 6,000 词元及本轮输入预算，认识保持正文与条件完整。按原排名 40% 与模型排名 60% 融合，只交换同一连接和概览优先组内的次序，融合分数相同时保留场景优先。送评分的编号必须全部返回有效分数；预算内未送评分的资料保留原次序。未配置、禁止外发或调用失败时使用原排序，一次失败后本轮不再尝试重排。发送前和返回后复验来源、私密、遗忘、场景和片段，调用记录在重排用途回执中；只读覆盖检查和外部 agent 上下文不因此增加外发。
+- **Keywords.** The question is split into the whole sentence (weight 5), Latin words (weight 2), and pairs of adjacent Chinese characters (weight 1), up to 32 terms; a match counts how many appear in the material. A question about remembering things well and material about spaced repetition can share no surface terms, so vectors are needed to connect them.
+- **Keywords first, meaning second for insights** (default policy `rank@4`). Insight recall scores start with the matched term count; available vectors break ties by similarity. Insights with no keyword match can also qualify at similarity ≥ 0.55, with a base score below keyword matches. Usage strength and explicitly expired conditions can further adjust the final ranking. Organized-note and original passages use the scoring described below.
+- **Insights.** In local mode, retrieval reads cached insight vectors and uses the rule above; methods whose conditions match the current situation can supplement the result. Insights found through either keywords or vectors can bring in eligible related, supporting, or contradicting insights.
+- **Summaries.** Currently keyword-only, without separate summary vectors. This is an engineering choice; adding a summary prefix to block vectors does not establish that independent summary vectors would have no value.
+- **Optional reranking.** Workbench questions can use a configured, enabled reranking model before evidence selection in each layer; remote services also require the reranking egress switch. Default `rerank@2` selects limited excerpts by actual input cost, without a fixed first-12 cap. The question and excerpts still share a 6,000-token ceiling and the question's input budget; insights retain their complete statement and conditions. Original rank contributes 40% and model rank 60%; ordering changes only within the same connection and overview priority group, with scene preference breaking fused-score ties. Every submitted ID must receive a valid score; material not submitted within the budget retains its original order. Missing configuration, denied egress, or failure preserves the original order; the first failure disables further reranking for that question. Source revisions, privacy, forgetting, scenes, and excerpt coordinates are checked before and after dispatch, with reranking usage receipts. Read-only coverage and external-agent context do not gain additional remote calls.
+- **Organized notes and originals.** Each source is split into blocks of a few hundred characters. `rank@4` weights terms by their rarity within that source and gives title and summary-prefix matches less weight. Available cached vectors give a score of 0.45 × weighted keyword score + 0.55 × similarity; without them selection uses keywords. `ladder@15` retains continuous text, question-and-answer context, and necessary conditions around matches, selecting passages by the question's needs and new information. Ordinary material has no fixed window count or width. Confirmed insights and non-dialogue text for ordinary topic questions retain incremental eligibility without terminal punctuation. Question, speaker, date-relation, and continuous-source boundaries remain; excerpts receive no invented punctuation. Selection remains heuristic and cannot guarantee semantic completeness.
+- **Block vectors carry context.** The exact text is `title + "\n" + summary[:120] + "\n" + block_text`: 120 Python characters, with title and body retained when the summary is empty. Background indexing and question-time lookup use the same format; see [EmbeddingIndex](src/backend/memory_app/v2/embedding_index.py) and [chunk_vector_scores](src/backend/memory_app/v2/contextual_chunk_vectors.py). This implementation uses a fixed title and summary prefix; [Anthropic's Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval) generates context for each individual block with a model. Their effects require separate evaluation.
 
-**阶梯怎么挑**
+**How the ladder selects**
 
-- **默认组合**：`compose@30 / ladder@15 / retrieve@5 / rerank@2`。仍按认识 → 摘要 → 整理稿 → 原文逐层查找，按问题中的事实、日期、关系和列举需求选择有限资料，不固定普通资料份数。我项目的画像独立使用最多 600 词元的背景块，认识正文与适用条件整体保留。相关、支持和矛盾连接按新增信息与预算准入，矛盾连接优先；仍受来源资格与总预算约束，预算不足时不保证两方都能进入模型。
-- **实际预算**：证据使用扣除输出预留、指令、Schema、问题、画像、对话历史和消息包装后的余额，再校验完整输入。受支持的官方 `api.deepseek.com` 的 `deepseek-flash` 路由总容量上限为 200,000 词元；预留 7,000 输出时，输入至多 193,000。未知路由不据此升到 200k，仍使用保守的 16,000 总窗口；无法取得有效窗口和预留时使用 4,000 输入回退预算。UTF-8 字节数除以 3 向上取整是预算估算，不是服务商精确分词或实际计费用量。不以填满窗口为目标。
-- **查缺与停止**：`retrieve@5` 对照原问题和已选证据判断缺口，必要时沿既有路径补查。列举问题检查不同事项，关系问题检查完整关系链；新增链先独立重排和准入，再按来源聚合。无明确主体的普通问题保留原处理路径。没有有效新增信息或预算不足时停止，词语覆盖率和停止理由都不等于答案充分性的证明。
-- **去重**：没有通过新增信息资格判断的资料，再按相似度 ≥ 0.8 检查近重复，只读已有的缓存向量，缺少可比向量时用相邻两字的重合度。通过动态策略新增需求或关系资格的片段不因词语相近而合并；有效矛盾连接对也不因相似而被去重，同一份资料在不同层的内容不互相比。去重本身不会现场计算向量，新增信息判断仍是启发式。
-- **矛盾怎么判断**：确认认识后、以及启动后的整理中，模型会提出支持、矛盾或取代建议，你在资料库接受后才成为有效连接。提问时读取已生效的 `refutes` 连接，要求回答说明两方依据及分歧；向量相似度不能判定逻辑矛盾。只有相关连接可以自动建立。
+- **Default combination.** `compose@30 / ladder@15 / retrieve@5 / rerank@2`. Retrieval still follows insights → summaries → organized notes → originals. It selects limited evidence by the facts, dates, relationships, and list requirements in the question, without fixed ordinary-source counts. Your "Me" profile uses a separate background block of at most 600 tokens, retaining each insight and its conditions together. Related, supporting, and contradicting neighbors are admitted by new information and available budget, with contradicting neighbors expanded first. All require eligible sources and available capacity, so a tight budget can prevent both sides from reaching the model.
+- **Actual budget.** Evidence uses the remainder after output reserve, instructions, Schema, the question, profile, history, and message framing; the complete input is checked too. The supported official `deepseek-flash` route at `api.deepseek.com` has a 200,000-token total cap; a 7,000-token output reserve leaves at most 193,000 input tokens. Unknown routes retain a conservative 16,000-token total window. If valid window and reserve information is unavailable, the input fallback is 4,000 tokens. UTF-8 bytes divided by three, rounded up, estimates the budget; it is not exact provider tokenization or billed usage. Filling the window is not a goal.
+- **Gaps and stopping.** `retrieve@5` compares the original question with selected evidence and uses the existing follow-up path when needed. List questions check different items; relationship questions check complete chains. New chains are reranked and admitted independently before aggregation by source; ordinary questions without an explicit subject retain their existing path. Stop when useful new evidence runs out or capacity is exhausted. Term coverage and a stopping reason do not prove answer sufficiency.
+- **De-duplication.** Material without qualifying new information is checked for near-duplicates at similarity ≥ 0.8, using existing comparable cached vectors or adjacent-character overlap. Passages qualifying for a new demand or relationship under the dynamic policy are not merged merely because they share terms. Active contradiction pairs are also exempt from similarity-based removal, and layers of the same source are not compared with each other. De-duplication never computes new vectors; the new-information rules remain heuristic.
+- **How contradictions are identified.** After insight confirmation and during startup maintenance, the model proposes supporting, contradicting, or superseding links. They become active only after you accept them in the Library. Retrieval reads these active `refutes` links and asks the answer model to explain both sides' evidence and disagreement; vector similarity does not establish logical contradiction. Only related links can be created automatically.
 
-**数量与预算的依据**：当前默认按问题缺口、边际信息和剩余预算动态选材；这些规则及保留的专门预算都是工程选择，尚无评测证明最优。[Lost in the Middle](https://arxiv.org/abs/2307.03172) 表明长上下文中的证据位置会影响模型表现，支持按任务评测选材。更大窗口和更多资料本身不能证明回答更准确，仍需真实回答及未参与开发的新题验证。
+**Why these counts and budgets?** Current defaults select evidence dynamically by question gaps, marginal information, and remaining capacity. These rules and retained special-purpose budgets are engineering choices, not established optima. [Lost in the Middle](https://arxiv.org/abs/2307.03172) shows that evidence position affects performance in long contexts, supporting task-specific evaluation. More capacity or evidence alone does not establish better answers; real answers and previously unused questions still need validation.
 
-**回答模型拿到什么**：规则（只按资料回答、标出引用、没依据就说不知道，以及用到淡忘资料、存在矛盾、用了网页搜索时的说明）、"我"的画像、编号的资料（认识整条给出并带适用条件，其他层只给命中的片段）、标明"不是证据"的对话历史，最后是问题。
+**What the answer model receives:** the rules (answer only from the evidence, cite it, say "I don't know" without support, plus notes for faded material, contradictions, and web search), your "Me" profile, numbered evidence (insights in full with their conditions, other layers as matched excerpts), the conversation history marked as "not evidence", and finally the question.
 
-**两轮回答与出处校验**
+**Two-stage answers and provenance checks**
 
-`compose@30` 用两次主要模型调用形成事实草稿、逐项复核纠正并作答。首稿要求每个与问题有关的独立事实只写一次；事实题尽量保留原词，推理题给出有据前提，时间题引用程序计算的完整日期范围。指令要求说不知道或否定前检查完整资料目录、根据实际说话者判断人物归属，并在开放列举中保留每个独立项目，而不只给代表例子。这些要求用于引导模型，不能保证语义正确或总体正确率。
+`compose@30` uses two primary model calls to draft facts, then review, correct, and answer. The draft requests each independent, relevant fact once. Fact questions preserve original terms where possible; inference questions provide supported premises; time questions refer to complete date ranges calculated by the program. Instructions require checking the full evidence catalog before unknown or negative answers, identifying people by the actual speaker, and retaining each independent item in open lists rather than representative examples. These guide the model; they do not guarantee semantic correctness or overall accuracy.
 
-事实或推理声明优先使用空的 `date_refs`；附带合法日期引用时，程序先验证其真实单元、原话和计算记录，然后仅将其视为没有计算权限的附带元数据。原始模型结果保持不变，这些引用不生成日期注释、计算绑定或后续精度说明资格。把相对时间换算成绝对日期或区间，仍必须实际使用日期声明类型，并精确绑定对应原文、相对时间表达与记录日期；错误引用、跨单元借用和借附带引用授权计算仍会被拒绝。
+Fact and inference statements should use empty `date_refs`. If valid references are attached, the program first verifies their real units, quotations, and calculation records, then treats them as incidental metadata without calculation authority. Original model outputs remain unchanged. These references produce no derived date notes, calculation bindings, or later precision authorization. Converting relative time into absolute dates or ranges still requires an actual date statement and precise binding to the corresponding original text, relative expression, and record date. Invalid references, references borrowed across units, and calculations claiming authority from incidental references remain rejected.
 
-普通事实或推理可以明确写出记录或会话日期作为上下文，但日期须匹配同单元的完整支持原句和冻结来源的真实记录锚。这不授予事件发生日、当天指代或更精确区间的计算资格；原话的上周、下周仍是相对时间，合法绝对日期推算仍须独立通过日期类型、引用和完整结果校验。
+Ordinary facts and inferences may explicitly identify a record or conversation date as context, provided it matches the complete support sentence in the same unit and the frozen source's real record anchor. This grants no authority to assign an event day, a same-day reference, or a narrower range. The source's last or next week remains relative; absolute calculations still require independent validation of date kind, precise references, and complete legal results.
 
-结构合规的首稿中，错误日期引用、原话、支持角色、日期文字或重复项，会按条目给出具体字段路径、失败条件与修复要求，原始首稿保持不变，末轮仍核对完整资料目录。最终必须实际纠正或排除错误条目，纠错理由不能替代字段修改；清空日期引用也不能修好文字中仍然无据的绝对日期。冻结资料损坏仍立即终止，最终错误引用、无据日期或完全重复的声明仍会阻止发布，普通声明也不能靠改变附带引用逃过去重。程序生成引用，公开响应仍为 `AskOutput`。这些校验检查结构和出处；提示中的去重要求也不能保证模型从不重复或截断。
+In schema-valid drafts, invalid references, quotations, support roles, calendar text, and duplicates receive per-item diagnostics with field paths, failed conditions, and repair requirements. The original draft stays unchanged and the final call still reviews the full catalog. Final responses must actually correct or exclude invalid items; a reason alone changes no field, and emptying references does not repair unsupported absolute dates still in the text. Corrupted frozen material stops execution. Invalid final references, unsupported dates, and exact duplicate statements still prevent publication; ordinary statements cannot evade de-duplication by changing incidental references. Citations are generated by the program and the public response remains `AskOutput`. These checks validate structure and provenance; prompt instructions also cannot guarantee that a model never repeats or truncates output.
 
-各版本的真实逐题结果、耗时和评测边界见 [测评总览](docs/evaluation.md)，早期结果和 [回答流程图](docs/rag-pilot.md#回答流程与出错位置) 保留对应版本。小批样本与工程控制不代表总体正确率。
+See [the evaluation overview](docs/evaluation.md) (Chinese) for each version's real answers, timings, and evaluation limits. Earlier results and [the answer flow diagram](docs/rag-pilot.md#回答流程与出错位置) retain their version context. Small samples and engineering controls do not establish overall accuracy.
 
-**本机向量**
+**Local vectors**
 
-- **怎么运行**：EmbeddingGemma 2，只用文字部分，输出 256 维，在后端进程的专用线程里用 CPU 运行，最多 8 个 CPU 线程。每次启动默认未加载，在设置 · 模型 · 向量手动加载或卸载；卸载等待正在运行的批次结束后释放编码器引用，保留权重与已有向量缓存，不承诺进程内存立即全部归还操作系统；提问优先于后台补算，最多积压 64 个请求。
-- **资源与准备**：下载约 1.5 GB，只留文字部分后约 580 MB；内存峰值约 1.8 GB；一个问题约 0.16 秒，每段资料约 0.07 秒。这些是测试机器上少量样本的观测，实际耗时与内存需在使用机器上确认。先安装 [`requirements-local-vectors.txt`](requirements-local-vectors.txt)（含 torch）中的可选依赖，再下载模型；缺少依赖或权重时，向量路径回退关键词。
-- **初始化会补算**：手动加载成功后，后台为已有的认识 L3、整理稿 L1 与原文 L0 分块建立缓存，设置显示已索引数量；模型已加载时，每次记住完成也触发补算，正在运行的索引随后再补一轮。启动约 60 秒后和每 24 小时的补算仅在已加载时运行；未加载时跳过，不自动加载。加载权重与后台索引的完成状态分别显示。
-- **提问时算什么**：本机前台只现算问题向量，同一轮按模型身份与问题文本复用；认识和文段只读后台缓存。模型未加载或正在加载、卸载时本轮使用关键词；模型已就绪但某条材料尚未索引时，该条仍走关键词，前台不会为它补算材料向量。
-- **缓存**：`recognition-vectors.sqlite3`，按项目、条目、修订号、模型四项定位，内容包括每条认识与每个 L1/L0 分块的向量。模型身份包含模型名、维度与向量策略版本。资料修改后修订号变化，旧向量不再命中；更换模型身份后由后台补算。修改、删除或私密设置等写入口会清理相关派生缓存；遗忘通过召回资格生效，不能据缓存记录仍存在就判断可以召回。定期整理清掉失效、损坏或过期的向量，不调用模型；遗忘不删除原件和历史正文。
-- **为什么本机计算也检查并留回执**：计算前和接纳结果前都核对资料资格、修订、来源可用性，以及向量配置是否变化，变化后不接纳结果。与外接服务共用这条路径，外接模式还检查外发开关并拦截私密资料；本机模式不算外发，私密资料也能用。回执记录计算内容、用量与结果，本机费用记 0；缓存让中断的后台索引下次接着补算。
+- **Runtime.** EmbeddingGemma 2, text only, 256 dimensions, runs on a dedicated worker in the backend process with up to 8 CPU threads. Each process starts unloaded. Load or unload it explicitly in Settings → Models → Embedding. Unload waits for the running batch and releases encoder references while keeping weights and cached vectors; process RSS may not immediately return to its initial value. Questions take priority over background indexing, with at most 64 pending requests.
+- **Resources and setup.** About 1.5 GB to download and about 580 MB once reduced to the text model; peak memory about 1.8 GB; about 0.16 s per question and 0.07 s per block. These are small-sample observations on the test machine; verify latency and memory on the machine being used. Install the optional dependencies in [`requirements-local-vectors.txt`](requirements-local-vectors.txt), including torch, then download the model. Missing dependencies or weights make the vector path fall back to keywords.
+- **Initialization fills the cache.** Successful manual loading starts background indexing of existing insights (L3), organized-note blocks (L1), and original blocks (L0), with indexed counts shown in Settings. While loaded, remembering completion also triggers indexing; a pass already running repeats afterward. Further passes run about 60 seconds after startup and every 24 hours only when loaded; they never load the model implicitly. Weight loading and material indexing have separate status.
+- **What a question computes.** The local foreground path encodes only the question, reusing results within the turn by model identity and question text; insights and blocks read the background cache. While unloaded, loading, or unloading, the turn uses keywords. Once the model is ready, individual unindexed items still use keywords; the foreground never fills their missing material vectors.
+- **Cache.** `recognition-vectors.sqlite3`, keyed by project, item, revision, and model, stores each insight vector and each L1/L0 block vector. Model identity includes the model name, dimensions, and vector policy version. Edits change revisions, preventing old-vector matches; a changed model identity is filled by background indexing. Edit, deletion, and privacy write paths clear affected derived cache entries. Forgetting changes recall eligibility; surviving cache rows do not make an item eligible for recall. Periodic maintenance removes invalid, damaged, or expired vectors without calling a model. Forgetting retains originals and historical text.
+- **Why local computation still checks and records receipts.** Before encoding and before accepting results, the system checks material eligibility, revisions, source availability, and vector configuration; a change prevents results from being accepted. Remote mode shares this path and additionally checks transmission switches and blocks private material. Local mode is not outbound and can use private material. Receipts record inputs, usage, and results, with local cost 0; the cache lets interrupted background indexing resume later.
 
-`compose`、`retrieve`、`rerank`、`rank`、`ladder`、`vector` 和 `elsewhere` 的版本会记录在相应轮次的策略快照中，续行使用对应版本；旧版仍可显式选择，见 [policies/pipelines.py](src/backend/memory_app/v2/policies/pipelines.py)。
+The applicable turn snapshots record `compose`, `retrieve`, `rerank`, `rank`, `ladder`, `vector`, and `elsewhere`, and continuation uses those versions. Older versions remain explicitly selectable; see [policies/pipelines.py](src/backend/memory_app/v2/policies/pipelines.py).
 
-**还没定下来的**
+**Not settled yet**
 
-- 按意思召回的门槛 0.55 是初始工程值，还没有在真实 EmbeddingGemma 2 的相似度分布上校准。
-- 动态召回的资料量、连续片段和 200k 容量仍需用真实长资料与多来源任务验证，分别检查漏答、错答、引用、耗时和用量。
+- The 0.55 meaning threshold is an initial engineering value, not yet calibrated against real EmbeddingGemma 2 similarity distributions.
+- Dynamic evidence volume, continuous passages, and 200k capacity still need validation on real long documents and multi-source tasks, checking omissions, wrong answers, citations, latency, and usage separately.
 
-## 隐私与数据
+## Privacy and data
 
-- **本地优先**：资料、整理稿、认识和对话保存在部署所在电脑或服务器的数据目录中；SQLite 保存结构化记录，PDF、图片、音视频等上传原件另存为文件。备份需保留整个数据目录。
-- **服务器权限**：普通用户空间独立；管理员可按权限进入用户空间，访问留痕对该用户可见。私密资料不对管理员隐藏。
-- **凭据加密**：模型密钥和网站 Cookie 复用现有加密存储，Windows 使用 DPAPI，服务器使用已有密钥存储；保存值不回显、不写日志，网站 Cookie 不进入模型输入。
-- **外发可控**：只有你在 **设置 · 模型** 里打开外发开关的用途才会调用外部模型；标成**私密**的项目和资料永远不外发；每次外发都留回执，写明发了什么、给了哪个模型。详见 [docs/models.md](docs/models.md)。
-- **不删原件**：遗忘只影响自动召回，原件、整理稿、认识正文和历史修订都保留，随时恢复。
+- **Local first.** Sources, organized notes, insights, and conversations are stored in the data directory on the computer or server hosting the application. SQLite stores structured records; uploaded originals such as PDFs, images, audio, and video are stored as separate files. Back up the entire data directory.
+- **Server permissions.** Ordinary users have separate spaces. Administrators can enter user spaces according to their permissions, and access logs are visible to the affected user. Private material is not hidden from administrators.
+- **Encrypted credentials.** Model keys and website cookies use the existing encrypted secret store: DPAPI on Windows and the existing server store on servers. Saved values are not returned or logged. Website cookies are excluded from model inputs.
+- **Controlled external transmission.** External models are called only for purposes whose transmission switches you enable in **Settings → Models**. Private projects and sources are excluded. Every external request leaves a receipt recording what was sent and which model received it. See [the model guide](docs/models.md) (Chinese).
+- **Originals are retained.** Forgetting affects automatic recall. Originals, organized notes, insight text, and revision history remain available for restoration.
 
-## 开发
+## Development
 
-在仓库根目录运行后端测试和依赖方向检查：
+Run backend tests and dependency checks from the repository root:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/memory_app/v2 -q
 .\.venv\Scripts\python.exe tools/run_import_linter.py
 ```
 
-在 `src/frontend/` 下运行前端测试和构建：
+Run frontend tests and the build from `src/frontend/`:
 
 ```powershell
 npm test
 npm run build
 ```
 
-- 改提示词或算法：在 `v2/policies/` 登记新版本，离线对比后，单独一次提交切换 `ACTIVE`。
-- 前端只用 `src/frontend/src/styles.css` 里的设计 token 和 `shared/ui/` 组件。
-- 更新项目介绍、功能状态或使用说明时，同步维护 `README.md` 和 `README.en.md`。
-- 提交前钩子 `tools/task_guard.py` 会检查疑似密钥、误提交的数据目录和新增的跳过标记；新克隆后运行一次 `.\.venv\Scripts\python.exe tools/task_guard.py --install` 安装。
+- For prompt or algorithm changes, register a new version in `v2/policies/`, compare it offline, and switch `ACTIVE` in a separate commit.
+- Use the design tokens in `src/frontend/src/styles.css` and the components in `shared/ui/` for frontend changes.
+- Keep `README.md` and `README.zh-CN.md` in sync when updating the project description, feature status, or usage instructions.
+- The commit hooks in `tools/task_guard.py` check for possible secrets, accidentally staged data directories, and newly added test-skip markers. After cloning, install them with `.\.venv\Scripts\python.exe tools/task_guard.py --install`.
 
-## 已知限制
+## Known limitations
 
-- **速度**：耗时随材料长度、模型、选材与缓存状态变化，各轮实测单列在[测评总览](docs/evaluation.md)。启动后的整理、备份和索引也会影响响应时间。
-- **平台**：Windows 已验证基本完整路径；Ubuntu 22.04 已分项验证应用部署、CPU 向量和隔离环境中的真实 DeepSeek Harness。界面只有中文。
-- **手机与网站登录**：系统分享及 iPhone 快捷指令待真机验收，真实账号扫码确认尚未验证；小红书目前通过 Cookie 导入提供登录态。
-- **在路上**：手机外壳、共享项目、正式公网派活，以及 Claude Code、Codex 真实账号执行与重连的验收。
+- **Speed:** latency varies with material length, model, selection, and cache state. Individual runs are recorded in the [evaluation overview](docs/evaluation.md). Startup maintenance, backups, and indexing also affect response times.
+- **Platform:** basic complete flows have been checked on Windows. Application deployment, CPU embeddings, and real DeepSeek Harness execution in isolation have been checked separately on Ubuntu 22.04. The application interface is currently Chinese only.
+- **Mobile sharing and website login:** OS sharing and iPhone Shortcuts await device validation; real-account QR confirmation has not been verified. Xiaohongshu sessions currently use cookie import.
+- **In progress:** validation of the mobile shell, shared projects, production public-network task submission, and real-account execution and reconnection for Claude Code and Codex.
 
-## 致谢
+## Acknowledgments
 
-- 模型接入参考了 [pi-ai](https://github.com/earendil-works/pi/tree/main/packages/ai) 的协议适配与测试方法。
-- MCP 接入、代理接入等思路借鉴了 Mem0 OpenMemory、Supermemory、basic-memory 和 TencentDB Agent Memory。
-- 用到的开源项目包括 [FastAPI](https://fastapi.tiangolo.com/)、[LiteLLM](https://github.com/BerriAI/litellm)、[LangGraph](https://github.com/langchain-ai/langgraph)、[React](https://react.dev/)、[Vite](https://vite.dev/)、[ProseMirror](https://prosemirror.net/)（编辑器内核，MIT）、[sqlite-vec](https://github.com/asg017/sqlite-vec)。各依赖的许可证见 `requirements-*.txt` 与 `src/frontend/package-lock.json`。
+- Model integration draws on the protocol adapters and testing approach in [pi-ai](https://github.com/earendil-works/pi/tree/main/packages/ai).
+- MCP and agent integration ideas draw on Mem0 OpenMemory, Supermemory, basic-memory, and TencentDB Agent Memory.
+- Dependencies include [FastAPI](https://fastapi.tiangolo.com/), [LiteLLM](https://github.com/BerriAI/litellm), [LangGraph](https://github.com/langchain-ai/langgraph), [React](https://react.dev/), [Vite](https://vite.dev/), [ProseMirror](https://prosemirror.net/) (editor engine, MIT), and [sqlite-vec](https://github.com/asg017/sqlite-vec). Dependency listings are in `requirements-*.txt` and `src/frontend/package-lock.json`; consult the respective projects for their licenses.
 
-## 许可证
+## License
 
 Copyright (C) 2026 Incremind contributors.
 
-本项目采用 **GNU Affero General Public License v3.0（AGPL-3.0-only）**，完整条款见 [LICENSE](LICENSE)。
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0-only)**. See [LICENSE](LICENSE) for the full terms.
 
-修改后的版本通过网络提供服务时，须按协议向与其交互的用户提供对应源代码。
+If you offer a modified version over a network, you must provide its corresponding source code to users interacting with it, as required by the license.
 
-第三方组件与数据保留各自的许可证和署名要求。
+Third-party components and data retain their own licenses and attribution requirements.
