@@ -23,6 +23,14 @@ Give it the material you choose. It organizes and archives it, extracts what add
 
 </div>
 
+## Watch the introduction
+
+A 2:45 walkthrough of adding material, confirming new insights, and asking a follow-up question. Chinese narration with Chinese and English subtitles · 1080p60.
+
+https://github.com/user-attachments/assets/8f51499d-bbfb-47a2-9ab0-91193313f1f0
+
+[Download video](https://github.com/user-attachments/assets/8f51499d-bbfb-47a2-9ab0-91193313f1f0) · [English subtitles (SRT)](docs/media/incremind-intro.en.srt) · [English subtitles (VTT)](docs/media/incremind-intro.en.vtt)
+
 ## Why I am building it
 
 I want a second brain that can work alongside me over time.

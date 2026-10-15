@@ -23,6 +23,14 @@
 
 </div>
 
+## 项目介绍视频
+
+从提交资料、确认增量认识，到带着已有积累再次提问，2 分 45 秒看完完整过程。中文配音，中英双语字幕 · 1080p60。
+
+https://github.com/user-attachments/assets/8f51499d-bbfb-47a2-9ab0-91193313f1f0
+
+[下载视频](https://github.com/user-attachments/assets/8f51499d-bbfb-47a2-9ab0-91193313f1f0) · [英文字幕（SRT）](docs/media/incremind-intro.en.srt) · [英文字幕（VTT）](docs/media/incremind-intro.en.vtt)
+
 ## 为什么做它
 
 我想打造一个能长期陪我工作的第二大脑。

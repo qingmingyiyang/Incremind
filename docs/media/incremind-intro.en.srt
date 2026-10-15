@@ -1,0 +1,224 @@
+1
+00:00:01,000 --> 00:00:05,600
+Saved a hundred great articles,
+but go blank when a real problem hits?
+
+2
+00:00:05,600 --> 00:00:09,360
+Your collection keeps growing.
+How can your understanding grow with it?
+
+3
+00:00:09,360 --> 00:00:11,380
+Incremind, a personal memory assistant.
+
+4
+00:00:11,380 --> 00:00:15,460
+Let's use two learning texts
+to go from reading to practical use.
+
+5
+00:00:15,460 --> 00:00:20,160
+Industry research, project ideas,
+podcast notes, or a new learning method:
+
+6
+00:00:20,160 --> 00:00:22,320
+build up each topic's knowledge separately.
+
+7
+00:00:22,320 --> 00:00:27,300
+Choose the learning project.
+Add the first text and click Send.
+
+8
+00:00:27,300 --> 00:00:30,400
+After processing, open the insight
+on a fixed review schedule.
+
+9
+00:00:30,400 --> 00:00:32,340
+Check its content, then click Confirm.
+
+10
+00:00:32,340 --> 00:00:35,420
+It becomes our baseline
+for comparing new information.
+
+11
+00:00:35,420 --> 00:00:38,880
+Back in the Workbench,
+add the second text to the input box.
+
+12
+00:00:38,880 --> 00:00:42,800
+It covers active recall
+and how to adjust review intervals.
+
+13
+00:00:42,800 --> 00:00:45,160
+Check the text, then click Send.
+
+14
+00:00:45,160 --> 00:00:48,420
+The system processes this actual material.
+
+15
+00:00:48,420 --> 00:00:52,120
+The original is kept; you can revisit
+the organized note and summary.
+
+16
+00:00:52,120 --> 00:00:55,020
+After processing, open the extracted insights.
+
+17
+00:00:55,020 --> 00:00:59,460
+What does this add
+to the method we've already saved?
+
+18
+00:00:59,460 --> 00:01:04,140
+Open the insight on review intervals,
+then the earlier insight it relates to.
+
+19
+00:01:04,140 --> 00:01:06,700
+The earlier insight sets fixed review dates.
+
+20
+00:01:06,700 --> 00:01:10,000
+The second text says
+a fixed schedule is just a starting point.
+
+21
+00:01:10,000 --> 00:01:12,880
+Adjust it based on how well
+you recall each time.
+
+22
+00:01:12,880 --> 00:01:17,320
+Compare old and new on the same question,
+and the change becomes clear:
+
+23
+00:01:17,320 --> 00:01:21,380
+use your own recall performance
+to decide when to review next.
+
+24
+00:01:21,380 --> 00:01:23,260
+Now it's our turn to choose.
+
+25
+00:01:23,260 --> 00:01:25,360
+We want a better review schedule.
+
+26
+00:01:25,360 --> 00:01:29,060
+First, look for useful steps,
+then check when they apply.
+
+27
+00:01:29,060 --> 00:01:32,260
+If this adjustment is worth keeping,
+click Confirm.
+
+28
+00:01:32,260 --> 00:01:37,120
+The insight becomes active.
+The earlier insight is still there to view.
+
+29
+00:01:37,120 --> 00:01:40,640
+Open another method.
+The text says: recall the answer yourself,
+
+30
+00:01:40,640 --> 00:01:44,220
+then flip the card, check,
+and record how well you recalled it.
+
+31
+00:01:44,220 --> 00:01:47,040
+This insight explains what to do
+during review.
+
+32
+00:01:47,040 --> 00:01:50,300
+Check its content and conditions,
+then confirm it separately.
+
+33
+00:01:50,300 --> 00:01:52,940
+We decide what to keep each time.
+
+34
+00:01:52,940 --> 00:01:55,200
+Both new insights are now confirmed.
+
+35
+00:01:55,200 --> 00:01:58,480
+No need to add the two texts again.
+Return to the Workbench.
+
+36
+00:01:58,480 --> 00:02:02,560
+Ask a new question:
+How should I adjust fixed review intervals?
+
+37
+00:02:02,560 --> 00:02:04,680
+Check your question, then click Send.
+
+38
+00:02:04,680 --> 00:02:08,880
+The new insight on adjusting for difficulty
+is now in the answer's context.
+
+39
+00:02:08,880 --> 00:02:14,340
+From the texts, the answer gives steps:
+recall, check, record results, adjust intervals.
+
+40
+00:02:14,340 --> 00:02:17,000
+What you read now feeds
+into what you do next.
+
+41
+00:02:17,000 --> 00:02:20,720
+The answer includes citations.
+Open a link to the original
+
+42
+00:02:20,720 --> 00:02:22,780
+to return to its exact passage.
+
+43
+00:02:22,780 --> 00:02:26,740
+Verify the advice's source
+and whether it reflects the material accurately.
+
+44
+00:02:26,740 --> 00:02:31,440
+The materials stay saved,
+and new understanding grows little by little.
+
+45
+00:02:31,440 --> 00:02:34,720
+Compare, choose, confirm,
+and ask your next question.
+
+46
+00:02:34,720 --> 00:02:38,240
+Connect what you've read
+to the things you actually need to do.
+
+47
+00:02:38,820 --> 00:02:41,760
+Incremind connects what you've read carefully
+
+48
+00:02:41,760 --> 00:02:44,200
+to the next problem you need to solve.
