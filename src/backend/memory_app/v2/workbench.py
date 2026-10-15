@@ -788,6 +788,12 @@ def install_workbench_routes(application, *, records, models, documents, service
         requested = body.get('intent')
         if requested not in {None, 'auto', 'remember', 'ask', 'do', 'inspiration'}:
             raise HTTPException(400, 'invalid_intent')
+        if (requested in {None, 'auto'} and not body.get('item_id')
+                and getattr(get('retrieve'), 'agentic', False)):
+            from .agentic_rag import pending_clarification
+            if pending_clarification(workspace.query, records, project, body.get('thread_id')) is not None:
+                # 此处已在原 TurnExecutionService 的幂等认领之后，同键回放不会重新路由。
+                body, requested = {**body, 'intent': 'ask'}, 'ask'
         parsed = None
         reminder_branch = False
         if (requested in {None, 'auto', 'remember'} and reminders is not None
@@ -1365,21 +1371,30 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         prompt_overhead=overhead, excluded_turn=turn_id, query=query)
     rewritten = await condense(query, project, cleaned, history, turn_id=turn_id)
     retrieval_question = rewritten["question"] or cleaned
-    collected = query.collect_candidates(project, retrieval_question, scene=scene,
-        **({'situation':situation} if situation is not None else {}))
+    agentic = getattr(get('retrieve'), 'agentic', False)
+    collected = ({'candidates': [], 'excluded_sources': [], 'policy_versions': versions_for_turn('project.answer')}
+        if agentic else query.collect_candidates(project, retrieval_question, scene=scene,
+            **({'situation':situation} if situation is not None else {})))
     retrieval = get('retrieve', version=collected['policy_versions']['retrieve'])
-    gap = getattr(retrieval, 'drilldown', False) is True
+    gap = getattr(retrieval, 'drilldown', False) is True and not agentic
     prepare = query.prepare_drilldown if gap else query.prepare_ask
     plan = prepare(project, cleaned, scene=scene, collected=collected,
         retrieval_question=retrieval_question, history=history["text"], situation=situation, part_context=part_context)
-    if history["text"]:
+    if history["text"] or history.get('clarification'):
         try:
             validate_history(query, project, history, target)
         except RecognitionError:
             raise HTTPException(409, "source_changed_retry") from None
-    if history["text"]:
+    if history["text"] or history.get('clarification'):
         plan["history_guard"] = lambda: validate_history(query, project, history, target)
-    if gap:
+    if agentic:
+        from .agentic_rag import investigate
+        try:
+            plan, expanded, rewrite = await investigate(query, project, retrieval_question, plan,
+                turn_id=turn_id, scene=scene, history=history)
+        except RecognitionError:
+            raise HTTPException(409, 'source_changed_retry') from None
+    elif gap:
         try:
             plan, expanded, rewrite = await expand_gap_plan(query, project, retrieval_question, plan, collected,
                 turn_id=turn_id, scene=scene)
@@ -1401,13 +1416,15 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         plan, expanded, rewrite = await expand_plan(query, project, retrieval_question, plan, collected,
             turn_id=turn_id, scene=scene)
     try:
-        await run_in_threadpool(consult_bookshelf, query, project, retrieval_question, plan, scene=scene)
+        if not agentic:
+            await run_in_threadpool(consult_bookshelf, query, project, retrieval_question, plan, scene=scene)
     except RecognitionError:
         raise HTTPException(409, "source_changed_retry") from None
     from .search import supplement
     wordings = [retrieval_question, *rewrite['queries']] if rewrite['used'] else [retrieval_question]
     try:
-        await supplement(query, plan, cleaned, wordings, key=turn_id)
+        if not agentic:
+            await supplement(query, plan, cleaned, wordings, key=turn_id)
     except RecognitionError:
         raise HTTPException(409, 'source_changed_retry') from None
     plan["history_count"] = len(history["turns"])
@@ -1416,6 +1433,8 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         condensed_question=rewritten["question"],
         condense_receipt_ids=rewritten["receipt_ids"], condense_status=rewritten["status"], condense_usage_known=bool(rewritten["usage"]),
         history_turn_ids=[{"id": turn["id"], "revision": turn["revision"]} for turn in history["turns"]])
+    if agentic:
+        plan['trace'][0]['agentic'] = plan['_rag_summary']
     # execute_ask releases its evidence after completion; retain only mapping metadata.
     chosen = tuple({"layer": candidate["layer"], "persona": bool(candidate.get("persona")),
         **({'inspiration': True} if candidate.get('inspiration') else {}),
@@ -1433,15 +1452,17 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
     except RecognitionError:
         raise HTTPException(409, "source_changed_retry") from None
     has_context = bool(chosen or plan.get("profile", {}).get("text") or part_context)
+    clarifying = agentic and plan['_rag_summary'].get('status') == 'clarify'
+    allow_elsewhere = not clarifying and (not agentic or not has_context)
     navigation_coverage = None
-    if elsewhere_version is not None:
+    if elsewhere_version is not None and allow_elsewhere:
         from core.search_and_recall.evidence_windows import query_terms
         wordings = [retrieval_question, *rewrite['queries']] if rewrite['used'] else [retrieval_question]
         navigation_coverage = get('elsewhere', version=elsewhere_version)(operation='coverage',
             coverage_questions=wordings, terms_for=query_terms,
             evidence='\n'.join(c['excerpt'] for c in plan['chosen'] if not c.get('persona')))
     redirect, routed = None, False
-    if elsewhere_version is not None and project == 'default' and not tagged and not part_context:
+    if elsewhere_version is not None and allow_elsewhere and project == 'default' and not tagged and not part_context:
         has_hits = any(not c.get('persona') for c in chosen)
         if not (has_hits and (navigation_coverage or 0) >= .6):
             # 日常里没找到时先定该去哪个项目问；页面会转过去重问，不必先生成一句"没有资料"（用户 2026-10-09）。
@@ -1454,6 +1475,8 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
                 redirect = await run_in_threadpool(ask_home, records, query.documents, query.models, project, cleaned, turn_id)
             if redirect is not None:
                 has_context, chosen = False, ()
+    if clarifying:
+        has_context = False
     preview_id = query.store_ask_preview(plan) if has_context else None
     authority = None
     if parent_turn_id:
@@ -1490,7 +1513,12 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
             on_delta(text)
     interrupted = False
     try:
-        if has_context:
+        if clarifying:
+            text = '\n'.join(plan['_rag_summary']['questions'])
+            streamed(text)
+            result = {'answer': text, 'sources': [], 'model_used': True, 'no_match': False,
+                      'model_usage': {}, 'excluded_sources': plan['excluded_sources']}
+        elif has_context:
             result = await query.execute_ask(preview_id, project, cleaned, True,
                 on_delta=streamed if on_delta is not None else None, on_retry=frames.retry)
         elif redirect is not None:
@@ -1527,7 +1555,7 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
     if routed:
         if redirect is not None:
             receipt['elsewhere'] = redirect
-    elif elsewhere_version is not None:
+    elif elsewhere_version is not None and allow_elsewhere:
         from .elsewhere import suggest_elsewhere
         hint = suggest_elsewhere(query, project, cleaned, coverage=navigation_coverage,
             has_hits=any(not c.get('persona') for c in chosen), tagged=tagged,

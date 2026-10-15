@@ -923,6 +923,9 @@ class WorkspaceQuery:
 
     def gap_materials(self, plan, models, *, local_only):
         """Rebuild the selected upper text through its original domain owners."""
+        if '_rag' in plan:
+            from .v2.agentic_rag import material_input
+            return material_input(self, plan, models, local_only=local_only)
         from .v2.privacy import freeze_turn_materials
         from .v2.turn_requests import validate_frozen_inputs
         from .model_config import ModelConfigurationError
@@ -991,6 +994,72 @@ class WorkspaceQuery:
         with override(**plan['policy_versions']):
             messages = get('retrieve')(None, plan['_drilldown']['retrieval_question'], texts, operation='gap_messages')
         return {'messages': messages, 'privacy': privacy, 'selection': selection}
+
+    def rag_read(self, plan, candidate, depth):
+        """目录限定原 owner；按现有坐标读取对应正文或原件，容量不足不外扩。"""
+        from .v2.budget import input_tokens
+        from .v2.insights import source_documents
+        self.validate_ask_plan({**plan, 'chosen': [candidate]})
+        if candidate['kind'] == 'recognition' and depth != 'summary':
+            documents = source_documents(self.records, candidate['scope'],
+                [node['id'] for node in candidate['snapshot']['nodes'] if node['type'] == 'experience'])
+            entries = self.query_entries(candidate['scope'].project_id,
+                selected=[{'kind': 'document', 'id': identity} for identity in sorted(documents)])
+            result = []
+            for entry in entries:
+                scope = candidate['scope']
+                related = {**candidate, 'kind': 'document', 'id': entry['id'], 'entry': entry,
+                    'title': entry['title'], 'href': entry['href'],
+                    'snapshot': self.original_snapshot(scope, entry, SourceEgressService(self.records))}
+                result.extend(self.rag_read({**plan, 'chosen': [*plan['chosen'], *result]}, related, depth))
+            return result
+        row = {key: value for key, value in candidate.items() if not key.startswith('_')}
+        entry = row['entry']
+        if row['kind'] == 'document':
+            current, hydrated = self.retrieval_index.hydrate(row['scope'].project_id, entry)
+            if current is None:
+                raise RecognitionConflict('rag_material_changed')
+            if depth == 'original':
+                item = hydrated.items.get(entry.get('item_id'))
+                if item is None:
+                    from .original_sources import document_roots
+                    document = self.documents.read(entry['id'])
+                    roots = document_roots(self.records, row['scope'], document.get('source_refs', []))
+                    identities = {identity for kind, identity, _ in roots if kind == 'original_source'}
+                    sources = self.query_entries(row['scope'].project_id,
+                        selected=[{'kind': 'source', 'id': identity} for identity in sorted(identities)])
+                    result = []
+                    for source in sources:
+                        if source['id'] not in identities:
+                            continue
+                        original = {**row, 'kind': 'source', 'id': source['id'], 'entry': source,
+                            'layer': 'L0', 'coordinate_space': 'source_content_v1', 'title': source['title'],
+                            'href': source['href'], 'document_ids': [entry['id']],
+                            'snapshot': self.original_snapshot(row['scope'], source, SourceEgressService(self.records))}
+                        result.extend(self.rag_read({**plan, 'chosen': [*plan['chosen'], *result]}, original, depth))
+                    return result
+                content = str(item.payload.get('source_text') or '')
+                row.update(layer='L0', coordinate_space='workspace_source_text_v1')
+                bounds = [(0, len(content))]
+            else:
+                content = hydrated.markdown[entry['id']]
+                _, start, end = summary_of(content)
+                bounds = [(start, end)] if depth == 'summary' else [(0, start), (end, len(content))]
+                row.update(layer='L2' if depth == 'summary' else 'L1', coordinate_space='document_markdown_v1')
+            row['windows'] = tuple(EvidenceWindow(left, right, content[left:right]) for left, right in bounds if right > left)
+            row['excerpt'] = '\n…\n'.join(window.text for window in row['windows'])
+        elif row['kind'] in {'source', 'search'}:
+            content = entry['content']
+            row.update(windows=(EvidenceWindow(0, len(content), content),), excerpt=content)
+        def fits(value):
+            return input_tokens([*plan['chosen'], value], plan['question'], reserve_refutes=True,
+                history=plan.get('history', '')) + plan['prompt_overhead'] <= plan['budget']
+        # 目录已明确选中读取对象，容量足够时保留原窗口，不再按问题启发式丢弃事实。
+        fitted = row if fits(row) else self._fit_dynamic_candidate(row, plan['question'], limit=plan['budget'], admission=fits)
+        if fitted is None:
+            return []
+        self.validate_ask_plan({**plan, 'chosen': [fitted]})
+        return [fitted]
 
     def resume_drilldown(self, plan, *, collected=None, queries=()):
         """Continue the same selection and budget; upper evidence is never reranked."""
@@ -1201,6 +1270,9 @@ class WorkspaceQuery:
             for kind,identity,revision in roots]) if roots else None
 
     def validate_ask_plan(self, plan: dict) -> None:
+        if '_rag_proof' in plan:
+            from .v2.agentic_rag import validate_rag_proof
+            validate_rag_proof(self, plan)
         if plan.get('part_context'):
             from .v2.part_context import validate_context
             validate_context(self.records, self, plan['part_context'])

@@ -344,6 +344,43 @@ def _question_search_calls(runtime_root, group, search, *, records):
     """只合并原父轮明确绑定的搜索，不按项目或模型名称猜关联。"""
     if records is None or not isinstance(search, dict):
         return None
+    if search.get('version') == 2:
+        from ..v2.search import validate_search_decision
+        from ..v2.policies import get
+        version = group['request'].get('policy_versions', {}).get('retrieve')
+        try:
+            agentic = (isinstance(version, str) and bool(version)
+                       and getattr(get('retrieve', version=version), 'agentic', False) is True)
+        except ValueError:
+            agentic = False
+        if (search.get('parent_turn_id') != group['turn_id']
+                or not agentic):
+            return None
+        calls, seen = [], set()
+        for branch in search.get('branches', []):
+            try:
+                validate_search_decision(records, group['turn_id'], branch['round'], branch['question'])
+            except (ValueError, KeyError):
+                return None
+            identity = branch['turn_id']
+            row = records.read('v2_memory_turn_keys', identity)
+            key = group['turn_id'] + ':rag:' + str(branch['round'])
+            if (branch['key'] != key or row is None or row.payload.get('identity') != {
+                    'kind': 'web.search', 'project': group['project_id'], 'key': key, 'purpose': 'search'}):
+                return None
+            children = kernel_call_groups(runtime_root, turn_id=identity, project=group['project_id'],
+                                          remote_only=False, records=records)
+            child = next((value for value in children if value['turn_id'] == identity and value['kind'] == 'web.search'), None)
+            if (child is None or child['request']['input']['text'] != branch['question']
+                    or row.payload['request'] != child['request']
+                    or child['request'].get('policy_versions') != {'search': search['policy_version']}):
+                return None
+            for call in child['calls']:
+                identifier = (call['turn_id'], call['model_request_id'])
+                if identifier not in seen:
+                    calls.append(call)
+                    seen.add(identifier)
+        return calls
     identity = search.get('turn_id')
     version = group['request'].get('policy_versions', {}).get('search')
     if not isinstance(identity, str) or not version or search.get('policy_version') != version:

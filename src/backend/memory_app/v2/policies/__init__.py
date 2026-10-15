@@ -17,7 +17,7 @@ ACTIVE = {
     'extract': '@5',
     'route': '@1',
     'scope': '@2',
-    'retrieve': '@5',
+    'retrieve': '@7',
     'rank': '@4',
     'strength': '@1',
     'forget': '@1',

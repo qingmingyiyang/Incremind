@@ -59,7 +59,8 @@ For example, an introductory article on spaced repetition might produce an insig
 | ✅ | **Automatic organization** | Builds memory in layers: original → organized note + summary → insight. Supports text, links, and PDFs. |
 | ✅ | **Automatic project assignment** | Without an explicit `#Project`, assigns material to the most relevant existing project or creates one for a new topic. Everyday items stay in the Everyday space. Assignment can be undone with one click. |
 | ✅ | **Incremental insights** | Compares material with existing insights and proposes additions, differences, and new methods for confirmation on the receipt. |
-| ✅ | **Answers with citations** | Searches insights first, then summaries, organized notes, and originals as needed. Stops when there is enough evidence. Citations open the original source. Questions in Everyday can be routed to the relevant project. |
+| ✅ | **Answers with citations** | Uses eligible insights, summaries, organized notes, and originals as evidence; citations open the original source. Questions in Everyday can be routed to the relevant project. |
+| 🧪 | Agentic retrieval | The model decides whether to search or read again, can consult applicable skills enabled for the current project and configured web search, and asks for missing conditions before continuing in the same conversation. See [Agentic RAG](docs/agentic-rag.md) (Chinese) for the S1–S4 stages and validation scope. |
 | ✅ | **Task execution** | Uses relevant memory to create output documents, which you can continue revising or regenerate. |
 | ✅ | **Library** | Browse insights, summaries, organized notes, and originals; confirm, edit, forget, or restore insights. |
 | ✅ | **Privacy controls** | Keeps data on the computer or server hosting the application, excludes private projects from external model requests, and records a receipt for each external call. |
@@ -73,7 +74,16 @@ For example, an introductory article on spaced repetition might produce an insig
 
 ## Evaluation and verification
 
-Updated 2026-10-13. Current defaults `compose@30 / ladder@15 / retrieve@5 / rerank@2` were checked against the originals by an independent Agent on 12 fixed LoCoMo development questions over 19 conversation originals: **8 correct, 4 partially correct, 0 wrong, 0 unpublished**. The run used DeepSeek Flash and local EmbeddingGemma 2. Supported unknown answers can count as correct; omissions remain. These questions were repeatedly used during development, so this is not a held-out or overall accuracy estimate.
+Real DeepSeek acceptance on 2026-10-15 used two synthetic scenarios with pre-indexed originals:
+
+| Scope | Observed result |
+|---|---|
+| Final attempt, `retrieve@7` | Three Workbench inputs returned HTTP 200; **17 functional checks passed**, including retrieval, reading, clarification, and continuation after a reply without a question mark. |
+| All three attempts | **38 real model requests; 51,797 input / 4,877 output tokens**, including the earlier `@6` decision failure and `@7` follow-up failure. Unknown usage: 0. Monetary cost was not calculated. |
+
+This is a small functional acceptance run, not an overall accuracy or performance comparison. It does not cover live web search, AI organization after upload, or vector quality. See [the actual attempts, timings, and validation limits](docs/evaluation.md#agentic-rag-真实多轮验收) (Chinese).
+
+The 2026-10-13 evaluation used `compose@30 / ladder@15 / retrieve@5 / rerank@2`. An independent Agent checked 12 fixed LoCoMo development questions against 19 conversation originals: **8 correct, 4 partially correct, 0 wrong, 0 unpublished**. The run used DeepSeek Flash and local EmbeddingGemma 2. Supported unknown answers can count as correct; omissions remain. These questions were repeatedly used during development, so this is not a held-out or overall accuracy estimate.
 
 The run made 36 real model requests and used **335,444 input / 12,498 output tokens**. Median total latency over all 12 questions was **22.160 s**, with **14.292 s** median retrieval latency. Usage and timings describe that run; no monetary cost was inferred from pricing.
 
@@ -81,6 +91,7 @@ Engineering verification below is separate from answer quality:
 
 | Area | Environment and scope | Observed result |
 |---|---|---|
+| **Agentic RAG isolated controls (`retrieve@6`)** | Full application factory using the then-active defaults without policy overrides; temporary SQLite and fixed local HTTP model responses | **31 assertions passed** for repeated retrieval, layered reading, clarification continuity, unconfigured web search, and idempotency. These fixed-response controls do not measure live model or web-search quality. |
 | **DeepSeek Harness task to draft** | Isolated data root on Ubuntu 22.04; real Harness and DeepSeek Flash, including authenticated MCP memory tools | After a fix, one real task passed **29 checks**. Both real attempts used **4,017 input / 1,226 output tokens** in total; the first MCP tool-call failure is retained. |
 | **Correction after Hy-ASR** | Real SQLite, Turns, and confirmation; simulated ASR delivery and model transport | **30 new checks and 13 existing targeted checks passed**; one pre-existing comment-fetch failure is retained. Real recognition and correction quality await evaluation. |
 | **Server CPU embeddings** | Ubuntu 22.04 instance, real model assets, and device pairing | Loading, encoding, unloading, and reloading verified. GPU and standalone vector-service integration remain unverified. |
@@ -223,7 +234,7 @@ flowchart TB
   UI["Web UI: React + Vite<br/>Workbench · Library · Settings · Companion"] --> API["FastAPI · /api/v2"]
   API --> R["Intent routing<br/>Remember / Ask / Do; split mixed requests"]
   R --> M["Remember<br/>Original → Note + Summary → Project assignment → Incremental insights"]
-  R --> Q["Ask<br/>Insights → Summaries → Notes → Originals; stop with enough evidence"]
+  R --> Q["Ask<br/>Controlled retrieval → Answer → Citation checks"]
   R --> D["Do<br/>Research → Prepare → Output document"]
   M & Q & D --> K["AI kernel: Turn<br/>Frozen inputs · Transmission receipts · Retries · Recovery"]
   K --> P["Policy registry<br/>Prompts, thresholds, and formulas: name@version"]
@@ -231,7 +242,7 @@ flowchart TB
   M & Q & D --> S[("SQLite structured records<br/>Transactional writes with revision checks")]
 ```
 
-**Memory layers:** original (L0) → organized note (L1) + summary (L2) → insight (L3). Material is organized from the bottom up. Retrieval works from the top down: start with insights, descend when necessary, and stop when there is enough evidence.
+**Memory layers:** original (L0) → organized note (L1) + summary (L2) → insight (L3). Material is organized from the bottom up. Retrieval follows the reverse order to select evidence by the question's needs and available budget.
 
 **Analyze material before extracting insights.** Optional `organize@2 / material_analysis@1, @2, @3, or @4 / extract@6` pipelines are registered; version 2 and later use `context_preparation@1`. Active defaults remain `organize@1 / material_analysis@1 / extract@5`. These candidate pipelines are not enabled by default.
 
@@ -291,14 +302,18 @@ Further documentation is available in [ARCHITECTURE.md](ARCHITECTURE.md) for arc
 
 ## How a question finds its evidence
 
+Default `retrieve@7` lets the model decide whether to retrieve, inspect actual tool results, then search or read again, answer, or ask for missing conditions. The loop is bounded and retains the existing evidence selection and answer checks. See [the S1–S4 stages and validation scope](docs/agentic-rag.md) (Chinese).
+
 ```mermaid
 flowchart TB
-  Q["Question<br/>rewritten into a few phrasings"] --> L3["Insights L3<br/>keywords + vectors"]
-  Q --> L2["Summaries L2<br/>keywords"]
-  Q --> L1["Organized notes L1<br/>keywords + vectors"]
-  Q --> L0["Originals L0<br/>keywords + vectors"]
-  L3 & L2 & L1 & L0 --> S["Ladder selection<br/>top down, stop when enough, drop near-duplicates"]
-  S --> A["Answer model<br/>answers only from the evidence, with citations"]
+  Q["Question and supplied conditions"] --> D{"Model decides"}
+  D -->|Search or read| T["Controlled tools<br/>Memory layers · Eligible skills · Web search"]
+  T --> O["Actual results and provenance"]
+  O --> D
+  D -->|Answer| A["Existing answer flow<br/>Fact draft → Review → Citation checks"]
+  D -->|Missing conditions| C["Explicit clarification"]
+  C --> U["Reply in the same project and conversation"]
+  U --> D
 ```
 
 **How each layer matches**
@@ -313,9 +328,9 @@ flowchart TB
 
 **How the ladder selects**
 
-- **Default combination.** `compose@30 / ladder@15 / retrieve@5 / rerank@2`. Retrieval still follows insights → summaries → organized notes → originals. It selects limited evidence by the facts, dates, relationships, and list requirements in the question, without fixed ordinary-source counts. Your "Me" profile uses a separate background block of at most 600 tokens, retaining each insight and its conditions together. Related, supporting, and contradicting neighbors are admitted by new information and available budget, with contradicting neighbors expanded first. All require eligible sources and available capacity, so a tight budget can prevent both sides from reaching the model.
+- **Default combination.** `compose@30 / ladder@15 / retrieve@7 / rerank@2`. The model controls whether and where to search; local retrieval follows insights → summaries → organized notes → originals. It selects limited evidence by the facts, dates, relationships, and list requirements in the question, without fixed ordinary-source counts. Your "Me" profile uses a separate background block of at most 600 tokens, retaining each insight and its conditions together. Related, supporting, and contradicting neighbors are admitted by new information and available budget, with contradicting neighbors expanded first. All require eligible sources and available capacity, so a tight budget can prevent both sides from reaching the model.
 - **Actual budget.** Evidence uses the remainder after output reserve, instructions, Schema, the question, profile, history, and message framing; the complete input is checked too. The supported official `deepseek-flash` route at `api.deepseek.com` has a 200,000-token total cap; a 7,000-token output reserve leaves at most 193,000 input tokens. Unknown routes retain a conservative 16,000-token total window. If valid window and reserve information is unavailable, the input fallback is 4,000 tokens. UTF-8 bytes divided by three, rounded up, estimates the budget; it is not exact provider tokenization or billed usage. Filling the window is not a goal.
-- **Gaps and stopping.** `retrieve@5` compares the original question with selected evidence and uses the existing follow-up path when needed. List questions check different items; relationship questions check complete chains. New chains are reranked and admitted independently before aggregation by source; ordinary questions without an explicit subject retain their existing path. Stop when useful new evidence runs out or capacity is exhausted. Term coverage and a stopping reason do not prove answer sufficiency.
+- **Investigation and stopping.** `retrieve@7` returns actual search and reading results to the next model decision. Local reading follows eligible summary, body, and original-source links; skills provide read-only guidance, and web search requires its configured permission. Up to six decisions can choose another tool, the existing answer flow, or an explicit clarification. Repeated tools, two steps without new material or depth, exhausted capacity, a decision timeout, or the decision limit stop investigation. Only the latest verified clarification in the same project and conversation accepts a follow-up without a question mark; resolved questions do not reopen. Stopping does not prove answer sufficiency. Old `retrieve@5` remains available for explicit replay.
 - **De-duplication.** Material without qualifying new information is checked for near-duplicates at similarity ≥ 0.8, using existing comparable cached vectors or adjacent-character overlap. Passages qualifying for a new demand or relationship under the dynamic policy are not merged merely because they share terms. Active contradiction pairs are also exempt from similarity-based removal, and layers of the same source are not compared with each other. De-duplication never computes new vectors; the new-information rules remain heuristic.
 - **How contradictions are identified.** After insight confirmation and during startup maintenance, the model proposes supporting, contradicting, or superseding links. They become active only after you accept them in the Library. Retrieval reads these active `refutes` links and asks the answer model to explain both sides' evidence and disagreement; vector similarity does not establish logical contradiction. Only related links can be created automatically.
 

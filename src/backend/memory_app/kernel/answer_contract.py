@@ -14,6 +14,10 @@ def answer_contract_scope(request):
     if (isinstance(request, dict) and request.get('desired_outcome') == 'project.answer'
             and (request.get('policy_versions') or {}).get('compose') in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}):
         budget = get('compose', version=request['policy_versions']['compose'])(None, operation='answer_contract')['nested_model_handle_budget']
+    if isinstance(request, dict) and request.get('desired_outcome') == 'project.answer':
+        selected = (request.get('policy_versions') or {}).get('retrieve')
+        if selected and getattr(get('retrieve', version=selected), 'agentic', False):
+            budget = get('retrieve', version=selected)(None, operation='agentic_limits')['nested_model_handle_budget']
     token = _BUDGET.set(budget)
     try:
         yield

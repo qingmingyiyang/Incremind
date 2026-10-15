@@ -404,10 +404,13 @@ def generate_answer(models, messages, *, response_model, max_tokens, validate_cu
     if active is None:
         raise RuntimeError("answer model call requires an active kernel Turn")
     if gap_plan is not None:
-        if purpose != 'aux' or invocation_key != 'gap-drilldown':
+        rag = gap_plan.get('_rag')
+        expected = ('rag-decision-' + str(rag['round'])) if rag is not None else 'gap-drilldown'
+        if purpose != 'aux' or invocation_key != expected:
             raise ValueError('gap_invocation_changed')
         return _generate_gap_answer(models, messages, response_model=response_model, max_tokens=max_tokens,
-            validate_current=validate_current, on_delta=on_delta, timeout_seconds=timeout_seconds, plan=gap_plan)
+            validate_current=validate_current, on_delta=on_delta, timeout_seconds=timeout_seconds, plan=gap_plan,
+            invocation=invocation_key)
     request, store, query, handles = active
     def validate_wire():
         validate_current()
@@ -475,9 +478,15 @@ def gap_answer_input(models, plan):
     request, store, query, _ = active
     frozen_request = store.get_request(request['turn_id'])
     if (plan['project_id'] != request['scope']['project_id'] or plan['question'] != frozen_request['input']['text']
-            or '_drilldown' not in plan
+            or ('_drilldown' not in plan and '_rag' not in plan)
             or plan['policy_versions'] != frozen_request['policy_versions']):
         raise ValueError('gap_turn_identity_changed')
+    if '_rag' in plan:
+        from ..v2.policies import get
+        policy = get('retrieve', version=frozen_request['policy_versions']['retrieve'])
+        if (not getattr(policy, 'agentic', False) or type(plan['_rag']['round']) is not int
+                or not 1 <= plan['_rag']['round'] <= policy(None, operation='agentic_limits')['decisions']):
+            raise ValueError('gap_turn_identity_changed')
     query.validate_answer_request(models, frozen_request)
     from ..turn_routing import RecognitionRoutingSnapshot, SNAPSHOT_KIND, _revision
     from .aux_routing import auxiliary_route
@@ -491,10 +500,10 @@ def gap_answer_input(models, plan):
     return selected, route, {'messages': materials['messages'], 'material_proof': proof, 'policy_versions': dict(plan['policy_versions'])}
 
 
-def _generate_gap_answer(models, messages, *, response_model, max_tokens, validate_current, on_delta, timeout_seconds, plan):
+def _generate_gap_answer(models, messages, *, response_model, max_tokens, validate_current, on_delta, timeout_seconds, plan, invocation='gap-drilldown'):
     request, store, query, handles = ACTIVE_ANSWER.get()
-    turn_id, invocation = request['turn_id'], 'gap-drilldown'
-    input_kind, binding_kind = 'answer-gap-input-gap-drilldown-v1', 'answer-gap-binding-gap-drilldown-v1'
+    turn_id = request['turn_id']
+    input_kind, binding_kind = 'answer-gap-input-' + invocation + '-v1', 'answer-gap-binding-' + invocation + '-v1'
     result_kind = 'answer-model-result-' + invocation
     validate_current()
     selected, route, prepared = gap_answer_input(models, plan)

@@ -44,6 +44,8 @@ def _search_candidates(plan):
 
 def validate_search_binding(query, binding, plan):
     """在首答依赖中复用原搜索证明，复验不创建 Turn、不重做搜索。"""
+    if binding.get('version') == 2:
+        return _validate_agentic_search(query, binding, plan)
     from .turn_requests import validate_frozen_inputs
 
     expected = binding['facts']
@@ -206,6 +208,9 @@ def persist_cited(items, plan, result):
     """仅把原回答实际使用的网页片段交给现有原件写入者。"""
     if not plan.get('search'):
         return {}
+    if not callable(plan.get('search_guard')) and not plan.get('search_materials'):
+        # 仅有失败请求时保留费用归属，不把失败结果变成证据。
+        return {}
     plan['search_guard']()
     written = {}
     from ..transaction_records import TransactionRecords
@@ -216,8 +221,182 @@ def persist_cited(items, plan, result):
             if candidate is None:
                 continue
             item = enlisted.create(plan['project_id'], 'text', candidate['title'], source['excerpt'],
-                url=candidate['href'], origin='search', search_turn_id=plan['search']['turn_id'])
+                url=candidate['href'], origin='search', search_turn_id=candidate.get('search_turn_id', plan['search'].get('turn_id')))
             written[source['number']] = item['id']
         transaction.commit()
     plan['search']['used'] = len(written)
     return written
+
+
+def validate_search_decision(records, parent, number, question):
+    """搜索只消费同父轮已完成的真实模型决策，不按项目猜关联。"""
+    store = MemoryTurn.store_for(records)
+    invocation = 'rag-decision-' + str(number)
+    request = store.get_request(parent)
+    version = request.get('policy_versions', {}).get('retrieve') if request is not None else None
+    try:
+        agentic = (isinstance(version, str) and bool(version)
+                   and getattr(get('retrieve', version=version), 'agentic', False) is True)
+    except ValueError:
+        agentic = False
+    result = store.get_immutable_payload(parent, 'answer-model-result-' + invocation)
+    binding = store.get_immutable_payload(parent, 'answer-gap-binding-' + invocation + '-v1')
+    prepared = store.get_immutable_payload(parent, 'answer-gap-input-' + invocation + '-v1')
+    if (request is None or request['desired_outcome'] != 'project.answer'
+            or not agentic
+            or result is None or binding is None or prepared is None
+            or binding[1]['input_ref'] != prepared[0]
+            or result[1]['output'].get('action') != 'search'
+            or result[1]['output'].get('source') != 'web'
+            or result[1]['output'].get('query') != question):
+        raise RecognitionConflict('rag_search_decision_changed')
+    events = [event for event in store.events_after(parent)
+              if event.get('correlation', {}).get('model_request_id') == binding[1]['model_request_id']]
+    if not any(event['type'] == 'model.completed' for event in events):
+        raise RecognitionConflict('rag_search_decision_unavailable')
+    return request
+
+
+def _validate_agentic_search(query, binding, plan):
+    from .turn_requests import validate_frozen_inputs
+    if (set(binding) != {'version', 'parent_turn_id', 'project_id', 'branches', 'candidates'}
+            or binding['project_id'] != plan['project_id'] or not binding['branches']):
+        raise RecognitionConflict('search_identity_conflicted')
+    public = query.models.public().get('search', {})
+    if (is_private_project(query.records, plan['project_id']) or public.get('enabled') is not True
+            or public.get('configured') is not True
+            or not egress_allowed(query.records, query.models, plan['project_id'], 'search')):
+        raise RecognitionConflict('search_authority_changed')
+    owners = {}
+    for branch in binding['branches']:
+        parent = validate_search_decision(query.records, binding['parent_turn_id'], branch['round'], branch['question'])
+        from .agentic_rag import validate_material_proof
+        store = MemoryTurn.store_for(query.records)
+        prepared = store.get_immutable_payload(binding['parent_turn_id'],
+            'answer-gap-input-rag-decision-' + str(branch['round']) + '-v1')
+        proof = prepared[1]['material_proof']['selection']
+        if branch['derived_privacy']['material_refs'] != proof['privacy']['material_refs']:
+            raise RecognitionConflict('rag_search_source_closure_changed')
+        validate_material_proof(query, plan['project_id'], plan['target'], proof, request=parent)
+        validate_frozen_inputs(query.records, query.models, {**parent, 'privacy': branch['derived_privacy']},
+                               purpose='search', query=query)
+        expected_key = binding['parent_turn_id'] + ':rag:' + str(branch['round'])
+        if parent['scope']['project_id'] != plan['project_id'] or branch['key'] != expected_key:
+            raise RecognitionConflict('search_identity_conflicted')
+        current = _search_facts(query.records, branch['turn_id'])
+        if current != branch['facts']:
+            raise RecognitionConflict('search_output_changed')
+        request = current['request']
+        if (request['input']['text'] != branch['question'] or request['scope']['project_id'] != plan['project_id']
+                or current['index']['payload']['identity'] != {'kind': 'web.search', 'project': plan['project_id'],
+                    'key': expected_key, 'purpose': 'search'}
+                or {name: public.get(name) for name in _ROUTE_FIELDS}
+                    != {name: current['route'][1].get(name) for name in _ROUTE_FIELDS}):
+            raise RecognitionConflict('search_authority_changed')
+        validate_frozen_inputs(query.records, query.models, request, purpose='search', query=query)
+        owners[branch['turn_id']] = current['output'][1]['output']
+    original = {key: value for key, value in plan.items() if key != 'search_guard'}
+    original['chosen'] = [row for row in plan['chosen'] if row['kind'] != 'search']
+    query.validate_ask_plan(original)
+    actual = _search_candidates(plan)
+    if actual != binding['candidates']:
+        raise RecognitionConflict('search_evidence_changed')
+    for candidate in actual:
+        results = owners.get(candidate.get('search_turn_id'), ())
+        index = candidate.get('search_index')
+        if (type(index) is not int or not 0 <= index < len(results)
+                or candidate['entry']['content'] != results[index]['text']
+                or candidate['href'] != results[index]['url']):
+            raise RecognitionConflict('search_evidence_changed')
+
+
+def validate_agentic_search_tools(query, project, *, parent, number):
+    """先复验本轮工具快照，再区分确实不可用与权限已经变化。"""
+    from .agentic_rag import tool_availability
+    store = MemoryTurn.store_for(query.records)
+    prepared = store.get_immutable_payload(parent, 'answer-gap-input-rag-decision-' + str(number) + '-v1')
+    current = tool_availability(query, project)['web']
+    if prepared is None or prepared[1]['material_proof']['selection']['tools']['web'] != current:
+        raise RecognitionConflict('search_authority_changed')
+    return current
+
+
+async def agentic_search(query, plan, question, *, parent, number):
+    """同一问答可有多个受管搜索，始终保留有序的原结果证明。"""
+    from core.search_and_recall.evidence_windows import EvidenceWindow
+    from .agentic_rag import settled_call, candidate_id, validate_derived_query, _checkpoint
+    from .budget import trim_candidate, input_tokens, evidence_tokens
+    validate_search_decision(query.records, parent, number, question)
+    validate_agentic_search_tools(query, plan['project_id'], parent=parent, number=number)
+    derived_privacy = validate_derived_query(query, plan, 'search')
+    key = parent + ':rag:' + str(number)
+    store = MemoryTurn.store_for(query.records)
+    store.get_or_create_immutable_payload(parent, 'answer-rag-search-attempt-' + str(number),
+        {'parent_turn_id': parent, 'round': number, 'key': key, 'question': question})
+    original = {**plan, 'chosen': list(plan['chosen'])}
+    def validate():
+        _checkpoint()
+        query.validate_ask_plan(original)
+        validate_derived_query(query, original, 'search')
+    try:
+        result = await settled_call(search_once, query.records, query.models, plan['project_id'], question,
+                                    key=key, validate_inputs=validate)
+    except BaseException:
+        identity = {'kind': 'web.search', 'project': plan['project_id'], 'key': key, 'purpose': 'search'}
+        child = next((row for row in query.records.list('v2_memory_turn_keys') if row.payload['identity'] == identity), None)
+        if child is not None:
+            previous = plan.get('search', {})
+            plan['search'] = {**previous, 'version': 2, 'parent_turn_id': parent, 'purpose': '搜索',
+                'policy_version': plan['policy_versions']['search'], 'selected': previous.get('selected', 0),
+                'branches': [*previous.get('branches', []), {'turn_id': child.object_id,
+                    'round': number, 'question': question, 'key': key, 'status': 'failed'}],
+                'model_usage': {**previous.get('model_usage', {}), 'observed_only': True}, 'model_cost': None}
+        raise
+    if result is None:
+        return []
+    policy = get('search', version=plan['policy_versions']['search'])
+    previous = getattr(plan.get('search_guard'), 'frozen_binding', None)
+    binding = deepcopy(previous) if previous else {'version': 2, 'parent_turn_id': parent,
+        'project_id': plan['project_id'], 'branches': [], 'candidates': []}
+    binding['branches'].append({'turn_id': result['turn_id'], 'round': number, 'question': question,
+                               'key': key, 'derived_privacy': derived_privacy,
+                               'facts': _search_facts(query.records, result['turn_id'])})
+    added = []
+    for index, row in enumerate(result['results']):
+        if any(candidate['kind'] == 'search' and candidate['href'] == row['url']
+               and candidate['entry']['content'] == row['text'] for candidate in plan['chosen']):
+            continue
+        identity = result['turn_id'] + '-' + str(index)
+        candidate = {'kind': 'search', 'id': identity, 'layer': 'L0', 'scope': plan['scope'],
+            'entry': {'id': identity, 'kind': 'search', 'revision': 1, 'source_id': identity,
+                      'content': row['text'], 'title': row['title'], 'url': row['url']},
+            'title': row['title'], 'href': row['url'], 'excerpt': row['text'], 'match_in': 'content',
+            'windows': (EvidenceWindow(0, len(row['text']), row['text']),),
+            'coordinate_space': 'search_result_text_v1', 'search_index': index,
+            'search_turn_id': result['turn_id'], 'score': 0}
+        fitted = policy.fit_evidence(candidate, plan['chosen'], question=plan['question'], history=plan.get('history', ''),
+            budget=plan['budget'], overhead=plan['prompt_overhead'], trim=trim_candidate,
+            estimate=input_tokens, evidence_tokens=evidence_tokens)
+        if fitted is not None:
+            plan['chosen'].append(fitted)
+            added.append({'id': candidate_id(fitted), 'title': fitted['title'], 'layer': 'L0'})
+    previous_search = plan.get('search', {})
+    previous_usage = previous_search.get('model_usage', {})
+    rebind_agentic_search(query, plan, binding)
+    from .followup import sum_usage
+    plan['search'] = {'version': 2, 'parent_turn_id': parent, 'purpose': '搜索',
+        'policy_version': plan['policy_versions']['search'], 'selected': len(binding['candidates']),
+        'branches': [*previous_search.get('branches', []),
+            {'turn_id': result['turn_id'], 'round': number, 'question': question, 'key': key, 'status': 'completed'}],
+        'model_usage': sum_usage(previous_usage, result['usage']), 'model_cost': None}
+    plan['search_guard']()
+    return added
+
+
+def rebind_agentic_search(query, plan, binding):
+    binding = deepcopy(binding)
+    binding['candidates'] = _search_candidates(plan)
+    def guard():
+        _validate_agentic_search(query, binding, plan)
+    guard.frozen_binding = binding
+    plan['search_guard'] = guard

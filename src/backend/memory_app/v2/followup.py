@@ -46,6 +46,14 @@ def _dependencies(query, project, row, visited, memo):
         raise RecognitionError("history_cycle")
     if row.object_id in memo:
         return memo[row.object_id]
+    from .agentic_rag import clarification
+    marker = clarification(query, row)
+    if marker is not None:
+        result = {'turns': [{'id': row.object_id, 'revision': row.revision}], 'chosen': [],
+                  'snapshots': [], 'preferences': {}, 'multipart': [],
+                  'clarifications': [{'id': row.object_id, 'revision': row.revision, 'marker': marker}]}
+        memo[row.object_id] = result
+        return result
     visited = visited | {row.object_id}
     answer = row.payload["receipt"]["ask"]
     dependency = {
@@ -54,6 +62,7 @@ def _dependencies(query, project, row, visited, memo):
         "snapshots": [],
         "preferences": {},
         "multipart": [],
+        "clarifications": [],
     }
     parent = row.payload.get('parent_turn_id')
     if parent:
@@ -76,6 +85,7 @@ def _dependencies(query, project, row, visited, memo):
             dependency[key].extend(inherited[key])
         dependency["preferences"].update(inherited["preferences"])
         dependency['multipart'].extend(inherited.get('multipart', []))
+        dependency['clarifications'].extend(inherited.get('clarifications', []))
     receipt_id = answer.get("egress_receipt_id")
     if receipt_id is None:
         if not answer.get("no_match"):
@@ -212,10 +222,17 @@ def read_history(records, project, thread, question, *, budget=4000, prompt_over
         for row in rows[-3:]
     ]
     bounded = bound_history(turns, question, budget=budget, prompt_overhead=prompt_overhead)
+    selected_dependencies = [dependencies[turn['id']] for turn in bounded['turns'] if turn['id'] in dependencies]
+    from .agentic_rag import pending_clarification
+    pending = pending_clarification(query, records, project, thread) if query is not None else None
+    if pending and dependencies[rows[-1].object_id] not in selected_dependencies:
+        # 追问是控制事实；即使普通历史预算删掉旧气泡，也必须完整复验其原条件闭包。
+        selected_dependencies.append(dependencies[rows[-1].object_id])
     return {
         **bounded,
         "privacy_revision": privacy_revision(records),
-        "dependencies": [dependencies[turn["id"]] for turn in bounded["turns"] if turn["id"] in dependencies],
+        "dependencies": selected_dependencies,
+        **({'clarification': pending} if pending else {}),
     }
 
 
@@ -247,6 +264,12 @@ def validate_history(query, project, history, target):
         merged[kind][identity] = value
 
     for dependency in history.get("dependencies", []):
+        for fact in dependency.get('clarifications', []):
+            from .agentic_rag import clarification
+            row = query.records.read('v2_turns', fact['id'])
+            if (row is None or row.revision != fact['revision'] or row.payload.get('project_id') != project
+                    or clarification(query, row) != fact['marker']):
+                raise RecognitionError('history_clarification_changed')
         for answer in dependency.get('multipart', []):
             from .part_context import validate_answer_authority
             validate_answer_authority(query, project, answer['id'], answer['parent'], answer['authority'])
