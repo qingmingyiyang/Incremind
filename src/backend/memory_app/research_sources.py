@@ -9,7 +9,7 @@ from .source_graph import LIMIT, identifier, revision, validate_graph
 from .privacy_state import is_private_project
 
 from .source_evidence_refs import READS, _source_refs, evidence_refs, roots_for
-from .research_reads import COLLECTION, scope_for, read_dependencies, validate_reads
+from .research_reads import COLLECTION, scope_for, read_dependencies, validate_reads, recall_snapshots
 from backend.shared.llm.litellm_gateway import _is_consumer_cancellation
 
 
@@ -20,6 +20,29 @@ class ReadProvider:
         self.inner,self.capability,self.records=inner,capability,records
     def invoke(self, request):
         scope=scope_for(request)
+        prepare = getattr(self.inner, 'prepare_research_read', None)
+        prepared = prepare(request) if callable(prepare) else None
+        if prepared is not None:
+            output, binding = prepared
+            identity = request.get('tool_call_id')
+            if self.capability != 'memory.recall' or not isinstance(identity, str) or not identity:
+                raise RecognitionConflict('product recall tool identity is invalid')
+            from .transaction_records import TransactionRecords
+            with self.records.begin() as reader:
+                records = TransactionRecords(reader)
+                snapshot, styles = recall_snapshots(records, scope, binding,
+                    authority=SourceEgressService(records))
+                proof = {'turn_id': request['turn_id'], 'tool_call_id': identity,
+                    'project_id': scope.project_id, 'capability_id': self.capability,
+                    'source_egress': snapshot, 'documents': [], 'style_sources': styles,
+                    'configurations': [], 'v2_recall': binding}
+                existing = reader.read(COLLECTION, identity)
+                if existing is not None and existing.payload != proof:
+                    raise RecognitionConflict('research read authority cannot be rebound')
+                if existing is None:
+                    reader.put(COLLECTION, identity, proof, expected_revision=0)
+                    reader.commit()
+            return output
         # Capture versions before the provider reads its body; dynamic selection
         # can only bind material which was already present at this boundary.
         baseline={}

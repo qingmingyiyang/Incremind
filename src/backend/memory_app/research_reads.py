@@ -6,6 +6,88 @@ from .source_evidence_refs import READS, evidence_refs, roots_for
 COLLECTION = 'v2_research_source_reads'
 
 
+def validate_recall_binding(records, scope, binding, *, authority, inherit=False):
+    """复验产品召回选择，保留原资料、遗忘与文档的独立修订边界。"""
+    from core.document_engine import SQLiteDocumentRepository
+    from .recall_state import preference
+    if binding.get('version') != 1:
+        raise RecognitionConflict('product recall proof version is invalid')
+    for item in binding['materials']:
+        project = item['project_id']
+        if project not in {scope.project_id, 'me'}:
+            raise RecognitionConflict('product recall material is outside the requested scope')
+        own = WorkScope(scope.user_id, project)
+        snapshot = item['snapshot']
+        if snapshot['scope'] != {'user_id': own.user_id, 'project_id': project}:
+            raise RecognitionConflict('product recall source ownership changed')
+        if inherit:
+            from .source_snapshot import _closure_identity
+            fresh = authority.snapshot(own, snapshot['roots'])
+            if {_closure_identity(node) for node in fresh['nodes']} != {
+                    _closure_identity(node) for node in snapshot['nodes']}:
+                raise RecognitionConflict('product recall source closure changed')
+        else:
+            authority.validate_snapshot(own, snapshot)
+            authority.require(snapshot, 'generation')
+        kind, identity = item['kind'], item['id']
+        if kind == 'recognition':
+            current = records.read('recognitions', identity)
+            if (current is None or current.revision != item['revision']
+                    or current.payload.get('state') != 'active'
+                    or current.payload.get('scope') != {'user_id': own.user_id, 'project_id': project}):
+                raise RecognitionConflict('product recall recognition changed')
+            state = preference(records, own, identity)
+            if state['recall_state'] == 'forgotten':
+                row = records.read('recognition_recall_preferences', identity)
+                if not item['bookshelf'] or row.payload.get('by', 'user') != 'auto':
+                    raise RecognitionConflict('product recall recognition was forgotten')
+        elif kind == 'document':
+            current = SQLiteDocumentRepository(records).read(identity)
+            if (current is None or current['revision'] != item['revision']
+                    or current.get('project_id') != project or current.get('status') == 'archived'):
+                raise RecognitionConflict('product recall document changed')
+        elif kind == 'source':
+            store = source_store(records)
+            current = store.read('sources', identity)
+            if (current is None or current.get('project_id', 'default') != project
+                    or store.revision('sources', identity) != item['revision']):
+                raise RecognitionConflict('product recall original changed')
+        else:
+            raise RecognitionConflict('product recall material type is invalid')
+        if item.get('item_id'):
+            row = records.read('workspace_items', item['item_id'])
+            if row is None or row.revision != item['item_revision']:
+                raise RecognitionConflict('product recall workspace original changed')
+    for document in binding['documents']:
+        row = records.read('documents', document['id'])
+        if (row is None or row.revision != document['revision']
+                or row.payload.get('project_id') != document['project_id']
+                or row.payload.get('status') == 'archived'):
+            raise RecognitionConflict('product recall supporting document changed')
+    for selected in binding['preferences']:
+        if selected['collection'] not in ('recognition_recall_preferences', 'v2_document_recall'):
+            raise RecognitionConflict('product recall preference kind is invalid')
+        row = records.read(selected['collection'], selected['id'])
+        if (row.revision if row else 0) != selected['revision']:
+            raise RecognitionConflict('product recall preference changed')
+
+
+def recall_snapshots(records, scope, binding, *, authority):
+    """本项目原件合并为原有主快照，画像沿已有跨项目来源通路继承。"""
+    validate_recall_binding(records, scope, binding, authority=authority)
+    roots, styles = {}, []
+    for item in binding['materials']:
+        snapshot = item['snapshot']
+        if item['project_id'] == scope.project_id:
+            for root in snapshot['roots']:
+                roots[(root['type'], root['id'])] = root['revision']
+        else:
+            styles.append(snapshot)
+    selected = [{'type': kind, 'id': identity, 'revision': revision}
+                for (kind, identity), revision in sorted(roots.items())]
+    return (authority.snapshot(scope, selected) if selected else None), styles
+
+
 def scope_for(request):
     raw = request.get('scope')
     if not isinstance(raw,Mapping) or not isinstance(raw.get('project_id'),str):
@@ -68,6 +150,8 @@ def validate_reads(records, scope, proofs, *, authority, remote=True):
         row=records.read(COLLECTION,proof.get('id'))
         if row is None or row.revision!=proof.get('revision') or row.payload!={k:v for k,v in proof.items() if k not in ('id','revision')}:
             raise RecognitionConflict('research proof changed')
+        if proof.get('v2_recall') is not None:
+            validate_recall_binding(records, scope, proof['v2_recall'], authority=authority)
         for config in proof.get('configurations',[]):
             store=source_store(records)
             if store.read(config['collection'],config['id']) is None or store.revision(config['collection'],config['id'])!=config['revision']:
@@ -138,8 +222,12 @@ def _product_read_sources(records, turns, agents, request, project):
         result = turns.get(result_ref)
         scope = WorkScope('local-user', project)
         refs = evidence_refs(proof['capability_id'], {'result': result})
-        with records.begin() as reader:
-            roots = roots_for(reader, scope, refs)
+        if proof.get('v2_recall') is not None:
+            _validate_recall_result(records, scope, proof, refs)
+            roots = proof['source_egress']['roots'] if proof['source_egress'] else []
+        else:
+            with records.begin() as reader:
+                roots = roots_for(reader, scope, refs)
         frozen = proof.get('source_egress')
         if (frozen is None and roots or frozen is not None and (
                 not isinstance(frozen, Mapping) or frozen.get('roots') != roots
@@ -183,6 +271,32 @@ def _product_read_sources(records, turns, agents, request, project):
             snapshots.append(frozen)
         snapshots.extend(proof.get('style_sources', []))
     return tuple(entries), tuple(snapshots)
+
+
+def _validate_recall_result(records, scope, proof, refs):
+    from .source_egress import SourceEgressService
+    binding = proof['v2_recall']
+    expected = []
+    for item in binding['materials']:
+        collection = {'recognition': 'recognitions', 'document': 'documents', 'source': 'sources'}[item['kind']]
+        expected.append(f"crp://default/{collection}/{item['id']}")
+    if refs != expected:
+        raise RecognitionConflict('product recall result source binding changed')
+    validate_recall_binding(records, scope, binding, authority=SourceEgressService(records), inherit=True)
+    roots, styles = {}, []
+    for item in binding['materials']:
+        if item['project_id'] == scope.project_id:
+            for root in item['snapshot']['roots']:
+                roots[(root['type'], root['id'])] = root['revision']
+        else:
+            styles.append(item['snapshot'])
+    expected_roots = [{'type': kind, 'id': identity, 'revision': revision}
+                      for (kind, identity), revision in sorted(roots.items())]
+    frozen = proof['source_egress']
+    if ((frozen['roots'] if frozen else []) != expected_roots
+            or frozen is not None and frozen['scope'] != {'user_id': scope.user_id, 'project_id': scope.project_id}
+            or styles != proof['style_sources']):
+        raise RecognitionConflict('product recall source proof changed')
 
 
 def _product_agent_request(turns, agents, request, project):

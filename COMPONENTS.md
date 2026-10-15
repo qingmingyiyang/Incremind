@@ -224,6 +224,7 @@
 
 - T12.5比较提炼：`policies.extract@2.prepare/decide`经get调用，`comparative_insights.public_projects`复用ScopeOverviews.current；`insight_generation`冻结近邻与项目清单并在实际wire/写入复验事实，重复材料只提支持建议。`inbox.file`沿既有事务实现显式跨项目确认，`RecognitionService.stage_experience(copy_from=...)`及`experience_origins`保留来源身份/修订，后者只校验来源事实，不充当外发授权服务。
 - T12.5来源复用：`source_evidence_refs`原样承接三种既有引用解析及READS，`research_sources`保留re-export；`SourceGraph`按完整用户/项目/类型/id压平新产物来源，`product_draft_dependencies`读取真实已登记请求、结果与读取证明，`SourceEgress`保留当前领域资格和只读事务局部闭包复用。`ReadControl`复用既有锁与许可复验，在真实发送批准时绑定原件及配置；不缓存跨请求授权，不持锁覆盖整个网络调用。
+- 内部任务召回：`v2.task_recall.TaskRecall`复用`WorkspaceQuery`和翻书选择，`ReadProvider`保存不含正文的修订证明；`research_reads`从真实完成结果核引用与来源闭包，本项目走原`source_egress`，个人画像走原`style_sources`。`retrieval_models.retrieval_authority`将父任务已读来源的资格复验接入派生 embedding/rerank 的原传输边界，嵌套范围保留外层并在退出还原。正式`final_for`草稿链与20项来源、修订、条数和传输控制通过；旧中间草稿后续规划的输入预算限制单列保留，未改预算或事件投影。
 - T12.5展示：`shared/ui/CandidateHint`复用Icon，Library与InsightLinks/ConsolidationSuggestions复用Row/FocusPanel展示旧认识及只读来源；建议到我用人形图标，到其它项目用#项目标签，确认/合并/取代均由人操作。验证38后端430项、7前端54项及12导入契约，浏览器Q45/真实质量Q10。
 
 - T15.1识图公共接点：`shared/llm/image_input.image_content`将已读图bytes转现网关content，`memory_app/local_image_provider`优先已保存OCR命令，Linux可选`core/product_core/rapidocr_provider.RapidOcrImageAdapter`，包与五资产齐备才构造，不下载。`ModelConfiguration.update_vision_mode/vision_binding/complete_vision`共用密钥owner与网关，独立vision许可/CAS；`kernel/image_read.read_images`复用MemoryTurn、structured输出与actual usage。

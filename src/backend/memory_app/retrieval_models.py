@@ -1,5 +1,7 @@
 """Explicit model adapters with no environment-key or hidden remote fallback."""
 from pathlib import Path
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 import sqlite3
 from collections.abc import Callable, Mapping
@@ -10,6 +12,27 @@ import httpx
 from backend.recognition_retrieval import HttpEmbeddingProvider, HttpReranker, SQLiteEmbeddingCache, SqliteVecCandidateIndex, RecognitionRetrievalError, retrieve
 from backend.recognition import RecognitionConflict
 from .local_vectors import encode_request, model_directory
+
+
+_RETRIEVAL_AUTHORITY = ContextVar('retrieval_parent_authority', default=None)
+
+
+@contextmanager
+def retrieval_authority(validator):
+    """派生检索沿父任务来源复验；嵌套范围保留外层资格并保证退出还原。"""
+    outer = _RETRIEVAL_AUTHORITY.get()
+
+    def current():
+        if outer is not None:
+            outer()
+        validator()
+
+    current()
+    token = _RETRIEVAL_AUTHORITY.set(current)
+    try:
+        yield
+    finally:
+        _RETRIEVAL_AUTHORITY.reset(token)
 
 
 class ConfiguredTransport:
@@ -95,11 +118,14 @@ def configured_adapter(models, purpose, *, validate_current: Callable[[], None] 
     configuration: the app supplies it to re-read selected recognitions.  The
     model guard is composed here so every wire call has both checks.
     """
+    parent = _RETRIEVAL_AUTHORITY.get()
     cfg, expected_public = _capture_remote_config(models, purpose)
     local = purpose == 'embedding' and cfg.get('mode') == 'local'
     policy = models.embedding_policy() if local else None
 
     def check_current() -> None:
+        if parent is not None:
+            parent()
         _assert_public_config_unchanged(models, purpose, expected_public)
         if local and models.embedding_policy() != policy:
             raise RecognitionRetrievalError('configured_model_changed_before_request')

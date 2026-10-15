@@ -61,7 +61,7 @@ For example, an introductory article on spaced repetition might produce an insig
 | ✅ | **Incremental insights** | Compares material with existing insights and proposes additions, differences, and new methods for confirmation on the receipt. |
 | ✅ | **Answers with citations** | Uses eligible insights, summaries, organized notes, and originals as evidence; citations open the original source. Questions in Everyday can be routed to the relevant project. |
 | 🧪 | Agentic retrieval | The model decides whether to search or read again, can consult applicable skills enabled for the current project and configured web search, and asks for missing conditions before continuing in the same conversation. See [Agentic RAG](docs/agentic-rag.md) (Chinese) for the S1–S4 stages and validation scope. |
-| ✅ | **Task execution** | Uses relevant memory to create output documents, which you can continue revising or regenerate. |
+| ✅ | **Task execution** | Uses project memory, confirmed profile facts, and Library lookup to create output documents, which you can continue revising or regenerate. |
 | ✅ | **Library** | Browse insights, summaries, organized notes, and originals; confirm, edit, forget, or restore insights. |
 | ✅ | **Privacy controls** | Keeps data on the computer or server hosting the application, excludes private projects from external model requests, and records a receipt for each external call. |
 | 🧪 | More input formats | Image OCR, audio and video transcription, and Bilibili favorites import; requires the corresponding models to be configured. |
@@ -92,6 +92,7 @@ Engineering verification below is separate from answer quality:
 | Area | Environment and scope | Observed result |
 |---|---|---|
 | **Agentic RAG isolated controls (`retrieve@6`)** | Full application factory using the then-active defaults without policy overrides; temporary SQLite and fixed local HTTP model responses | **31 assertions passed** for repeated retrieval, layered reading, clarification continuity, unconfigured web search, and idempotency. These fixed-response controls do not measure live model or web-search quality. |
+| **Built-in task recall** | Project retrieval, storage, read proofs, drafts, and receipts; synthetic model HTTP | **21 distinct controls passed**, including profile and Library selection, prior-source revocation during retrieval, and a declared final draft. See [scope and retained failures](docs/evaluation.md#内置任务-v2-召回) (Chinese). No new paid model requests. |
 | **DeepSeek Harness task to draft** | Isolated data root on Ubuntu 22.04; real Harness and DeepSeek Flash, including authenticated MCP memory tools | After a fix, one real task passed **29 checks**. Both real attempts used **4,017 input / 1,226 output tokens** in total; the first MCP tool-call failure is retained. |
 | **Correction after Hy-ASR** | Real SQLite, Turns, and confirmation; simulated ASR delivery and model transport | **30 new checks and 13 existing targeted checks passed**; one pre-existing comment-fetch failure is retained. Real recognition and correction quality await evaluation. |
 | **Server CPU embeddings** | Ubuntu 22.04 instance, real model assets, and device pairing | Loading, encoding, unloading, and reloading verified. GPU and standalone vector-service integration remain unverified. |
@@ -398,6 +399,7 @@ npm run build
 ## Known limitations
 
 - **Speed:** latency varies with material length, model, selection, and cache state. Individual runs are recorded in the [evaluation overview](docs/evaluation.md). Startup maintenance, backups, and indexing also affect response times.
+- **Task continuation:** a retained intermediate-draft case still exceeds its next planning input budget (**15,619 > 14,000 tokens**) and leaves a partial receipt. This failure remains unresolved; see [task recall acceptance](docs/evaluation.md#内置任务-v2-召回) (Chinese).
 - **Platform:** basic complete flows have been checked on Windows. Application deployment, CPU embeddings, and real DeepSeek Harness execution in isolation have been checked separately on Ubuntu 22.04. The application interface is currently Chinese only.
 - **Mobile sharing and website login:** OS sharing and iPhone Shortcuts await device validation; real-account QR confirmation has not been verified. Xiaohongshu sessions currently use cookie import.
 - **In progress:** validation of the mobile shell, shared projects, production public-network task submission, and real-account execution and reconnection for Claude Code and Codex.

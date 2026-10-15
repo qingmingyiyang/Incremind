@@ -703,6 +703,12 @@ def build_ai_runtime(container: object, *, application: object | None = None) ->
         application_state.world_supervision_runtime = world_supervision_runtime
         application_state.world_supervision_agent_observer = world_supervision_observer
         application_state.agent_expert_binding_runtime = expert_binding_runtime
+    recall_provider = MemoryRecallCapability(recalls)
+    workspace = getattr(application_state, 'workspace_domains', None)
+    if workspace is not None:
+        from ..v2.task_recall import TaskRecall
+        recall_provider = TaskRecall(workspace.query, session_store, recall_provider,
+            agents=agent_runtime_composition.store)
     registry.register(
         CapabilityDefinition(
             "memory.recall",
@@ -713,7 +719,7 @@ def build_ai_runtime(container: object, *, application: object | None = None) ->
             "crp://default/contracts/recall-request.schema.json",
             "crp://default/contracts/recall-result.schema.json",
         ),
-        MemoryRecallCapability(recalls),
+        recall_provider,
     )
     register_ppt_master_fixed_capability(registry, application)
     media_runtime = current_media_hands_runtime(application) if application is not None else None
