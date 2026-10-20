@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from backend.memory_app.model_config import ModelConfiguration
 from backend.memory_app.v2.followup import read_history
 from backend.security.secrets import InMemorySecretStore
-from tests.memory_app.v2.test_workbench_ask import env, assemble, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, assemble, publish
 from tests.memory_app.v2.test_workbench_stream import events
 
 

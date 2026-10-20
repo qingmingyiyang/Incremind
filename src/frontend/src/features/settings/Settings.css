@@ -3,6 +3,8 @@
 
 .settings-page textarea{box-sizing:border-box;width:100%;min-width:0;min-height:96px;padding:12px;resize:vertical;color:var(--ink);background:var(--paper);border:1px solid var(--line2);border-radius:var(--r-control);font:15px/1.8 var(--sans)}
 .settings-page label>.ui-row-meta{flex:1;min-width:0;max-width:none}
+.settings-page .settings-theme{box-sizing:border-box;min-width:0}.settings-page .settings-theme select{flex:0 1 120px;width:120px}
+@media(max-width:759px){.settings-page>nav{flex-wrap:wrap}.settings-page>nav>.settings-theme{flex:0 0 100%}}
 .settings-prices{margin:16px 0;padding:0 12px 12px;border:1px solid var(--line);min-width:0}.settings-prices legend{padding:0 4px;font:12px var(--mono);color:var(--muted)}
 .settings-page .settings-integrity-reason .ui-row-title{font:12px var(--mono);overflow-wrap:anywhere}
 .settings-vision-modes{margin:0;gap:12px;flex:none}.settings-vision-modes button{white-space:nowrap}

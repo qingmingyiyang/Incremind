@@ -259,7 +259,7 @@ def create_server_app(*, layout=None, port=8001):
 
 
 def _runtime_root() -> Path:
-    from backend.api.runtime_root_config import resolve_application_runtime_root
+    from backend.shared.runtime_root_config import resolve_application_runtime_root
 
     fallback = Path(__file__).resolve().parents[3] / "runtime"
     return resolve_application_runtime_root(fallback)

@@ -18,7 +18,7 @@ def _frontend_root(code_root):
 
 def mount_server_frontend(application, code_root):
     dist = _frontend_root(code_root).resolve()
-    from backend.api.static_assets import mount_frontend_dist, _resolve_dist_path
+    from backend.shared.static_assets import mount_frontend_dist, _resolve_dist_path
     application.state.server_static_paths = frozenset('/' + path.relative_to(dist).as_posix()
         for path in dist.rglob('*') if path.is_file()
         and _resolve_dist_path(dist, path.relative_to(dist).as_posix()) == path.resolve())
@@ -28,7 +28,7 @@ def mount_server_frontend(application, code_root):
 def create_application(*, frontend_root=None, port=None):
     layout = resolve_deployment(_CODE_ROOT / 'runtime')
     if layout.mode == 'desktop':
-        from backend.api.runtime_root_config import resolve_application_runtime_root
+        from backend.shared.runtime_root_config import resolve_application_runtime_root
         layout = DeploymentLayout('desktop', resolve_application_runtime_root(_CODE_ROOT / 'runtime'))
     code_root = _CODE_ROOT if frontend_root is None else Path(frontend_root)
     if layout.mode == 'server':

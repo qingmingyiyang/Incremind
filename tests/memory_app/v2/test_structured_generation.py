@@ -7,7 +7,7 @@ from backend.memory_app.model_config import ModelConfiguration, ModelConfigurati
 from backend.security.secrets import InMemorySecretStore
 from backend.recognition import RecognitionConflict
 from core.storage_provider.sqlite_uow import SQLiteStructuredRecordStore
-from tests.memory_app.v2.test_workbench_ask import env as workbench_env, assemble, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as workbench_env, assemble, publish
 
 
 class Answer(BaseModel):

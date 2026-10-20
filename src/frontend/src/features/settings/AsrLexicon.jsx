@@ -25,7 +25,10 @@ export function AsrLexicon({ projectId, api = settingsApi }) {
     };
   }, []);
   useEffect(() => {
-    setLoaded(null); setPreview(null); setText(''); setError(''); setBusy(false);
+    setText(''); setFormat('txt');
+  }, [scope]);
+  useEffect(() => {
+    setLoaded(null); setPreview(null); setError(''); setBusy(false);
     const token = gate.issue('load', scope), request = new AbortController();
     api.loadAsrLexicon(request.signal).then(value => {
       if (current(token)) setLoaded({ scope, value });

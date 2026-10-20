@@ -145,7 +145,8 @@ class SignalReviews:
         else:
             evidence['count'] = item['strength']
         if item['kind'] in {'reask', 'stop'}:
-            evidence['answer'] = '\n'.join(rows[0].payload['receipt']['ask']['answer'].splitlines()[:2])
+            answer = rows[0].payload['receipt']['ask']['answer']
+            evidence['answer'] = '' if answer is None else '\n'.join(answer.splitlines()[:2])
             title = questions[0]
         else:
             obj = item['object']

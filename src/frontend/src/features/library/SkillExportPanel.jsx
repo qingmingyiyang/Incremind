@@ -15,15 +15,18 @@ export function SkillExportPanel({ projectId, scene = null, sourceId = null, exp
   const [available, setAvailable] = useState(false), [error, setError] = useState(''), [blocked, setBlocked] = useState(false), [dirty, setDirty] = useState(false);
   const [folder, setFolder] = useState({ available: false }), [directory, setDirectory] = useState(''), [confirmFolder, setConfirmFolder] = useState(false), [folderPath, setFolderPath] = useState('');
   const [busy, setBusy] = useState(false), [retry, setRetry] = useState(0);
+  const [sourcesUpdated, setSourcesUpdated] = useState(false);
   const pending = useRef(null), urls = useRef(new Map()), savedId = useRef(exportId), generation = useRef(null);
-  function adopt(value) {
+  const documentEdits = useRef(0);
+  const updateButton = useRef(null), updateFocus = useRef(null);
+  function adopt(value, preserveDocument = false) {
     savedId.current = value.id;
-    setDraft(value); setSources(value.sources); setDocument(value.document);
-    setDirty(false); setBlocked(false); generation.current = null;
+    setDraft(value); setSources(value.sources); if (!preserveDocument) setDocument(value.document);
+    setDirty(preserveDocument); setSourcesUpdated(false); setBlocked(false); generation.current = null;
   }
   useEffect(() => {
     const token = gate.issue('load', scope), controller = new AbortController();
-    setLoaded(false); setError(''); setBlocked(false); pending.current = null; setBusy(false);
+    setLoaded(false); setError(''); setBlocked(false); setSourcesUpdated(false); pending.current = null; setBusy(false);
     // 新建后的重读继续使用服务返回的身份，避免另开一份空白草稿。
     const identity = exportId || savedId.current;
     Promise.all([libraryApi.skillExportMethods(projectId, { scene, signal: controller.signal }),
@@ -47,11 +50,21 @@ export function SkillExportPanel({ projectId, scene = null, sourceId = null, exp
     return () => { controller.abort(); };
   }, [projectId, scene, sourceId, exportId, retry]);
   useEffect(() => () => { for (const [href, timer] of urls.current) { clearTimeout(timer); URL.revokeObjectURL(href); } urls.current.clear(); }, []);
+  useEffect(() => {
+    if (busy) return;
+    const restore = updateFocus.current;
+    updateFocus.current = null;
+    if (!restore) return;
+    const { token, button } = restore, active = globalThis.document.activeElement;
+    // 只恢复本次更新丢失的焦点，保留用户主动选择的其他控件。
+    if (gate.isCurrent(token) && updateButton.current === button && button?.isConnected && !button.disabled
+      && (!active || active === globalThis.document.body || !active.isConnected)) button.focus();
+  }, [busy, scope]);
   const body = document;
   const complete = sources.length > 0 && [body.name, body.description, body.trigger].every(value => value.trim())
     && body.validation.length > 0 && body.validation.every(rule => rule.trim()) && body.steps.length > 0 && body.steps.every(step => step.text.trim() && step.sources.length > 0);
   const readOnly = busy || blocked;
-  function change(next) { setDocument(next); setDirty(true); }
+  function change(next) { documentEdits.current += 1; setDocument(next); setDirty(true); }
   function toggleSource(row, checked) {
     if (draft) return;
     const index = sources.findIndex(source => source.id === row.id);
@@ -79,10 +92,24 @@ export function SkillExportPanel({ projectId, scene = null, sourceId = null, exp
     catch (reason) { if (gate.isCurrent(token)) { setError(reason.message || '操作未完成 · 重试'); if (reason.status === 409) setBlocked(true); } }
     finally { if (pending.current === token) pending.current = null; if (gate.isCurrent(token)) setBusy(false); }
   }
-  function accept(value, token) { if (gate.isCurrent(token)) { adopt(value); onChanged?.(); } }
-  function save() { return run(async token => accept(draft
-    ? await libraryApi.saveSkillExport(projectId, draft.id, draft.revision, body)
-    : await libraryApi.createSkillExport(projectId, { sources: descriptors(sources), document: body, scene }), token)); }
+  function accept(value, token, edit) { if (gate.isCurrent(token)) { adopt(value, edit !== undefined && documentEdits.current !== edit); onChanged?.(); } }
+  function updateSources() { return run(async token => {
+    updateFocus.current = { token, button: updateButton.current };
+    const current = await libraryApi.skillExportMethods(projectId, { scene });
+    if (!gate.isCurrent(token)) return;
+    const selected = sources.map(source => current.items.find(row => row.id === source.id));
+    if (selected.some(source => !source)) { setBlocked(true); setError('认识已变化 · 重新读取'); return; }
+    // 只更新面板中的核对材料，明确保存后才冻结新版本。
+    setSources(selected); setSourcesUpdated(true); setDirty(true);
+  }); }
+  function save() {
+    const edit = documentEdits.current;
+    return run(async token => accept(draft
+      ? sourcesUpdated
+        ? await libraryApi.regenerateSkillExport(projectId, draft.id, { expected_revision: draft.revision, sources: descriptors(sources), document: body, scene })
+        : await libraryApi.saveSkillExport(projectId, draft.id, draft.revision, body)
+      : await libraryApi.createSkillExport(projectId, { sources: descriptors(sources), document: body, scene }), token, edit));
+  }
   function generate() { return run(async token => {
     const current = await libraryApi.skillExportMethods(projectId, { scene });
     if (!gate.isCurrent(token)) return;
@@ -142,7 +169,8 @@ export function SkillExportPanel({ projectId, scene = null, sourceId = null, exp
         </section>)}
         <button type="button" disabled={readOnly} onClick={() => change({ ...document, validation: [...document.validation, ''] })}><Icon name="plus" size={14}/> 验证规则</button>
         <div className="library-actions">
-          <button type="submit" disabled={readOnly || !complete || Boolean(draft && !dirty)}>保存草稿</button>
+          {draft?.needs_update && <button ref={updateButton} type="button" disabled={readOnly} onClick={updateSources}>更新来源</button>}
+          <button type="submit" disabled={readOnly || !complete || Boolean(draft && !dirty) || Boolean(draft?.needs_update && !sourcesUpdated)}>保存草稿</button>
           <button type="button" disabled={readOnly || !available || !sources.length} onClick={generate}>{draft ? '重新生成' : '生成草稿'}</button>
           <button type="button" disabled={readOnly || !draft || dirty || draft.reviewed || draft.needs_update} onClick={() => run(async token => accept(await libraryApi.reviewSkillExport(projectId, draft.id, draft.revision), token))}>审阅</button>
           <button type="button" disabled={!exportable} onClick={download}>下载 ZIP</button>

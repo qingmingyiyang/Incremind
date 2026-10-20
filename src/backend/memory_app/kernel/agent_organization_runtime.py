@@ -10,6 +10,7 @@ startup/recovery path from becoming a second scheduler.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import replace
 from typing import Protocol
 from uuid import NAMESPACE_URL, uuid5
@@ -95,12 +96,14 @@ class AgentOrganizationRuntime:
             raise AgentOrganizationError("agent organization requires a project-scoped Turn")
         payload = self._with_host_capabilities(payload) if agent_turn_mode else payload
         try:
-            main = self._coordinator.accept_and_register_main(payload)
-            steward = self._prepare_steward(main)
-            # The main can observe a durable steward identity only after that
-            # child was accepted and scheduled.
-            self._coordinator.submit_accepted_turn(steward)
-            self._coordinator.submit_accepted_turn(main)
+            with self._product_dispatching(payload['turn_id']) as allowed:
+                if not allowed:
+                    raise AgentOrganizationError('product task is paused')
+                main = self._coordinator.accept_and_register_main(payload)
+                steward = self._prepare_steward(main)
+                # 主轮读取实际已接纳并派发的 Steward，停止同时读取这组成员。
+                self._coordinator.submit_accepted_turn(steward)
+                self._coordinator.submit_accepted_turn(main)
         except (AgentCoordinatorError, ValueError, TypeError) as error:
             raise AgentOrganizationError("organization start was rejected") from error
         return {
@@ -292,6 +295,8 @@ class AgentOrganizationRuntime:
         return current
 
     def _dispatch_cluster(self, plan: AgentDispatchPlan, main: AgentRun) -> AgentDispatchPlan:
+        if self._product_paused(main.turn_id):
+            return plan
         if self._request_loader(main.turn_id).get('desired_outcome') == 'project.task':
             return self._dispatch_divided_cluster(plan, main)
         permits = tuple(sorted(
@@ -314,13 +319,13 @@ class AgentOrganizationRuntime:
             plan = self._transition(plan, "dispatching", "organization-dispatching")
         if plan.status == "dispatching":
             for permit in permits:
-                prepared = self._coordinator.prepare_child_from_permit(
-                    project_id=plan.project_id, permit_id=permit.permit_id,
-                    operation_id=_id(
-                        "op-organization-permit", plan.plan_id, permit.permit_id,
-                    ),
-                )
-                self._coordinator.submit_accepted_turn(prepared)
+                with self._product_dispatching(main.turn_id) as allowed:
+                    if not allowed:
+                        return plan
+                    prepared = self._coordinator.prepare_child_from_permit(
+                        project_id=plan.project_id, permit_id=permit.permit_id,
+                        operation_id=_id("op-organization-permit", plan.plan_id, permit.permit_id))
+                    self._coordinator.submit_accepted_turn(prepared)
                 children.append(prepared)
             # On replay after dispatching was persisted, derive the same child
             # identities from the frozen permit rather than launching anything.
@@ -332,6 +337,8 @@ class AgentOrganizationRuntime:
         return plan
 
     def _dispatch_divided_cluster(self, plan: AgentDispatchPlan, main: AgentRun) -> AgentDispatchPlan:
+        if self._product_paused(main.turn_id):
+            return plan
         permits = tuple(sorted(
             self._dispatch_store.list_permits(project_id=plan.project_id, plan_id=plan.plan_id),
             key=lambda value: value.permit_id,
@@ -361,18 +368,20 @@ class AgentOrganizationRuntime:
             completed = {key for key, run in bound.items() if run.is_terminal}
             active = sum(not run.is_terminal for run in bound.values())
             for permit in permits:
+                if self._product_paused(main.turn_id):
+                    return plan
                 if permit.assignment_id in bound:
                     continue
                 dependencies = self._coordinator.assignment_dependencies(project_id=plan.project_id, permit_id=permit.permit_id)
                 if not set(dependencies).issubset(completed) or active >= plan.max_concurrent_assignments:
                     continue
-                prepared = self._coordinator.prepare_child_from_permit(
-                    project_id=plan.project_id, permit_id=permit.permit_id,
-                    operation_id=_id(
-                        "op-organization-permit", plan.plan_id, permit.permit_id,
-                    ),
-                )
-                self._coordinator.submit_accepted_turn(prepared)
+                with self._product_dispatching(main.turn_id) as allowed:
+                    if not allowed:
+                        return plan
+                    prepared = self._coordinator.prepare_child_from_permit(
+                        project_id=plan.project_id, permit_id=permit.permit_id,
+                        operation_id=_id("op-organization-permit", plan.plan_id, permit.permit_id))
+                    self._coordinator.submit_accepted_turn(prepared)
                 children.append(prepared)
                 bound[permit.assignment_id] = prepared.run
                 active += 1
@@ -384,6 +393,14 @@ class AgentOrganizationRuntime:
             self._create_fan_in(main, plan, child_ids)
             plan = self._transition(plan, "dispatched", "organization-dispatched")
         return plan
+
+    def _product_paused(self, turn_id):
+        check = getattr(self, 'product_stop_requested', None)
+        return callable(check) and check(turn_id)
+
+    def _product_dispatching(self, turn_id):
+        scope = getattr(self, 'product_stop_dispatching', None)
+        return scope(turn_id) if callable(scope) else nullcontext(True)
 
     def _freshness_allows(self, project_id: str) -> bool:
         if self._freshness_gate is None:
@@ -414,6 +431,8 @@ class AgentOrganizationRuntime:
     def _converge_dispatched_plan(
         self, plan: AgentDispatchPlan, main: AgentRun,
     ) -> AgentDispatchPlan:
+        if self._product_paused(main.turn_id):
+            return plan
         fan_in_id = _id("organization-fan-in", plan.plan_id)
         result = self._run_store.get_fan_in_result(
             fan_in_id, project_id=plan.project_id,

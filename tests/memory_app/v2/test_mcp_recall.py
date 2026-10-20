@@ -14,7 +14,8 @@ from backend.memory_app.v2.policies.pipelines import interfaces_for_turn
 from backend.memory_app.v2.privacy import set_private_project
 from backend.recognition import WorkScope
 from core.effect_log import EffectState
-from tests.memory_app.v2.test_external_context import env, settings, setup, request, DAY
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
+from tests.memory_app.v2.test_external_context import settings, setup, request, DAY
 from tests.memory_app.v2.test_workbench_ask import add_document
 
 

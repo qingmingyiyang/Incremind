@@ -1,5 +1,6 @@
 import { productFetch as fetch } from './shared/api/deviceTransport';
 import { readResponseJson } from './shared/lib/responseJson';
+import { useRequestScope } from './shared/lib/useRequestScope';
 import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { Shell, Tray } from "./shared/ui";
 import { PorcelainLazyRoute } from "./features/rebuild/PorcelainRouteFallback";
@@ -54,9 +55,22 @@ export function AppRouter() {
   const [projects, setProjects] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [error, setError] = useState("");
+  const [failedJobOpen, setFailedJobOpen] = useState(null), [userEpoch, setUserEpoch] = useState(0);
+  const [originalOpenSequence, setOriginalOpenSequence] = useState(0);
+  const jobOpenGate = useRequestScope(`${route.hash}\0${userEpoch}`), jobOpenScope = jobOpenGate.scope;
+  const jobOpenError = jobOpenGate.isCurrent(failedJobOpen?.request) ? failedJobOpen : null;
   const [refreshKey, setRefreshKey] = useState(0);
   const currentProject = useRef(route.projectId);
   currentProject.current = route.projectId;
+  useEffect(() => {
+    const changed = () => { jobOpenGate.invalidate('open'); setFailedJobOpen(null); setUserEpoch(value => value + 1); };
+    window.addEventListener('chriptmas-user-space', changed);
+    window.addEventListener('chriptmas-device-required', changed);
+    return () => {
+      window.removeEventListener('chriptmas-user-space', changed);
+      window.removeEventListener('chriptmas-device-required', changed);
+    };
+  }, []);
   useEffect(() => {
     const update = () => setRoute(readRoute());
     window.addEventListener("hashchange", update);
@@ -96,6 +110,7 @@ export function AppRouter() {
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [route.projectId, refreshKey]);
   function navigate(view, extras = {}) {
+    jobOpenGate.invalidate('open'); setFailedJobOpen(null);
     const { compose, ...parameters } = extras;
     if (view === 'workbench' && compose?.intent === 'remember') setHandoff({ id: ++handoffSequence.current, projectId: parameters.project_id || route.projectId, scene: compose.scene, intent: 'remember' });
     else setHandoff(null);
@@ -110,6 +125,7 @@ export function AppRouter() {
     setProjects(current => current.some(row => row.id === project.id) ? current : [...current, project]);
   }
   function switchProject(id) {
+    jobOpenGate.invalidate('open'); setFailedJobOpen(null);
     setHandoff(null);
     const params = new URLSearchParams(route.hash.slice(1));
     params.set("project_id", id);
@@ -118,9 +134,26 @@ export function AppRouter() {
     window.location.hash = params.toString();
     setRoute(readRoute());
   }
-  function openJob(job) {
+  async function openJob(job) {
     const target = job.target;
     if (!target?.id) return;
+    const request = jobOpenGate.issue('open', jobOpenScope);
+    if (!request) return;
+    setFailedJobOpen(null);
+    if (target.type === 'item' && !target.document_id) {
+      try {
+        const sources = await getV2(`library/sources?${new URLSearchParams({ project_id: route.projectId })}`);
+        if (!jobOpenGate.isCurrent(request)) return;
+        if (sources.items.some(source => source.id === target.id)) {
+          setOriginalOpenSequence(value => value + 1);
+          navigate('library', { layer: 'source', source_id: target.id });
+          return;
+        }
+      } catch {
+        if (jobOpenGate.isCurrent(request)) setFailedJobOpen({ request, job });
+        return;
+      }
+    }
     if (target.type === "turn") {
       navigate("workbench", { turn_id: target.turn_id || target.id, ...(target.thread_id ? { thread_id: target.thread_id } : {}) });
     } else if (target.type === "document") {
@@ -169,10 +202,10 @@ export function AppRouter() {
   const params = new URLSearchParams(route.hash.slice(1));
   return <>
     {desktopTitlebar && <header className="desktop-titlebar" aria-label="窗口标题栏"><span>Chriptmas OS</span></header>}
-    <Shell active={activeView(route.view)} project={route.projectId} projects={projectList} onProjectChange={switchProject} onNavigate={navigate} onCompanion={() => navigate("companion")} bearState={jobs.some(job => job.state === "failed" || job.state === "pending") ? "attention" : jobs.some(job => job.state === "processing") ? "working" : "ready"} tray={<><Tray jobs={jobs} onOpen={openJob} onRetry={retryJob}/>{error && <div className="app-router-error"><span>{error}</span><button type="button" aria-label={error} onClick={() => setRefreshKey(value => value + 1)}>重试</button></div>}</>}>
+    <Shell active={activeView(route.view)} project={route.projectId} projects={projectList} onProjectChange={switchProject} onNavigate={navigate} onCompanion={() => navigate("companion")} bearState={jobs.some(job => job.state === "failed" || job.state === "pending") ? "attention" : jobs.some(job => job.state === "processing") ? "working" : "ready"} tray={<><Tray jobs={jobs} onOpen={openJob} onRetry={retryJob}/>{(jobOpenError || error) && <div className="app-router-error"><span>{jobOpenError ? '进度暂不可用 · 重试' : error}</span><button type="button" aria-label={jobOpenError ? '进度暂不可用 · 重试' : error} onClick={() => jobOpenError ? openJob(jobOpenError.job) : setRefreshKey(value => value + 1)}>重试</button></div>}</>}>
       <div className="app-router-page" data-page-view={route.view}>
         {view === "workbench" ? <PorcelainLazyRoute><WorkbenchPage key={route.projectId} draft={drafts.current.get(route.projectId)} onDraft={saveDraft} handoff={handoff?.projectId === route.projectId ? handoff : null} onHandoff={finishHandoff} projectId={route.projectId} projects={projects} threadId={params.get("thread_id") || undefined} turnId={params.get("turn_id") || undefined} onNavigate={navigate} onProjectCreated={projectCreated} onProjectsStale={reloadProjects}/></PorcelainLazyRoute>
-          : view === 'library' ? <PorcelainLazyRoute><LibraryPage key={route.hash} projectId={route.projectId} projects={projects} initialLayer={params.get('layer') || undefined} documentId={params.get('document_id') || undefined} onNavigate={navigate} onProjectCreated={projectCreated}/></PorcelainLazyRoute>
+          : view === 'library' ? <PorcelainLazyRoute><LibraryPage key={`${route.hash}\0${originalOpenSequence}`} projectId={route.projectId} projects={projects} initialLayer={params.get('layer') || undefined} initialFilter={params.get('filter') === 'pending_memory' ? 'pending' : undefined} documentId={params.get('document_id') || undefined} sourceId={params.get('source_id') || undefined} onNavigate={navigate} onProjectCreated={projectCreated}/></PorcelainLazyRoute>
           : view === 'settings' ? <PorcelainLazyRoute><SettingsPage key={route.hash} projectId={route.projectId} initialSection={params.get('section') || 'model'} expandProject={params.get('expand_project') || undefined}/></PorcelainLazyRoute>
           : <PorcelainLazyRoute><CompanionPage key={route.hash} projectId={route.projectId} initialMode={params.get('mode') || (params.get('intent') === 'weekly_memory_review' || params.get('panel') === 'memory' ? 'review' : 'chat')}/></PorcelainLazyRoute>}
 

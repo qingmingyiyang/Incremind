@@ -1,6 +1,6 @@
 import { formatLocalShortDate } from '../../shared/lib/time';
 import { formatModelCost } from '../../shared/lib/modelCost';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Row, Switch, StatusDot } from '../../shared/ui';
 import { ChatGPTSubscriptionSettings } from '../../shared/ui/ChatGPTSubscriptionSettings';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
@@ -14,15 +14,23 @@ import { SkillExports } from './SkillExports';
 import { ProviderStoreField } from './ProviderStoreField';
 import { PlatformSessionSettings } from './PlatformSessionSettings';
 import { AsrLexicon } from './AsrLexicon';
+import { applyTheme, readStoredTheme } from '../rebuild/themeBootstrap';
 import './Settings.css';
 
 const groups = { model: '模型', privacy: '隐私', project: '项目', data: '数据', devices: '设备', websites: '网站' };
 const purposes = { generation: '生成', asr: '转写', embedding: '向量', rerank: '重排', search: '搜索' };
 export default function SettingsPage({ projectId = 'default', initialSection = 'model', expandProject, api = settingsApi }) {
   const [section, setSection] = useState(initialSection in groups ? initialSection : 'model');
+  const [theme, setTheme] = useState(readStoredTheme);
   const [value, setValue] = useState(null), [projects, setProjects] = useState([]), [refresh, setRefresh] = useState(0);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const gate = useRequestScope(projectId), scope = gate.scope;
+  useEffect(() => {
+    // 桌面按钮更新实际主题时，选择框仍读取已保存的三态值。
+    const observer = new MutationObserver(() => setTheme(readStoredTheme()));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     const token = gate.issue('load', scope);
     Promise.all([api.load(), api.projects()]).then(([settings, list]) => {
@@ -39,12 +47,24 @@ export default function SettingsPage({ projectId = 'default', initialSection = '
     if (busy) return;
     const token = gate.issue('write', scope);
     if (!token) return;
+    gate.invalidate('load');
     setBusy(true); setError('');
     try { await operation();  }
     catch (reason) { if (gate.isCurrent(token)) setError(reason.status === 409 || reason.code === 'revision_conflict' ? '设置已变化 · 刷新' : ['server_unavailable', 'invalid_response'].includes(reason.code) ? reason.message : '操作未完成 · 重试'); }
-    finally { if (gate.isCurrent(token)) { setBusy(false); setRefresh(old => old + 1); } }
+    finally {
+      if (gate.isCurrent(token)) {
+        try {
+          const [settings, list] = await Promise.all([api.load(), api.projects()]);
+          if (gate.isCurrent(token)) { gate.invalidate('load'); setValue(settings); setProjects(list.items || []); }
+        } catch { if (gate.isCurrent(token)) setError('读取未完成 · 重试'); }
+        finally { if (gate.isCurrent(token)) setBusy(false); }
+      }
+    }
   }
-  return <div className="settings-page"><nav aria-label="设置分组">{Object.entries(groups).map(([key, label]) => <button type="button" key={key} aria-pressed={section === key} onClick={() => setSection(key)}>{label}</button>)}</nav>
+  return <div className="settings-page"><nav aria-label="设置分组">{Object.entries(groups).map(([key, label]) => <button type="button" key={key} aria-pressed={section === key} onClick={() => setSection(key)}>{label}</button>)}
+    <Row readOnly title="主题" className="settings-theme" trailing={<select aria-label="主题" value={theme} onChange={event => setTheme(applyTheme(event.target.value))}>
+      <option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
+    </select>}/></nav>
     <main><h1>{groups[section]}</h1>{error && <p role="alert">{error} <button type="button" onClick={() => { setError(''); setRefresh(old => old + 1); }}>重试</button></p>}{!value ? <span role="status">读取中</span> : <>
       {section === 'model' && <ModelRows key={projectId} projectId={projectId} model={value.model} externalAgent={value.external_agent} externalProxy={value.external_proxy} api={api} busy={busy} run={run} reload={() => setRefresh(old => old + 1)}/>}
       {section === 'privacy' && <PrivacyRows privacy={value.privacy} projects={projects} api={api} run={run} busy={busy}/>}
@@ -77,10 +97,10 @@ function ModelRows({ projectId, model, externalAgent, externalProxy, api, run, b
     return <section key={purpose} className="settings-item"><Row title={label} expanded={open === purpose} onOpen={() => setOpen(old => old === purpose ? null : purpose)} trailing={<><span className="ui-row-meta">{local ? model.generation_mode.local_model : row.model || '—'}</span><StatusDot state={row.configured || row.status === 'ready' ? 'done' : 'unverified'}/><Switch label={`${label}外发`} title={local ? LOCAL_GENERATION_HINT : REMOTE_PROCESSING_HINT} checked={!local && enabled} disabled={busy || local} onChange={next => toggle(purpose, next)}/></>}/>
       {open === purpose && <div className="settings-expand">
         {purpose === 'generation' && <div role="group" aria-label="方式" className="settings-modes">{[['api', 'API'], ['subscription', '订阅'], ['local', '本机']].map(([key, name]) => <button type="button" key={key} title={key === 'local' ? LOCAL_GENERATION_HINT : undefined} aria-pressed={mode === key} disabled={busy || key === 'local' && !model.generation_mode.local_model_installed} onClick={() => pickMode(key)}>{name}</button>)}</div>}
-        {purpose === 'generation' && mode === 'subscription' ? <ChatGPTSubscriptionSettings showEgressSwitch={false} onChanged={reload}/> : purpose === 'generation' && mode === 'local' ? <Row readOnly title={model.generation_mode.local_model} meta={model.generation_mode.local_model_installed ? '已安装' : '未安装'}/> : <ModelFields key={`${purpose}:${actualMode}:${row.revision}:${row.settings_revision}:${row.base_url}:${row.model}`} purpose={purpose} label={label} row={row} readonly={asr || purpose === 'generation' && actualMode !== 'api'} busy={busy} api={api} run={run}/>}
-        {purpose === 'generation' && <FastModelField key={`${actualMode}:${row.model}:${row.revision}:${row.fast_model?.revision}:${row.subscription_binding?.selection}:${row.subscription_binding?.account}`} row={row} mode={actualMode} modeRevision={model.generation_mode.revision} api={api} run={run} busy={busy}/>}
+        {purpose === 'generation' && mode === 'subscription' ? <ChatGPTSubscriptionSettings showEgressSwitch={false} onChanged={reload}/> : purpose === 'generation' && mode === 'local' ? <Row readOnly title={model.generation_mode.local_model} meta={model.generation_mode.local_model_installed ? '已安装' : '未安装'}/> : <ModelFields key={`${purpose}:${purpose === 'generation' ? actualMode : ''}`} purpose={purpose} label={label} row={row} readonly={asr || purpose === 'generation' && actualMode !== 'api'} busy={busy} api={api} run={run}/>}
+        {purpose === 'generation' && <FastModelField key={`${mode}:${row.subscription_binding?.account}`} row={row} mode={actualMode} modeRevision={model.generation_mode.revision} api={api} run={run} busy={busy}/>}
         {purpose === 'generation' && <ProviderStoreField projectId={projectId} mode={mode} generationRevision={row.revision} modeRevision={model.generation_mode.revision} busy={busy}/>}
-        {!asr && <PriceFields key={`${purpose}:${row.revision}:${row.pricing?.revision}:${row.model}`} purpose={purpose} label={label} row={row} busy={busy} api={api} run={run}/>}
+        {!asr && <PriceFields key={`${purpose}:${purpose === 'generation' ? mode : ''}:${row.provider}:${row.base_url}:${row.model}:${row.subscription_binding?.account}`} purpose={purpose} label={label} row={row} busy={busy} api={api} run={run}/>}
         {asr && <><Row readOnly title="长音频" meta="60s · 重叠 5s"/><Row readOnly title="上限" meta={row.max_audio_bytes == null ? '—' : `${row.max_audio_bytes} B`}/><AsrLexicon projectId={projectId} api={api}/></>}
         <div className="settings-test">{!asr && purpose !== 'search' && <button type="button" disabled={busy} title={asr ? 'asr_test_unavailable' : undefined} onClick={() => run(async () => {
           const start = performance.now(); const result = await api.testModel({ purpose });
@@ -94,6 +114,10 @@ function ModelRows({ projectId, model, externalAgent, externalProxy, api, run, b
 function FastModelField({ row, mode, modeRevision, api, run, busy }) {
   const [model, setModel] = useState(row.fast_model?.configured ? row.fast_model.model : '');
   const [catalog, setCatalog] = useState([]), [error, setError] = useState(''), [retry, setRetry] = useState(0);
+  const edited = useRef(false);
+  useEffect(() => {
+    if (!edited.current) setModel(row.fast_model?.configured ? row.fast_model.model : '');
+  }, [row.fast_model?.configured, row.fast_model?.model, row.fast_model?.revision, row.revision]);
   useEffect(() => {
     if (mode !== 'subscription' || !row.configured) return undefined;
     let live = true; const controller = new AbortController();
@@ -102,14 +126,14 @@ function FastModelField({ row, mode, modeRevision, api, run, busy }) {
     return () => { live = false; controller.abort(); };
   }, [mode, row.configured, api, retry]);
   if (mode === 'local') return <Row readOnly title="快模型" meta={row.model || '主模型'}/>;
-  return <form onSubmit={event => { event.preventDefault(); run(() => api.saveFastModel({ model: model.trim() || null,
+  return <form onSubmit={event => { event.preventDefault(); run(async () => { await api.saveFastModel({ model: model.trim() || null,
     expectedRevision: row.fast_model?.revision ?? 0, expectedGenerationRevision: row.revision,
-    expectedModeRevision: modeRevision })); }}>
+    expectedModeRevision: modeRevision }); edited.current = false; }); }}>
     <label title="追问与检索；留空用主模型">快模型{mode === 'subscription'
-      ? <select aria-label="快模型" value={model} disabled={busy || !row.configured} onChange={event => setModel(event.target.value)}>
+      ? <select aria-label="快模型" value={model} disabled={busy || !row.configured} onChange={event => { edited.current = true; setModel(event.target.value); }}>
         <option value="">主模型</option>{model && !catalog.some(item => item.id === model) && <option value={model}>{model}</option>}
         {catalog.map(item => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select>
-      : <input aria-label="快模型" placeholder="主模型" value={model} disabled={busy} onChange={event => setModel(event.target.value)}/>}</label>
+      : <input aria-label="快模型" placeholder="主模型" value={model} disabled={busy} onChange={event => { edited.current = true; setModel(event.target.value); }}/>}</label>
     {error && <p role="alert">{error} <button type="button" onClick={() => setRetry(old => old + 1)}>重试</button></p>}
     <button aria-label="保存快模型" disabled={busy || !!model && !row.configured}>保存</button>
   </form>;
@@ -119,7 +143,7 @@ function VisionRow({ row = { mode: 'local', mode_revision: 0, local: { status: '
   return <section className="settings-item"><Row title="识图" expanded={open} onOpen={onOpen}
     trailing={<><div role="group" aria-label="识图方式" className="settings-modes settings-vision-modes">{[['local', '本机'], ['remote', '外接']].map(([mode, label]) => <button type="button" key={mode} disabled={busy} aria-pressed={row.mode === mode} onClick={() => run(() => api.saveVisionMode({ mode, expectedRevision: row.mode_revision ?? 0 }))}>{label}</button>)}</div>
       <StatusDot state={row.configured ? 'done' : 'unverified'}/>{remote && <Switch label="识图外发" title={REMOTE_PROCESSING_HINT} checked={row.allow_remote === true} disabled={busy} onChange={allowRemote => run(() => api.saveModel({ purpose: 'vision', baseUrl: row.base_url, model: row.model, apiKey: '', enabled: row.enabled === true, allowRemote, expectedRevision: row.revision }))}/>}</>}/>
-    {open && <div className="settings-expand">{remote ? <><ModelFields key={`vision:${row.revision}`} purpose="vision" label="识图" row={row} busy={busy} api={api} run={run}/><PriceFields key={`vision:${row.revision}:${row.pricing?.revision}`} purpose="vision" label="识图" row={row} busy={busy} api={api} run={run}/></> : <Row readOnly title={row.local?.provider || '—'} meta={row.local?.status === 'ready' ? '可用' : '不可用'}/>}</div>}
+    {open && <div className="settings-expand">{remote ? <><ModelFields key="vision:remote" purpose="vision" label="识图" row={row} busy={busy} api={api} run={run}/><PriceFields key={`vision:remote:${row.provider}:${row.base_url}:${row.model}`} purpose="vision" label="识图" row={row} busy={busy} api={api} run={run}/></> : <Row readOnly title={row.local?.provider || '—'} meta={row.local?.status === 'ready' ? '可用' : '不可用'}/>}</div>}
   </section>;
 }
 function EmbeddingRow({ row = {}, open, onOpen, api, run, busy }) {
@@ -145,8 +169,8 @@ function EmbeddingRow({ row = {}, open, onOpen, api, run, busy }) {
             onClick={() => run(() => ['loading', 'loaded'].includes(state.runtime_status) ? api.unloadEmbedding(state.runtime_revision) : api.loadEmbedding(state.runtime_revision))}>{['loading', 'loaded'].includes(state.runtime_status) ? '卸载' : '加载'}</button>}</> :
         <><span className="ui-row-meta" title="安装后约 579 MB，文字权重约 542 MB">≈ 1.53 GB</span>{state.can_install !== false && <button type="button" className="settings-vector-install" disabled={busy}
           title={state.reason_code} onClick={() => run(() => api.installEmbedding(row.mode_revision ?? 0))}>安装</button>}</>}
-    </>}/>{open && <div className="settings-expand">{!local ? <><ModelFields key={`embedding:${row.revision}:${row.mode_revision}`} purpose="embedding" label="向量" row={row} api={api} run={run} busy={busy}/>
-      <PriceFields key={`embedding:${row.revision}:${row.pricing?.revision}`} purpose="embedding" label="向量" row={row} api={api} run={run} busy={busy}/></> :
+    </>}/>{open && <div className="settings-expand">{!local ? <><ModelFields key={`embedding:${row.mode || 'remote'}`} purpose="embedding" label="向量" row={row} api={api} run={run} busy={busy}/>
+      <PriceFields key={`embedding:${row.mode || 'remote'}:${row.provider}:${row.base_url}:${row.model}`} purpose="embedding" label="向量" row={row} api={api} run={run} busy={busy}/></> :
       state.index && <Row readOnly title={indexing ? '索引中' : '已索引'} meta={`${state.index.done.toLocaleString()} / ${state.index.total.toLocaleString()}`} trailing={state.index_reason_code && <span className="settings-vector-failed" title={state.index_reason_code}>✕</span>}/>}
       {(!local || state.status === 'ready') && <div className="settings-test"><button type="button" disabled={busy || local && state.runtime_status !== 'loaded'} onClick={() => run(async () => {
         const start = performance.now(), result = await api.testModel({ purpose: 'embedding' });
@@ -156,9 +180,17 @@ function EmbeddingRow({ row = {}, open, onOpen, api, run, busy }) {
 function ModelFields({ purpose, label, row, readonly, busy, run, api }) {
   const capture = purpose === 'asr' && typeof globalThis.electronAPI?.captureCredential === 'function';
   const [baseUrl, setBaseUrl] = useState(row.base_url || row.endpoint || ''), [model, setModel] = useState(row.model || ''), [key, setKey] = useState('');
-  return <form onSubmit={event => { event.preventDefault(); const secret = key; setKey(''); run(() => capture ? api.saveAsrKey(secret) : api.saveModel({ purpose, baseUrl, model, apiKey: secret, allowRemote: row.allow_remote === true, enabled: row.enabled === true, expectedRevision: row.revision })); }}>
-    <label>地址{purpose === 'asr' ? <span className="ui-row-meta">{baseUrl || '—'}</span> : <input aria-label={`${label}地址`} value={baseUrl} disabled={readonly || busy} onChange={event => setBaseUrl(event.target.value)}/>}</label>
-    <label>模型{purpose === 'asr' ? <span className="ui-row-meta">{model || '—'}</span> : <input aria-label={`${label}模型`} value={model} disabled={readonly || busy} onChange={event => setModel(event.target.value)}/>}</label>
+  const edited = useRef({ baseUrl: false, model: false });
+  useEffect(() => {
+    if (!edited.current.baseUrl) setBaseUrl(row.base_url || row.endpoint || '');
+    if (!edited.current.model) setModel(row.model || '');
+  }, [row.base_url, row.endpoint, row.model, row.revision, row.settings_revision]);
+  return <form onSubmit={event => { event.preventDefault(); const secret = key; setKey(''); run(async () => {
+    await (capture ? api.saveAsrKey(secret) : api.saveModel({ purpose, baseUrl, model, apiKey: secret, allowRemote: row.allow_remote === true, enabled: row.enabled === true, expectedRevision: row.revision }));
+    edited.current = { baseUrl: false, model: false };
+  }); }}>
+    <label>地址{purpose === 'asr' ? <span className="ui-row-meta">{baseUrl || '—'}</span> : <input aria-label={`${label}地址`} value={baseUrl} disabled={readonly || busy} onChange={event => { edited.current.baseUrl = true; setBaseUrl(event.target.value); }}/>}</label>
+    <label>模型{purpose === 'asr' ? <span className="ui-row-meta">{model || '—'}</span> : <input aria-label={`${label}模型`} value={model} disabled={readonly || busy} onChange={event => { edited.current.model = true; setModel(event.target.value); }}/>}</label>
     <label>密钥<input aria-label={`${label}密钥`} type="password" autoComplete="new-password" value={key} placeholder={row.has_api_key ? '已设置' : '未设置'} disabled={readonly && !capture || busy} onChange={event => setKey(event.target.value)}/></label>
     {(!readonly || capture) && <button type="submit" disabled={busy}>保存</button>}
   </form>;
@@ -167,14 +199,18 @@ function PriceFields({ purpose, label, row, busy, run, api }) {
   const fields = { input_per_million: '输入', output_per_million: '输出', cache_read_per_million: '缓存命中' };
   const pricing = row.pricing ?? {};
   const [rates, setRates] = useState(Object.fromEntries(Object.keys(fields).map(key => [key, pricing.rates?.[key] ?? ''])));
+  const edited = useRef(new Set());
+  useEffect(() => {
+    setRates(old => Object.fromEntries(Object.keys(fields).map(key => [key, edited.current.has(key) ? old[key] : pricing.rates?.[key] ?? ''])));
+  }, [row.revision, pricing.revision, pricing.rates?.input_per_million, pricing.rates?.output_per_million, pricing.rates?.cache_read_per_million]);
   const readonly = pricing.editable === false;
-  return <form onSubmit={event => { event.preventDefault(); run(() => api.savePrices({ purpose,
+  return <form onSubmit={event => { event.preventDefault(); run(async () => { await api.savePrices({ purpose,
     rates: Object.fromEntries(Object.entries(rates).map(([key, value]) => [key, value === '' ? null : String(value)])),
-    expectedRevision: pricing.revision ?? 0, expectedConfigurationRevision: row.revision ?? 0 })); }}>
+    expectedRevision: pricing.revision ?? 0, expectedConfigurationRevision: row.revision ?? 0 }); edited.current.clear(); }); }}>
     <fieldset className="settings-prices"><legend>¥ / 百万 token</legend>
       {Object.entries(fields).map(([key, title]) => <label key={key}>{title}<input type="number" min="0" max="1000000" step="0.000001"
         aria-label={`${label}${title}单价`} placeholder="—" value={readonly ? pricing.rates?.[key] ?? '' : rates[key]} disabled={readonly || busy}
-        onChange={event => setRates(old => ({ ...old, [key]: event.target.value }))}/></label>)}
+        onChange={event => { edited.current.add(key); setRates(old => ({ ...old, [key]: event.target.value })); }}/></label>)}
     </fieldset>{!readonly && <button type="submit" disabled={busy}>保存单价</button>}
   </form>;
 }
@@ -197,7 +233,7 @@ function ProjectRows({ projects, expandProject, api, run, busy }) {
   const [open, setOpen] = useState(expandProject || null), [newName, setNewName] = useState('');
   return <>{projects.map(row => <section className="settings-item" key={row.id}><Row title={row.name} expanded={open === row.id} meta={String(row.scenes?.length || 0)} onOpen={() => setOpen(old => old === row.id ? null : row.id)}/>
     {open === row.id && <section role="region" aria-label={`${row.name}设置`} className="settings-expand">
-      {row.id !== 'me' && <ProjectFields key={`${row.id}:${row.revision}`} row={row} run={run} api={api} busy={busy}/>}
+      {row.id !== 'me' && <ProjectFields key={`fields:${row.id}`} row={row} run={run} api={api} busy={busy}/>}
       {row.id !== 'inbox' && <ProjectConstraints key={row.id} projectId={row.id} api={api}/>}
       {row.id !== 'inbox' && <SkillExports key={`skills:${row.id}`} projectId={row.id} scenes={row.scenes || []}/>}
     </section>}
@@ -205,9 +241,17 @@ function ProjectRows({ projects, expandProject, api, run, busy }) {
 }
 function ProjectFields({ row, api, run, busy }) {
   const [name, setName] = useState(row.name), [scene, setScene] = useState('');
-  return <><form onSubmit={event => { event.preventDefault(); run(() => api.saveProject(row, { name })); }}><label>名称<input aria-label="名称" value={name} onChange={event => setName(event.target.value)}/></label><button disabled={busy}>保存</button></form>
+  const edited = useRef({ name: 0, scene: 0 });
+  useEffect(() => { if (!edited.current.name) setName(row.name); }, [row.name, row.revision]);
+  return <><form onSubmit={event => { event.preventDefault(); const edit = edited.current.name; run(async () => {
+    const saved = await api.saveProject(row, { name });
+    if (edited.current.name === edit) { edited.current.name = 0; setName(saved.name); }
+  }); }}><label>名称<input aria-label="名称" value={name} onChange={event => { edited.current.name += 1; setName(event.target.value); }}/></label><button disabled={busy}>保存</button></form>
     <div className="settings-tags">{(row.scenes || []).map(value => <span key={value}>{value}</span>)}</div>
-    <form onSubmit={event => { event.preventDefault(); if (scene.trim()) run(() => api.saveProject(row, { scenes: [...row.scenes, scene.trim()] })); }}><label>场景<input aria-label="添加场景" value={scene} onChange={event => setScene(event.target.value)}/></label><button disabled={busy || !scene.trim()}>添加</button></form>
+    <form onSubmit={event => { event.preventDefault(); const edit = edited.current.scene; if (scene.trim()) run(async () => {
+      await api.saveProject(row, { scenes: [...row.scenes, scene.trim()] });
+      if (edited.current.scene === edit) { edited.current.scene = 0; setScene(''); }
+    }); }}><label>场景<input aria-label="添加场景" value={scene} onChange={event => { edited.current.scene += 1; setScene(event.target.value); }}/></label><button disabled={busy || !scene.trim()}>添加</button></form>
     <Row readOnly title="私密" trailing={<Switch label="私密" title={PRIVATE_MATERIAL_HINT} checked={row.private === true} disabled={busy} onChange={value => run(() => api.saveProject(row, { private: value }))}/>}/>
   </>;
 }

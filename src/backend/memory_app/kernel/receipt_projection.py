@@ -32,7 +32,7 @@ def frozen_task_request(runtime_root, identity, project, *, question):
 
 
 def _frozen_request(runtime_root, identity, project, *, question, kind):
-    if kind not in {'project.answer', 'project.task'}:
+    if kind not in {'project.answer', 'project.task', 'agent.steward.plan'}:
         return None
     if not all(isinstance(value, str) and value for value in (identity, project, question)):
         return None
@@ -61,18 +61,21 @@ def _frozen_request(runtime_root, identity, project, *, question, kind):
     return found
 
 
-def closed_model_attempt_binding(runtime_root, identity, project, *, question, model_request_id, lease):
+def closed_model_attempt_binding(runtime_root, identity, project, *, question, model_request_id, lease, stopped=False):
     """Inspect exact existing reservations; closure proof is supplied separately."""
     return _closed_model_attempt_binding(runtime_root, identity, project, question=question,
-        model_request_id=model_request_id, lease=lease, kind='project.answer')
+        model_request_id=model_request_id, lease=lease, kind='project.answer', stopped=stopped)
 
 
-def closed_task_model_attempt_binding(runtime_root, identity, project, *, question, model_request_id, lease):
+def closed_task_model_attempt_binding(runtime_root, identity, project, *, question, model_request_id, lease,
+                                      kind='project.task', stopped=False):
+    if kind != 'project.task' and not (stopped and kind == 'agent.steward.plan'):
+        return None
     return _closed_model_attempt_binding(runtime_root, identity, project, question=question,
-        model_request_id=model_request_id, lease=lease, kind='project.task')
+        model_request_id=model_request_id, lease=lease, kind=kind, stopped=stopped)
 
 
-def _closed_model_attempt_binding(runtime_root, identity, project, *, question, model_request_id, lease, kind):
+def _closed_model_attempt_binding(runtime_root, identity, project, *, question, model_request_id, lease, kind, stopped=False):
     if _frozen_request(runtime_root, identity, project, question=question, kind=kind) is None:
         return None
     if (not isinstance(model_request_id, str) or not model_request_id or type(lease) is not dict
@@ -107,8 +110,9 @@ def _closed_model_attempt_binding(runtime_root, identity, project, *, question, 
                 terminal = validate_model_wire_attempt_receipt(_parse(row[8]))
                 if (terminal['turn_id'] != identity or terminal['model_request_id'] != model_request_id
                         or terminal['attempt_id'] != row[0] or terminal['attempt_number'] != number
-                        or terminal['status'] != 'failed_transport' or row[9] != 'UNKNOWN'
-                        or terminal['error_code'] == 'ai.consumer_cancelled'
+                        or terminal['status'] not in ({'failed_transport', 'consumer_cancelled'} if stopped else {'failed_transport'})
+                        or row[9] != 'UNKNOWN'
+                        or not stopped and terminal['error_code'] == 'ai.consumer_cancelled'
                         or any(dispatched.get(key) != terminal.get(key) for key in
                             ('attempt_id', 'attempt_number', 'turn_id', 'model_request_id', 'routing_snapshot_revision', 'provider_id', 'model_id'))):
                     return None

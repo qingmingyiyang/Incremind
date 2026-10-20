@@ -7,6 +7,7 @@ import { devicesApi } from './devicesApi';
 import { settingsApi } from './settingsApi';
 export function SettingsData({ projectId, loadSnapshots = listMemorySnapshots, createSnapshot = createMemorySnapshot, checkIntegrity = settingsApi.integrity }) {
   const [open, setOpen] = useState(false), [snapshots, setSnapshots] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const [snapshotError, setSnapshotError] = useState(false), [loadingSnapshots, setLoadingSnapshots] = useState(false);
   const gate = useRequestScope(projectId), scope = gate.scope;
   const [integrity, setIntegrity] = useState(null), [checking, setChecking] = useState(false);
   const [integrityOpen, setIntegrityOpen] = useState(false), [integrityError, setIntegrityError] = useState(false);
@@ -61,22 +62,33 @@ export function SettingsData({ projectId, loadSnapshots = listMemorySnapshots, c
     } catch { if (gate.isCurrent(token)) setIntegrityError(true); }
     finally { if (gate.isCurrent(token)) setChecking(false); }
   }
-  useEffect(() => {
-    if (!open) return;
+  async function reloadSnapshots() {
     const token = gate.issue('snapshots', scope);
-    loadSnapshots().then(value => { if (gate.isCurrent(token)) setSnapshots(value.snapshots || []); })
-      .catch(() => { if (gate.isCurrent(token)) setError('backup_read_failed'); });
+    if (!token) return;
+    setLoadingSnapshots(true);
+    try {
+      const value = await loadSnapshots();
+      if (gate.isCurrent(token)) { setSnapshots(value.snapshots || []); setSnapshotError(false); }
+    } catch { if (gate.isCurrent(token)) setSnapshotError(true); }
+    finally { if (gate.isCurrent(token)) setLoadingSnapshots(false); }
+  }
+  useEffect(() => {
+    setSnapshots(null); setSnapshotError(false); setLoadingSnapshots(false); setError(''); setBusy(false);
+  }, [projectId]);
+  useEffect(() => {
+    if (open) reloadSnapshots();
   }, [open, projectId, loadSnapshots]);
   async function backup() {
-    const token = gate.issue('backup', scope); if (!token || busy) return;
+    if (busy) return;
+    const token = gate.issue('backup', scope); if (!token) return;
     setBusy(true); setError('');
-    try { await createSnapshot(); const value = await loadSnapshots(); if (gate.isCurrent(token)) setSnapshots(value.snapshots || []); }
+    try { await createSnapshot(); if (gate.isCurrent(token)) await reloadSnapshots(); }
     catch (failure) { if (gate.isCurrent(token)) setError(['backup_source_changed', 'backup_sqlite_busy', 'backup_sqlite_failed', 'backup_failed', 'server_unavailable', 'invalid_response', 'network_error'].includes(failure?.code) ? failure.code : 'backup_failed'); }
     finally { if (gate.isCurrent(token)) setBusy(false); }
   }
   return <>
-    <Row title="备份" expanded={open} meta={snapshots ? String(snapshots.length) : '—'} trailing={error && <span role="alert">✕ {error}</span>} onOpen={() => setOpen(value => !value)}/>
-    {open && <div className="settings-expand">{(snapshots || []).map(row => <Row readOnly key={row.snapshot_id} title={row.created_at || '—'} meta={<>{Number.isFinite(row.size_bytes) && row.size_bytes >= 0 ? `${row.size_bytes} B` : '—'}{typeof row.verified === 'boolean' && <span className={`settings-backup-verification${row.verified ? '' : ' is-failed'}`} title={row.verified ? undefined : 'backup_verification_failed'}>{row.verified ? '✓' : '✕'}</span>}</>}/>)}<button type="button" disabled={busy} onClick={backup}>立即备份</button></div>}
+    <Row title="备份" expanded={open} meta={snapshots ? String(snapshots.length) : '—'} trailing={(error || snapshotError) && <span role="alert">✕ {error || 'backup_read_failed'}</span>} onOpen={() => setOpen(value => !value)}/>
+    {open && <div className="settings-expand">{(snapshots || []).map(row => <Row readOnly key={row.snapshot_id} title={row.created_at || '—'} meta={<>{Number.isFinite(row.size_bytes) && row.size_bytes >= 0 ? `${row.size_bytes} B` : '—'}{typeof row.verified === 'boolean' && <span className={`settings-backup-verification${row.verified ? '' : ' is-failed'}`} title={row.verified ? undefined : 'backup_verification_failed'}>{row.verified ? '✓' : '✕'}</span>}</>}/>)}<button type="button" disabled={busy || loadingSnapshots} aria-label={snapshotError ? '重试读取备份列表' : undefined} onClick={snapshotError ? reloadSnapshots : backup}>{snapshotError ? '重试' : '立即备份'}</button></div>}
     <Row title="检查" expanded={integrityOpen} onOpen={check}
       meta={checking ? '…' : integrity ? integrity.ok ? '✓' : `✕ ${integrity.problems.reduce((count, problem) => count + problem.count, 0)}` : null}
       trailing={integrityError && <span role="alert">重试</span>}/>

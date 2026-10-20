@@ -4,7 +4,7 @@ from backend.memory_app.v2.policies import ACTIVE, get, override
 from backend.memory_app.v2.overviews import ScopeOverviews
 from backend.memory_app.v2.privacy import set_private_project
 from tests.memory_app.v2.test_overviews import OverviewModel
-from tests.memory_app.v2.test_workbench_ask import env, add_document, ask, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, add_document, ask, publish
 
 
 def projects(env, **names):

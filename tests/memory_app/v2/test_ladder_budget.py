@@ -5,7 +5,7 @@ from backend.memory_app.v2.ladder import plan_ladder
 from backend.memory_app.v2.policies import override
 from core.search_and_recall.evidence_windows import EvidenceWindow
 from tests.memory_app.v2.test_ladder import env as _env_fixture, document
-from tests.memory_app.v2.test_workbench_ask import env as _ask_env_fixture, add_document, ask, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as _ask_env_fixture, add_document, ask, publish
 
 env = _env_fixture
 ask_env = _ask_env_fixture

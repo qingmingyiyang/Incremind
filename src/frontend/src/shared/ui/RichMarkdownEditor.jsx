@@ -9,6 +9,7 @@ import { containsTasks, joinMarkdown, richSchema, splitMarkdown, taskStructure, 
 import { MarkdownBody } from './MarkdownBody';
 import { Icon } from './Icon';
 import { commentCountElement, commentSectionRange } from './CommentSection';
+import { DocumentRevisionHistory } from './DocumentRevisionHistory';
 import './RichMarkdownEditor.css';
 
 export function richCommand(name, state, dispatch) {
@@ -146,18 +147,27 @@ export function richHeadingSections(blocks) {
   });
 }
 
-export function RichMarkdownEditor({ value = '', onChange, onSave, disabled = false, label = '整理稿正文', evidence = [], onEvidence, documentId, documentRevision, documentMarkdown, commentSection, renderHeading }) {
+export function RichMarkdownEditor({ value = '', onChange, onSave, disabled = false, label = '整理稿正文', evidence = [], onEvidence, projectId, documentId, documentRevision, documentMarkdown, commentSection, renderHeading, toolbarActions }) {
   const [blocks, setBlocks] = useState(() => splitMarkdown(value)), [active, setActive] = useState(null), [mode, setMode] = useState('rendered'), [more, setMore] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const moreButton = useRef(null);
   const blocksRef = useRef(blocks), emitted = useRef(value), callbacks = useRef({ onChange, onSave }); callbacks.current = { onChange, onSave }; blocksRef.current = blocks;
   useEffect(() => { if (value !== emitted.current) { emitted.current = value; const next = splitMarkdown(value); blocksRef.current = next; setBlocks(next); setActive(null); } }, [value]);
   function edit(index, doc) { const next = updateMarkdownBlock(blocksRef.current, index, doc); blocksRef.current = next; setBlocks(next); emitted.current = joinMarkdown(next); callbacks.current.onChange?.(emitted.current); }
   function save() { if (!disabled) callbacks.current.onSave?.(mode === 'source' ? value : joinMarkdown(blocksRef.current)); }
-  function switchMode(next) { if (next === 'rendered') { const parsed = splitMarkdown(value); blocksRef.current = parsed; setBlocks(parsed); setActive(null); } setMode(next); setMore(false); }
+  function switchMode(next) { if (next === 'rendered') { const parsed = splitMarkdown(value); blocksRef.current = parsed; setBlocks(parsed); setActive(null); } setMode(next); setMore(false); moreButton.current?.focus(); }
+  function closeHistory() {
+    setHistoryOpen(false);
+    const entry = moreButton.current;
+    const target = entry?.disabled ? entry.closest('.ui-focus-panel')?.querySelector('.ui-focus-close') : entry;
+    target?.focus();
+  }
   const visibleText = blocks.map(block => (block.currentDoc || block.doc)?.textContent.trim());
   const section = value === documentMarkdown ? commentSectionRange({ markdown: value, documentId, documentRevision, commentSection }) : null;
   const decorations = renderHeading ? richHeadingSections(blocks).filter(row => row.unique).map(row => ({ row, value: renderHeading({ path: row.path, block: blocks[row.index] }) })) : [];
   return <div className="ui-rich-editor" onKeyDown={event => { if (!event.defaultPrevented && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); event.stopPropagation(); save(); } }}>
-    <div className="ui-rich-actions"><Tool name="more" label="更多编辑" disabled={disabled} onClick={() => setMore(value => !value)}/>{more && <button type="button" disabled={disabled} onClick={() => switchMode(mode === 'source' ? 'rendered' : 'source')}>{mode === 'source' ? '整理稿' : '源码'}</button>}<Tool name="save" label="保存" disabled={disabled} onClick={save}/></div>
+    <div className="ui-rich-actions"><Tool name="more" label="更多编辑" disabled={disabled} onClick={event => { moreButton.current = event.currentTarget; setMore(value => !value); }}/>{more && <><button type="button" disabled={disabled} onClick={() => switchMode(mode === 'source' ? 'rendered' : 'source')}>{mode === 'source' ? '整理稿' : '源码'}</button>{projectId && documentId && <button type="button" onClick={() => { setHistoryOpen(true); setMore(false); }}>历史</button>}</>}<Tool name="save" label="保存" disabled={disabled} onClick={save}/>{toolbarActions}</div>
+    {historyOpen && projectId && documentId && <DocumentRevisionHistory projectId={projectId} documentId={documentId} revision={documentRevision} onClose={closeHistory}/>}
     {mode === 'source' ? <textarea aria-label={label} value={value} disabled={disabled} onChange={event => { emitted.current = event.target.value; callbacks.current.onChange?.(event.target.value); }}/>
       : <div className="ui-markdown-body ui-rich-rendered">{blocks.map((block, index) => {
         const matches = visibleText.filter(text => text === visibleText[index]).length === 1 ? evidence.filter(fact => fact.text === visibleText[index]) : [];

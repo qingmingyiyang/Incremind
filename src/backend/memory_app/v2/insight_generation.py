@@ -442,7 +442,7 @@ def generate_insights(models, service, documents, project_id, document_id, *, on
                     raise
             validate()
             assignment = scene_of(records, "document", document_id)
-            if assignment and assignment.get("project_id") == project_id:
+            if assignment and assignment.get("project_id") == project_id and assignment["scene"] is not None:
                 assign_scene(records, "candidate", candidate_id, project_id, assignment["scene"], if_absent=True)
             result.append(insight_view(records, scope, candidate_id, service=service))
         except Exception:

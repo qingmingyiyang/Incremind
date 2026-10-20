@@ -70,6 +70,7 @@ def create_vault_backup(
     restore_verify: bool = False,
     automatic: bool = False,
     job_id: str | None = None,
+    exclude_roots: tuple[Path, ...] = (),
 ) -> VaultBackupSnapshot:
     """Create a content-addressed immutable snapshot without changing the source.
 
@@ -80,7 +81,12 @@ def create_vault_backup(
 
     source = _require_existing_root(source_root, label="backup source")
     backup_parent = _require_non_symlink_path(backups_root, label="backup root")
-    _require_disjoint_roots(source, backup_parent, message="vault backup root cannot overlap source")
+    excluded = tuple(_require_non_symlink_path(Path(path), label="excluded backup root") for path in exclude_roots)
+    if any(path == source or not path.is_relative_to(source) for path in excluded):
+        raise VaultBackupRestoreConflict("excluded backup root must be inside source")
+    # 仅明确排除的恢复管理目录可以容纳内嵌备份；默认调用保持原隔离约束。
+    if not any(backup_parent != path and backup_parent.is_relative_to(path) for path in excluded):
+        _require_disjoint_roots(source, backup_parent, message="vault backup root cannot overlap source")
     if backup_parent.exists() and not backup_parent.is_dir():
         raise VaultBackupRestoreConflict("vault backup root must be a directory")
     _require_snapshot_id(snapshot_id)
@@ -95,7 +101,7 @@ def create_vault_backup(
     try:
         # Live SQLite commits belong to the online snapshot, not a raw-file
         # comparison. All other files retain the original before/after check.
-        files = _backup_inventory(source, sqlite_online=sqlite_online, exclude_logs=exclude_logs)
+        files = _backup_inventory(source, sqlite_online=sqlite_online, exclude_logs=exclude_logs, exclude_roots=excluded)
         databases = {relative: _file_identity(path) for relative, path in files if sqlite_online and _is_sqlite_file(path)}
         ordinary = tuple(item for item in files if item[0] not in databases)
         starting_fingerprint = _fingerprint_inventory(ordinary)
@@ -118,7 +124,7 @@ def create_vault_backup(
                 "files": manifest_files,
             },
         )
-        ending_files = _backup_inventory(source, sqlite_online=sqlite_online, exclude_logs=exclude_logs)
+        ending_files = _backup_inventory(source, sqlite_online=sqlite_online, exclude_logs=exclude_logs, exclude_roots=excluded)
         copied_ordinary = [item for item in manifest_files if item["path"] not in databases]
         if tuple(item[0] for item in ending_files) != tuple(item[0] for item in files):
             raise VaultBackupRestoreConflict("vault backup source changed while copying", reason_code="backup_source_changed")
@@ -168,6 +174,18 @@ def verify_vault_backup(snapshot_root: Path) -> VaultBackupSnapshot:
         if _file_size(path) != item["size"] or _sha256_file(path) != item["sha256"]:
             raise VaultBackupRestoreError("vault backup payload hash does not match manifest")
     return VaultBackupSnapshot(snapshot_id, snapshot, expected_fingerprint, len(files))
+
+
+def is_runtime_backup(snapshot_root: Path) -> bool:
+    """沿现有相对路径判断运行根层级，不增加快照字段。"""
+    files = _manifest_files(_read_manifest(Path(snapshot_root)).get("files"))
+    for item in files:
+        parts = Path(item["path"]).parts
+        if parts[0] == ".rebuild-data" or (
+            len(parts) > 2 and parts[0] in {"users", "shared"} and parts[2] == ".rebuild-data"
+        ):
+            return True
+    return False
 
 
 def restore_vault_backup(
@@ -400,8 +418,9 @@ def _required_snapshot_id(value: object) -> str:
     return value
 
 
-def _backup_inventory(root: Path, *, sqlite_online: bool, exclude_logs: bool):
-    files = _inventory_files(root) if sqlite_online else _durable_inventory_files(root)
+def _backup_inventory(root: Path, *, sqlite_online: bool, exclude_logs: bool, exclude_roots=()):
+    files = (_inventory_files(root, exclude_roots=exclude_roots) if sqlite_online
+             else _durable_inventory_files(root, exclude_roots=exclude_roots))
     if not exclude_logs:
         return files
     def log_path(relative):
@@ -411,10 +430,12 @@ def _backup_inventory(root: Path, *, sqlite_online: bool, exclude_logs: bool):
     return tuple(item for item in files if not log_path(item[0]))
 
 
-def _inventory_files(root: Path) -> tuple[tuple[str, Path], ...]:
+def _inventory_files(root: Path, *, exclude_roots=()) -> tuple[tuple[str, Path], ...]:
     files: list[tuple[str, Path]] = []
     native_root = _native_io_path(root)
+    excluded = {os.path.normcase(_native_io_path(path)) for path in exclude_roots}
     for current, directories, filenames in os.walk(native_root):
+        directories[:] = [name for name in directories if os.path.normcase(os.path.join(current, name)) not in excluded]
         for name in (*directories, *filenames):
             if os.path.islink(os.path.join(current, name)):
                 raise VaultBackupRestoreError(
@@ -439,15 +460,17 @@ def _inventory_files(root: Path) -> tuple[tuple[str, Path], ...]:
     return tuple(sorted(files, key=lambda item: item[0]))
 
 
-def _durable_inventory_files(root: Path) -> tuple[tuple[str, Path], ...]:
-    _checkpoint_sqlite_databases(root)
-    return _inventory_files(root)
+def _durable_inventory_files(root: Path, *, exclude_roots=()) -> tuple[tuple[str, Path], ...]:
+    _checkpoint_sqlite_databases(root, exclude_roots=exclude_roots)
+    return _inventory_files(root, exclude_roots=exclude_roots)
 
 
-def _checkpoint_sqlite_databases(root: Path) -> None:
+def _checkpoint_sqlite_databases(root: Path, *, exclude_roots=()) -> None:
     native_root = _native_io_path(root)
+    excluded = {os.path.normcase(_native_io_path(path)) for path in exclude_roots}
     databases: list[str] = []
     for current, directories, filenames in os.walk(native_root):
+        directories[:] = [name for name in directories if os.path.normcase(os.path.join(current, name)) not in excluded]
         for name in (*directories, *filenames):
             if os.path.islink(os.path.join(current, name)):
                 raise VaultBackupRestoreError(
@@ -729,11 +752,17 @@ def verify_runtime_backup(snapshot):
         baseline = meta.get('tables')
         if baseline is not None and not isinstance(baseline, dict):
             raise ValueError('backup_verification_failed')
-        with tempfile.TemporaryDirectory(prefix='chriptmas-backup-check-') as temporary:
+        temporary_name = Path(tempfile.mkdtemp(prefix='chriptmas-backup-check-', dir=_native_io_path(snapshot.parent))).name
+        # 数据库 URI 保持普通路径表示，原生长路径只用于文件操作。
+        temporary = snapshot.parent / temporary_name
+        try:
             restored = restore_vault_backup(snapshot_root=snapshot, target_root=Path(temporary) / 'restored')
             expected = _sqlite_tables(snapshot / 'payload') if baseline is None else baseline
             if _sqlite_tables(restored.target_root) != expected:
                 raise ValueError('backup_verification_failed')
+        finally:
+            # Windows 长路径使用既有原生路径转换；清理完成后才允许报告验证成功。
+            shutil.rmtree(_native_io_path(temporary))
         meta.update(verified=True, reason_code=None, tables=expected)
     except (OSError, ValueError, sqlite3.Error, VaultBackupRestoreError):
         meta.update(verified=False, reason_code='backup_verification_failed')

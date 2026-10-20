@@ -10,8 +10,9 @@ from backend.recognition.external_input_dependencies import ExternalInputDepende
 from backend.recognition.sql_source_identities import KIND as SQL_IDENTITIES
 from core.storage_provider.record_lineage import FACTS, HEAD_COLLECTIONS, WITNESS_COLLECTIONS, capture_lineage, verify_lineage
 from tests.memory_app.v2.test_external_context import settings
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
 from tests.memory_app.v2.test_mcp_evidence import (
-    env, pending, publish, delivered_original, propose, DEPENDENCIES, COMPANION,
+    pending, publish, delivered_original, propose, DEPENDENCIES, COMPANION,
 )
 from tests.memory_app.v2.test_mcp_intake import env as intake_env, post as intake_post
 

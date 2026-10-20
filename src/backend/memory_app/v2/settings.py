@@ -1,9 +1,11 @@
 """Safe settings read models and a privacy-only compare-and-swap boundary."""
 from dataclasses import asdict
+from contextlib import nullcontext
 import asyncio
 import logging
 import json
 import math
+import os
 import sqlite3
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from core.product_core.cloud_asr_provider_settings import GetCloudAsrProviderSet
 from core.storage_provider import JsonObjectStore, SQLiteStructuredRecordStore, SQLiteUnitOfWorkConflict
 from core.document_engine import SQLiteDocumentRepository
 from ..source_egress import SourceEgressService
+from core.storage_provider import SQLiteUnitOfWorkConflict
 from ..workspace_contracts import _json, _project, _now
 from ..model_config import ModelConfiguration, ModelConfigurationError
 from .privacy import is_private_project, privacy_revision, set_private_project_in_transaction
@@ -179,26 +182,31 @@ class _IntegrityRecords(SQLiteStructuredRecordStore):
 
 
 def _integrity(runtime_root, records, documents, workspace):
+    from ..backup import runtime_backup_exclusions
     root = Path(runtime_root).resolve()
     counts = dict(sqlite_corrupt=0, source_file_missing=0, source_without_document=0)
-    for path in root.rglob('*'):
-        if not path.is_file() or not path.resolve().is_relative_to(root):
-            continue
-        with path.open('rb') as stream:
-            sqlite_file = stream.read(16) == b'SQLite format 3\x00'
-        if not sqlite_file and path.suffix.lower() not in {'.sqlite', '.sqlite3', '.db'}:
-            continue
-        try:
-            connection = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
+    excluded = {os.path.normcase(str(path)) for path in runtime_backup_exclusions(root)}
+    for current, directories, filenames in os.walk(root):
+        directories[:] = [name for name in directories if os.path.normcase(os.path.join(current, name)) not in excluded]
+        for name in filenames:
+            path = Path(current) / name
+            if not path.is_file() or not path.resolve().is_relative_to(root):
+                continue
+            with path.open('rb') as stream:
+                sqlite_file = stream.read(16) == b'SQLite format 3\x00'
+            if not sqlite_file and path.suffix.lower() not in {'.sqlite', '.sqlite3', '.db'}:
+                continue
             try:
-                if connection.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
-                    counts['sqlite_corrupt'] += 1
-            finally:
-                connection.close()
-        except sqlite3.DatabaseError as exc:
-            if getattr(exc, 'sqlite_errorcode', 0) & 0xff in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
-                raise HTTPException(503, 'integrity_unavailable') from None
-            counts['sqlite_corrupt'] += 1
+                connection = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
+                try:
+                    if connection.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
+                        counts['sqlite_corrupt'] += 1
+                finally:
+                    connection.close()
+            except sqlite3.DatabaseError as exc:
+                if getattr(exc, 'sqlite_errorcode', 0) & 0xff in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+                    raise HTTPException(503, 'integrity_unavailable') from None
+                counts['sqlite_corrupt'] += 1
 
     reader = _IntegrityRecords(records.database_path)
     repository = SQLiteDocumentRepository(reader, namespace_id=documents.namespace_id)
@@ -220,11 +228,17 @@ def _integrity(runtime_root, records, documents, workspace):
         linked.update(row.object_id for row in items if row.payload.get('draft'))
         linked.update(row.payload['source_id'] for row in reviews
                       if row.payload.get('source_id') and row.payload.get('draft_markdown'))
-        paths = {row.object_id: {Path(row.payload['original_path'])} for row in items
-                 if row.payload.get('original_path')}
-        for ref in source_store.list('authorized_file_refs'):
-            if ref.get('source_id') and ref.get('path'):
-                paths.setdefault(ref['source_id'], set()).add(Path(ref['path']))
+        from ..uploaded_media import group_entries, original_path
+        paths, external_paths, missing = {}, {}, set()
+        for row in items:
+            if not row.payload.get('original_path'):
+                continue
+            try:
+                entries = group_entries(reader, row.payload)
+                paths[row.object_id] = {original_path(root, row.payload, recorded_path=entry['path'], ordinal=ordinal)
+                    for ordinal, entry in enumerate(entries, 1)}
+            except (OSError, ValueError, RecognitionError):
+                missing.add(row.object_id)
         assets = {asset['id']: asset for asset in source_store.list('workbench_original_assets')}
         originals_root = (root / 'library' / 'assets' / 'originals').resolve()
         for link in source_store.list('source_asset_links'):
@@ -234,14 +248,26 @@ def _integrity(runtime_root, records, documents, workspace):
                 path = (root / 'library' / vault_ref).resolve()
                 if path.is_relative_to(originals_root):
                     paths.setdefault(link['source_id'], set()).add(path)
+        for ref in source_store.list('authorized_file_refs'):
+            if ref.get('source_id') and ref.get('path') and ref['source_id'] not in paths:
+                target = external_paths if ref.get('path_scope') in {
+                    'local_user_authorized_file', 'local_user_authorized_document',
+                    'local_user_authorized_image', 'local_user_authorized_audio',
+                    'local_user_authorized_video'} else paths
+                target.setdefault(ref['source_id'], set()).add(Path(ref['path']).resolve())
         counts['source_file_missing'] = sum(
-            any(not path.is_file() for path in paths.get(identity, ())) for identity in linked)
+            identity in missing or any(not path.is_relative_to(root) or not path.is_file()
+                for path in paths.get(identity, ()))
+            or any(not path.is_file() for path in external_paths.get(identity, ())) for identity in linked)
         counts['source_without_document'] = len(sources - linked)
     problems = [{'code': code, 'count': count} for code, count in counts.items() if count]
     return {'ok': not problems, 'checked_at': _now(), 'problems': problems}
 
 
-def install_settings_routes(application, *, runtime_root, records, models, documents=None, workspace=None):
+def install_settings_routes(application, *, runtime_root, records, models, documents=None, workspace=None,
+                            mutation_lock=None):
+    # 配置保存与任务终态复验共用应用写锁；独立路由安装不创建第二套锁。
+    mutation_lock = mutation_lock if mutation_lock is not None else nullcontext()
     router = APIRouter(prefix="/api/v2/settings")
     provider_store = ProviderStoreSettings(records, models)
     embeddings = getattr(application.state, 'memory_embedding_settings', None)
@@ -529,5 +555,41 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
     @router.get("/egress-receipts")
     def receipts_get(limit: int = Query(50, ge=1, le=500)):
         return _receipts(records, limit, runtime_root=runtime_root)
+
+    @router.put('/model')
+    async def settings_model_put(request: Request):
+        body = await _json(request)
+        if not isinstance(body, dict):
+            raise HTTPException(400, 'invalid_model_configuration')
+        purpose = body.get('purpose')
+        if not isinstance(purpose, str) or not purpose:
+            raise HTTPException(400, 'unknown_model_purpose')
+        data = {key: body[key] for key in (
+            'base_url', 'model', 'api_key', 'allow_remote', 'clear_api_key', 'enabled', 'expected_revision'
+        ) if key in body}
+        try:
+            with mutation_lock:
+                return models.update(purpose, data)
+        except SQLiteUnitOfWorkConflict:
+            raise HTTPException(409, 'model_configuration_changed') from None
+        except ModelConfigurationError as error:
+            code = str(error)
+            raise HTTPException(409 if 'revision' in code or 'conflict' in code else 400, code) from None
+
+    @router.put('/generation-mode')
+    async def settings_generation_mode_put(request: Request):
+        body = await _json(request)
+        if not isinstance(body, dict):
+            raise HTTPException(400, 'invalid_generation_mode')
+        try:
+            with mutation_lock:
+                return models.update_generation_mode(
+                    mode=body.get('mode'), local_enabled=body.get('local_enabled'),
+                    local_base_url=body.get('local_base_url', models.generation_mode()['local_base_url']),
+                    expected_revision=body.get('expected_revision'),
+                )
+        except ModelConfigurationError as error:
+            code = str(error)
+            raise HTTPException(409 if code == 'generation_mode_revision_conflict' else 400, code) from None
 
     application.include_router(router)

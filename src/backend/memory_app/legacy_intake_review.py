@@ -10,8 +10,8 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
-from backend.api.job_runtime import build_rebuild_job_repository
-from backend.api.rebuild_storage_runtime import build_rebuild_object_store
+from backend.shared.job_runtime import build_rebuild_job_repository
+from .rebuild_storage import build_rebuild_object_store
 from backend.api.task_reference_projection import task_ref_for_workbench_content_transform
 from core.document_engine import (
     DocumentExpectedRevisionError, DocumentRepositoryError, SQLiteDocumentRepository,

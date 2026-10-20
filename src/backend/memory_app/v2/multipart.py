@@ -5,7 +5,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from ..workspace_contracts import _now
 from .turn_execution import TurnExecutionService, safe_failure
-from .intent import parse_scope_tag
+from .intent import parse_scope_tag, scope_tag_match
 
 
 def part_state(turn):
@@ -35,6 +35,8 @@ async def execute_parts(body, plan, *, records, instance, execute, project, scen
     thread_id = body.get('thread_id') or 'thread-' + uuid4().hex
     children = ['turn-' + uuid4().hex for _ in plan.parts]
     inherited_tag = parse_scope_tag(body.get('text', ''))[0]
+    scope = scope_tag_match(body.get('text', ''))
+    title = parse_scope_tag(body.get('text', ''))[2] if scope and scope[4] else body.get('text', '')
     remember = next((index for index, part in enumerate(plan.parts) if part.intent == 'remember'), None)
     if body.get('item_id') and remember is None:
         raise HTTPException(400, 'multipart_attachment_without_remember')
@@ -51,7 +53,7 @@ async def execute_parts(body, plan, *, records, instance, execute, project, scen
         if thread is not None and thread.payload['project_id'] != project:
             raise HTTPException(404, 'workbench_not_found')
         if thread is None:
-            tx.put('v2_threads', thread_id, {'project_id':project, 'title':body.get('text', '')[:40],
+            tx.put('v2_threads', thread_id, {'project_id':project, 'title':title[:40],
                    'created_at':now, 'updated_at':now}, expected_revision=0)
         tx.put('v2_turns', identity, parent, expected_revision=0)
         tx.commit()

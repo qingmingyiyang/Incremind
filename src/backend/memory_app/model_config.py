@@ -497,7 +497,7 @@ class ModelConfiguration:
         self, *, mode: str, local_enabled: bool, local_base_url: str,
         expected_revision: int,
     ) -> dict[str, object]:
-        if mode not in {"api", "local"} or not isinstance(local_enabled, bool):
+        if not isinstance(mode, str) or mode not in {"api", "local"} or not isinstance(local_enabled, bool):
             raise ModelConfigurationError("invalid_generation_mode")
         if isinstance(expected_revision, bool) or not isinstance(expected_revision, int) or expected_revision < 0:
             raise ModelConfigurationError("expected_revision must be a nonnegative integer")
@@ -891,6 +891,7 @@ class ModelConfiguration:
         stream_field: str = 'answer',
         observe_decoding=None,
         provider_store_activation: ProviderStoreActivation | None = None,
+        stop_requested: Callable[[], bool] | None = None,
     ) -> tuple[str | BaseModel, dict]:
         """Complete one legacy Turn-governed request through this app's key authority.
 
@@ -914,6 +915,8 @@ class ModelConfiguration:
                 raise ModelConfigurationError('provider_background_adapter_invalid')
             provider_store_activation.validate_current()
         _validate_current(validate_current)
+        if stop_requested is not None:
+            stop_requested()
         _checkpoint(execution_control)
         _validate_wire_attempt_sink(wire_attempt_sink)
         cfg = self.snapshot("generation")
@@ -955,10 +958,13 @@ class ModelConfiguration:
             _metadata_failed(metadata_sink, started=started)
             raise
         partial_text = []
+        private_prefix = []
         output_clock, output_wall = monotonic(), time()
         retry_control = None
         try:
             def validate_stream():
+                if stop_requested is not None:
+                    stop_requested()
                 _checkpoint(execution_control)
                 _validate_current(validate_current)
                 self._assert_governed_configuration_current(
@@ -1004,16 +1010,22 @@ class ModelConfiguration:
                 gateway = self._generation_gateway(cfg, validate_current=validate_stream,
                     background_options=background_options,
                     background_adapter=provider_store_activation.adapter)
-            if on_delta is not None and response_model is not None:
+            if response_model is not None and (on_delta is not None or stop_requested is not None):
                 def delivered(text):
                     if retry_control is not None:
                         partial_text.append(text)
-                    on_delta(text)
+                    if on_delta is not None:
+                        on_delta(text)
+                def decoded(value):
+                    if on_delta is None:
+                        private_prefix[:] = [value['raw']]
+                    if observe_decoding is not None:
+                        observe_decoding(value)
                 text, usage = gateway.stream_structured_with_usage(
                     messages, response_model=response_model, on_delta=delivered,
                     validate_current=validate_stream,
-                    **({'field': stream_field} if stream_field != 'answer' else {}),
-                    **({'observe': observe_decoding} if observe_decoding is not None else {}), **options)
+                    field=stream_field if on_delta is not None else None,
+                    observe=decoded, **options)
                 cache_observation = {}
             elif response_model is not None:
                 text, usage, cache_observation = gateway.complete_structured_with_usage(
@@ -1025,6 +1037,18 @@ class ModelConfiguration:
             raise
         except BaseException as error:
             _metadata_failed(metadata_sink, started=started)
+            if (stop_requested is not None and stop_requested()
+                    and getattr(execution_control, 'cancel_requested', False)
+                    and retry_control is not None):
+                from backend.shared.llm.model_transport import is_provider_closed_witness
+                if is_provider_closed_witness(retry_control.closed_witness):
+                    # 停止原因来自本轮用户操作，关闭证明仍由真实传输提供。
+                    partial = retry_policy({'kind': 'partial_output', 'text': ''.join(partial_text),
+                        'wall_elapsed': time() - output_wall, 'monotonic_elapsed': monotonic() - output_clock})
+                    interrupted = ModelInterrupted(partial=partial['partial'] if on_delta is not None else '',
+                        interruption='stopped', close_witness=retry_control.closed_witness)
+                    interrupted.internal_partial = ''.join(private_prefix)
+                    raise interrupted from None
             if _preserve_turn_control_error(error, execution_control):
                 raise
             if not isinstance(error, Exception):
@@ -1036,7 +1060,12 @@ class ModelConfiguration:
                 partial = retry_policy({'kind': 'partial_output', 'text': ''.join(partial_text),
                     'wall_elapsed': time() - output_wall, 'monotonic_elapsed': monotonic() - output_clock})
                 raise ModelInterrupted(**partial, close_witness=retry_control.closed_witness) from None
-            raise _model_request_failure(error) from None
+            failure = _model_request_failure(error)
+            if retry_control is not None:
+                from backend.shared.llm.model_transport import is_provider_closed_witness
+                if is_provider_closed_witness(retry_control.closed_witness):
+                    failure.close_witness = retry_control.closed_witness
+            raise failure from None
 
         try:
             _validate_current(validate_current)

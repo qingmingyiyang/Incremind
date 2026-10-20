@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.api.rebuild_storage_runtime import build_rebuild_object_store
+from .rebuild_storage import build_rebuild_object_store
 from core.aggregate_repository_factory import (
     AggregateRepositoryFactory,
     activate_empty_document_authority as _activate_empty_document_authority,

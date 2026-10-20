@@ -9,9 +9,16 @@ import zlib
 import re
 import socket
 from html.parser import HTMLParser
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from fastapi import HTTPException
 from .workspace_contracts import _MAX_FILE, _MAX_TEXT, _text
+
+
+def _request_target(parsed):
+    # 原网址和已有百分号编码保持，路径与查询仅在发出请求时编码。
+    path = quote(parsed.path or '/', safe="/%:@!$&'()*+,;=[]")
+    query = quote(parsed.query, safe="/?%:@!$&'()*+,;=[]")
+    return path + ('?' + query if parsed.query else '')
 
 
 def _fetch_url(url: str) -> str:
@@ -36,7 +43,7 @@ def _fetch_url(url: str) -> str:
         connection._create_connection = lambda _address, timeout=None, source_address=None: socket.create_connection(
             (address, port), timeout=timeout, source_address=source_address)
         try:
-            connection.request("GET", (parsed.path or "/") + (("?" + parsed.query) if parsed.query else ""),
+            connection.request("GET", _request_target(parsed),
                                headers={"User-Agent": "ChriptmasWorkspace/1", "Accept-Encoding": "identity"})
             response = connection.getresponse()
             if response.status in range(300, 400):

@@ -1,0 +1,130 @@
+{
+  "early_pilot": {
+    "comparison_to_RAG30": "different_scoring_contracts",
+    "date": "2026-10-10",
+    "held_out": false,
+    "modes": {
+      "keyword": {
+        "evidence_questions": 11,
+        "judged": 12,
+        "mean_evidence_recall": 0.6136363636363636,
+        "questions": 12,
+        "raw_model_judge_correct": 5,
+        "rerank_fallback": 0
+      },
+      "rerank": {
+        "evidence_questions": 11,
+        "judged": 12,
+        "mean_evidence_recall": 0.7045454545454546,
+        "questions": 12,
+        "raw_model_judge_correct": 6,
+        "rerank_fallback": 9
+      },
+      "vector": {
+        "evidence_questions": 11,
+        "judged": 12,
+        "mean_evidence_recall": 0.7045454545454546,
+        "questions": 12,
+        "raw_model_judge_correct": 6,
+        "rerank_fallback": 0
+      }
+    },
+    "policies": {
+      "compose": "@3",
+      "ladder": "@2",
+      "rank": "@3",
+      "rerank": "@1",
+      "retrieve": "@3"
+    },
+    "run": "PILOT-20261010",
+    "scoring": "same_model_blind_judging"
+  },
+  "rag30": {
+    "conversation_sessions": 19,
+    "date": "2026-10-11",
+    "failed_or_unpublished": 0,
+    "latency_seconds": {
+      "denominator": 12,
+      "population": "all_attempted_questions",
+      "retrieval_median": 14.292,
+      "total_max": 44.852,
+      "total_median": 22.16,
+      "total_min": 6.242
+    },
+    "model": [
+      "deepseek-flash"
+    ],
+    "physical_call_breakdown": {
+      "failed_rerank": 0,
+      "primary": 24,
+      "rerank": 12
+    },
+    "physical_calls": 36,
+    "policies": {
+      "compose": "@30",
+      "ladder": "@15",
+      "rerank": "@2",
+      "retrieve": "@5"
+    },
+    "protocol": {
+      "context_window": 200000,
+      "conversation_index": 0,
+      "dataset": "LoCoMo",
+      "history": "empty",
+      "output_reserve": 7000,
+      "question_categories": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "seed": 20261010,
+      "temperature": 0
+    },
+    "published": 12,
+    "quality": {
+      "counts": {
+        "correct": 10,
+        "partial": 2,
+        "unpublished": 0,
+        "wrong": 0
+      },
+      "denominator": 12,
+      "held_out": false,
+      "method": "独立Agent逐题完整原文复核",
+      "raw_verdict_counts": {
+        "correct": 10,
+        "partial": 2,
+        "unpublished": 0,
+        "wrong": 0
+      },
+      "reviewed_at": "2026-10-21",
+      "source_kind": "independent_source_review"
+    },
+    "questions": 12,
+    "run": "RAG30-20261011",
+    "source_types": {
+      "audit_manifests": "coverage_only_not_semantic_grades",
+      "latency_and_usage": "original_per_question_and_call_records"
+    },
+    "usage": {
+      "complete": {
+        "input_tokens": 335444,
+        "output_tokens": 12498,
+        "total_tokens": 347942
+      },
+      "money": {
+        "amount": null,
+        "currency": null,
+        "status": "not_recorded"
+      },
+      "recorded": {
+        "input_tokens": 335444,
+        "output_tokens": 12498,
+        "total_tokens": 347942
+      },
+      "unknown_calls": 0
+    }
+  },
+  "schema": "rag-public-report@1"
+}

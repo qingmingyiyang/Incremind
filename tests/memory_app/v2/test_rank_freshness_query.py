@@ -6,7 +6,7 @@ import pytest
 from backend.memory_app.v2.policies import override
 from backend.recognition import WorkScope
 from tests.memory_app.v2.test_bookshelf import forgotten
-from tests.memory_app.v2.test_workbench_ask import env, ask
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, ask
 
 
 def publish_period(env, conditions, *, project='alpha', content='alpha beta gamma price is 80'):

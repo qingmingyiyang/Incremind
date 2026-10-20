@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import base64
 import hashlib
 from importlib import import_module
 import os
 from pathlib import Path
 from threading import Lock
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 import logging
 import time
 from urllib.parse import urlsplit
@@ -77,6 +77,11 @@ from backend.video_summary.library.usecases import (
     UpdateVideoNote,
 )
 from backend.security import SecretStore, build_active_provider_egress_guard, build_secret_store
+from backend.companion_runtime_layout import resolve_companion_runtime_layout
+
+if TYPE_CHECKING:
+    from backend.video_summary.infrastructure.agent_memory.pinpoint import BGEReranker
+    from backend.video_summary.infrastructure.agent_memory.retrieval import SeriesRetrievalService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -148,6 +153,9 @@ class ApiContainer:
     invalidate_agent_workspace_indexes: Callable[[], None]
     refresh_agent_workspace_indexes: Callable[[], None]
     workspace_index_refresher: object
+    companion_mode: str | None = None
+    companion_repository_root: str | None = None
+    companion_resources_root: str | None = None
 
 
 def build_api_container(
@@ -268,7 +276,7 @@ def build_api_container(
             ),
         }
     )
-    return ApiContainer(
+    container = ApiContainer(
         config_path=config_path,
         root_dir=root_dir,
         faster_whisper_model_manager=model_manager,
@@ -318,6 +326,13 @@ def build_api_container(
         invalidate_agent_workspace_indexes=agent_runtime.invalidate_workspace_indexes,
         refresh_agent_workspace_indexes=agent_runtime.refresh_workspace_indexes,
         workspace_index_refresher=index_refresher,
+    )
+    companion_layout = resolve_companion_runtime_layout(container)
+    return replace(
+        container,
+        companion_mode=companion_layout.mode,
+        companion_repository_root=str(companion_layout.repository_root),
+        companion_resources_root=str(companion_layout.resources_root),
     )
 
 

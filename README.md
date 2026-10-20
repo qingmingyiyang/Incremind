@@ -56,13 +56,13 @@ For example, an introductory article on spaced repetition might produce an insig
 | Status | Feature | What it does |
 |---|---|---|
 | ✅ | **One input box** | Automatically handles remembering, asking, and doing tasks. Mixed requests, such as a reminder followed by a question, are split and handled separately. |
-| ✅ | **Automatic organization** | Builds memory in layers: original → organized note + summary → insight. Supports text, links, and PDFs. |
+| ✅ | **Automatic organization** | Builds memory in layers: original → organized note + summary → insight. Supports text, links, PDFs, and DOCX files. |
 | ✅ | **Automatic project assignment** | Without an explicit `#Project`, assigns material to the most relevant existing project or creates one for a new topic. Everyday items stay in the Everyday space. Assignment can be undone with one click. |
 | ✅ | **Incremental insights** | Compares material with existing insights and proposes additions, differences, and new methods for confirmation on the receipt. |
 | ✅ | **Answers with citations** | Uses eligible insights, summaries, organized notes, and originals as evidence; citations open the original source. Questions in Everyday can be routed to the relevant project. |
 | 🧪 | Agentic retrieval | The model decides whether to search or read again, can consult applicable skills enabled for the current project and configured web search, and asks for missing conditions before continuing in the same conversation. See [Agentic RAG](docs/agentic-rag.md) (Chinese) for the S1–S4 stages and validation scope. |
-| ✅ | **Task execution** | Uses project memory, confirmed profile facts, and Library lookup to create output documents, which you can continue revising or regenerate. |
-| ✅ | **Library** | Browse insights, summaries, organized notes, and originals; confirm, edit, forget, or restore insights. |
+| ✅ | **Task execution** | Uses project memory, confirmed profile facts, and Library lookup to create output documents, which you can continue revising or regenerate. Real DeepSeek initial-draft and continuation runs have verified note facts, version history, and source provenance. |
+| ✅ | **Library** | Browse insights, summaries, organized notes, and originals; confirm, edit, forget, or restore insights. Recover unsaved note edits in the same browser, with revision checks when saving. View saved revision metadata from the editor menu. |
 | ✅ | **Privacy controls** | Keeps data on the computer or server hosting the application, excludes private projects from external model requests, and records a receipt for each external call. |
 | 🧪 | More input formats | Image OCR, audio and video transcription, and Bilibili favorites import; requires the corresponding models to be configured. |
 | 🧪 | Forgetting and daily organization | Adjusts recall weights by usage and a forgetting curve. Daily organization proposes patterns from recurring material for your confirmation. |
@@ -74,6 +74,25 @@ For example, an introductory article on spaced repetition might produce an insig
 
 ## Evaluation and verification
 
+![RAG30 answer quality, latency, and recorded token usage](docs/images/evaluation-rag30.svg)
+
+| Fixed development set | Observed result |
+|---|---:|
+| Source review on 2026-10-21 | **10 correct · 2 partially correct · 0 wrong · 0 unpublished** |
+| Questions / conversation sessions | 12 / 19 |
+| Median total / retrieval latency, all 12 attempts | 22.160 / 14.292 s |
+| Recorded input / output tokens | 335,444 / 12,498 |
+| Physical model requests | 36 |
+
+`RAG30-20261011` used DeepSeek Flash, local EmbeddingGemma 2, and `compose@30 / ladder@15 / retrieve@5 / rerank@2`. The review checked the frozen answers against all source messages; it made no new answer requests. These questions were repeatedly used during development. Supported unknown answers can count as correct; partial answers omit required facts. The current retrieval default is `retrieve@7`.
+
+The [evaluation guide](docs/evaluation.md) (Chinese) records the protocol, review criteria, failures, and reproduction commands. The [aggregate JSON](docs/images/evaluation-summary.json) and [`tools/rag_report.py`](tools/rag_report.py) reproduce the chart without model calls. Monetary cost was not recorded. Presentation follows the [OpenViking RAG report](https://github.com/volcengine/OpenViking/blob/main/benchmark/RAG/README.md); scores retain this project's own dataset and grading protocol.
+
+**Prepared holdout:** 48 questions from four additional conversations, with 12 questions in each of categories 1–4 and no conversation or question-text overlap with the development set. Of these, 47 have evidence IDs present in the source; one invalid annotation is retained and excluded from the Recall denominator. The dataset has not generated answers or scores. [`tools/rag_dataset.py`](tools/rag_dataset.py) freezes selection and original dialogue inputs; both evaluation runners support `--prepare-only`. See [dataset preparation](docs/evaluation.md#留出数据与标注质量) for the protocol and commands.
+
+<details>
+<summary>Functional acceptance and earlier experiments</summary>
+
 Real DeepSeek acceptance on 2026-10-15 used two synthetic scenarios with pre-indexed originals:
 
 | Scope | Observed result |
@@ -81,11 +100,7 @@ Real DeepSeek acceptance on 2026-10-15 used two synthetic scenarios with pre-ind
 | Final attempt, `retrieve@7` | Three Workbench inputs returned HTTP 200; **17 functional checks passed**, including retrieval, reading, clarification, and continuation after a reply without a question mark. |
 | All three attempts | **38 real model requests; 51,797 input / 4,877 output tokens**, including the earlier `@6` decision failure and `@7` follow-up failure. Unknown usage: 0. Monetary cost was not calculated. |
 
-This is a small functional acceptance run, not an overall accuracy or performance comparison. It does not cover live web search, AI organization after upload, or vector quality. See [the actual attempts, timings, and validation limits](docs/evaluation.md#agentic-rag-真实多轮验收) (Chinese).
-
-The 2026-10-13 evaluation used `compose@30 / ladder@15 / retrieve@5 / rerank@2`. An independent Agent checked 12 fixed LoCoMo development questions against 19 conversation originals: **8 correct, 4 partially correct, 0 wrong, 0 unpublished**. The run used DeepSeek Flash and local EmbeddingGemma 2. Supported unknown answers can count as correct; omissions remain. These questions were repeatedly used during development, so this is not a held-out or overall accuracy estimate.
-
-The run made 36 real model requests and used **335,444 input / 12,498 output tokens**. Median total latency over all 12 questions was **22.160 s**, with **14.292 s** median retrieval latency. Usage and timings describe that run; no monetary cost was inferred from pricing.
+This acceptance run covers retrieval, reading, clarification, and continuation in two synthetic scenarios. Live web search, AI organization after upload, and vector quality need separate evaluation. See [the actual attempts, timings, and validation limits](docs/evaluation.md#agentic-rag-真实多轮验收) (Chinese).
 
 Engineering verification below is separate from answer quality:
 
@@ -99,7 +114,9 @@ Engineering verification below is separate from answer quality:
 
 The material-analysis candidate has confirmed L1 notes for 7/19 sources; the next source failed quotation validation. No new 12-question answer evaluation was run. Candidates `compose@31, @32 / ladder@16` produced wrong or unpublished answers in retests; defaults remain `30/15`.
 
-The [evaluation overview and reproduction entry points](docs/evaluation.md) (Chinese) list versions, samples, latency, usage, failures, and validation limits. The [RAG pilot report](docs/rag-pilot.md) (Chinese) retains earlier protocols and results. There is no comparison with OpenViking under a shared evaluation protocol.
+The [RAG pilot report](docs/rag-pilot.md) (Chinese) retains earlier protocols and results.
+
+</details>
 
 ## Quick start
 
@@ -118,7 +135,7 @@ The [evaluation overview and reproduction entry points](docs/evaluation.md) (Chi
    git clone https://github.com/qingmingyiyang/Incremind.git incremind
    ```
 
-2. Double-click **`start.bat`** in the repository. The first run installs dependencies and takes a few minutes. Later launches normally take less than half a minute. Your browser opens at <http://127.0.0.1:4173>. Closing the terminal window stops the application.
+2. Double-click **`start.bat`** in the repository. The first run downloads and installs dependencies and takes several minutes. Later launches take about a minute. Your browser opens at <http://127.0.0.1:4173>. Closing the terminal window stops the application.
 3. Open **Settings → Models** and enter the endpoint URL, model name, and API key. The application interface currently uses Chinese; the names in this guide are English translations of its controls.
 
 Send the example files in [`samples/`](samples/) to the Workbench in order to try organization, project assignment, and incremental insights. The sample material is in Chinese.
@@ -128,9 +145,11 @@ Send the example files in [`samples/`](samples/) to the Workbench in order to tr
 
 - Data is stored in the repository's `runtime/` directory by default and is excluded from Git.
 - Choose another location: `start.bat -DataRoot D:\IncremindData`.
+- Close the running launcher before specifying a data location. Omitting `-DataRoot` reuses the running application.
 - Start without opening a browser: `start.bat -NoBrowser`.
 - Startup logs are in `logs/`.
 - To back up data, stop the application and copy the entire data directory, or use `tools/backup.py`. See the backup and recovery section of [the server guide](docs/server.md) (Chinese).
+- **Settings → Data → Backup** creates an online snapshot that includes managed originals. Restore it to a new directory with `tools/backup.py`; retain separately any authorized local files outside the data directory.
 
 </details>
 
@@ -191,11 +210,57 @@ The **Workbench** provides a single input box.
 | Combine several requests | Split them into parts and handle each separately. |
 | Begin with `#ProjectName` or `#ProjectName/Scene` | Specify the assignment or retrieval scope. Otherwise, the system infers it. |
 
+While Ask or built-in Do is running, use the square Stop button on its receipt. Once it shows Stopped, Continue resumes the same task and keeps completed work. Model costs already incurred remain recorded.
+
+After a note used in a clarification is edited or forgotten, new input uses the current materials. The original clarification and receipt remain available in the conversation.
+
+Scene entry points and cross-project question suggestions preserve saved project and scene names containing spaces, slashes, or `#`.
+
+If a file was accepted before a connection loss, resend the attachment still shown on the page to recover its original receipt. Once accepted, selecting the file again starts a new submission.
+
+File uploads support UTF-8 TXT, Markdown (`.md`), and CSV, with or without a BOM. CSV keeps its original quotes, commas, and line breaks. PDF and DOCX files are also supported. DOCX extraction follows the order of paragraphs and tables, including nested tables. After a file is accepted, the receipt's More menu opens its full original text and download while organization is unfinished. Image groups list every original for download. Upload errors identify password-protected, text-free, or damaged documents and retain the text and attachment so you can replace the file and retry.
+
+Unsaved Workbench note edits recover in the same browser after opening another original, navigating to the Library, refreshing, or reopening the browser. Saving checks the original revision; conflicts let you choose the content before saving again. Background task updates keep the selected source quotation highlighted.
+
+Use the editor's download button to export a saved note or output as Markdown, HTML, DOCX, or PPTX. Save edits and resolve conflicts first; each file uses the exact saved revision.
+
+Forgotten organized notes remain readable. Restore a note to edit or move it; its existing local draft is available again after restoration.
+
 On a receipt, use ✓ to confirm an insight or ✕ to dismiss it. The project assignment receipt also offers an undo action.
 
-The **Library** groups insights, summaries, organized notes, and originals by project. Follow each layer down to its source evidence, or confirm, edit, forget, and restore insights here.
+Splitting or merging handwritten insights from the same scene keeps their scene for browsing and questions.
 
-**Settings** contains model configuration, privacy controls, projects, data, backups, devices, and websites.
+The **Library** groups insights, summaries, organized notes, and originals by project. Follow each layer down to its source evidence, or confirm, edit, forget, and restore insights here. Keyboard focus stays in the detail panel as you move between layers; Escape closes it and returns to the original list entry. Nested panels close one level at a time. If another client changes an insight during a split or merge, reload its current revision while keeping your text and selections, then submit explicitly.
+
+Opening an insight's versions returns focus to its menu button. Tab enters the history, and Escape closes the detail panel.
+
+Moving an organized note preserves its original source. If insight extraction fails, use Retry beside its assignment. After restoring the model configuration, it extracts insights from the same material and updates the original conversation and task list. Undo restores the previous project assignment.
+
+Library and memo dates use your browser's local time zone. Date-only facts retain their recorded calendar date.
+
+Administrators can edit a user's quota while disabling or restoring that account; unsaved quota fields remain available until explicitly saved or the account form is closed.
+
+Sharing a result from a multipart turn includes that part's original question, answer, and selected citations.
+
+When a method's sources change, you can refresh them, check the handwritten content, and save a new version without a model call. Review that version explicitly before exporting its ZIP. Refreshing restores focus to its button when focus has been lost, while preserving any control you selected during the request.
+
+Inbox project suggestions file the complete suggested group, including members hidden by search. Retry in the same panel continues the accepted batch after a lost response.
+
+Insight actions in multipart turns use the part's project. Confirming or discarding an insight immediately updates that part's receipt.
+
+Opening an output's version list keeps keyboard focus in its panel. Escape closes the output and returns to its entry point.
+
+Switching an editor between Markdown source and the organized view returns focus to its editor menu. Tab and Escape continue within the current panel.
+
+Originals accepted through an external agent appear in the Library's Originals layer. You can open their full text before an organized note is available.
+
+Select an accepted external original in Progress to open its full text. You can reopen it after closing or changing layers, and retry a failed read from the same place.
+
+Uploaded files retain their extension when a long display name is shortened.
+
+Workbench input and mobile sharing support links with Chinese paths and query text, while preserving existing percent encoding and signed query parameters.
+
+**Settings** contains model configuration, privacy controls, projects, data, backups, devices, and websites. The theme selector below the settings groups offers system, light, and dark modes on desktop and phones, and remembers the choice in the current browser.
 
 **Speech vocabulary:** manage a personal vocabulary in Settings → Models → Transcription. Paste a batch or import UTF-8 TXT, CSV, or JSON, preview it, then add or update terms. Built-in faster-whisper transcription uses hotword hints for uploaded audio and video, prioritizes whole terms by weight, and records how many fit within the model's token capacity. Realtime Qwen uses its native vocabulary. The current Hy-ASR synchronous endpoint does not support hotwords. Local transcription still needs its dependencies and model assets; importing terms does not install or switch a model.
 
@@ -205,11 +270,13 @@ Correction uses the existing transmission settings, privacy guards, receipts, ac
 
 **Agent data operations:** a bundled skill exposes scoped vocabulary read, preview, import, and verification tools. Saving requires a complete vocabulary explicitly supplied by the user; automatically discovered terms remain suggestions. Tools do not accept arbitrary SQL or database paths. See [Agent data operations](docs/agent-data-tools.md) (Chinese) for the instruction format and permission boundaries.
 
-**Mobile sharing:** install the HTTPS web app on Android to send text, links, images, and videos from other apps; use Shortcuts on iPhone. Full Xiaohongshu and Bilibili share text is accepted, and multiple images can form one original. See [mobile sharing](docs/mobile-share.md) (Chinese) for pairing, retries, and shortcut setup.
+**Mobile sharing:** install the HTTPS web app on Android to send text, links, images, and videos from other apps; use Shortcuts on iPhone. Full Xiaohongshu and Bilibili share text is accepted, and multiple images can form one original. After pairing, refreshing keeps the current page and route parameters. See [mobile sharing](docs/mobile-share.md) (Chinese) for pairing, retries, and shortcut setup.
 
 **Website login:** import Bilibili or Xiaohongshu cookies in Settings → Websites so the server can reuse the session when reading that website. Bilibili also displays an official QR code for confirmation on your phone, then saves the session encrypted. Xiaohongshu browser login needs an optional runtime; a real QR code has not yet been obtained. See [website login](docs/platform-login.md) (Chinese) for usage and verification limits.
 
 Open the **Companion** through the bear avatar in the upper-left corner to chat, review what you remembered this week, focus, or plan.
+
+If a chat send loses its response, retry the original request or cancel its retry. Your newer draft and the pending request remain available in the same tab across navigation or reload; cancelling the retry keeps the draft and existing messages.
 
 The screenshots below show the current Chinese interface.
 
@@ -391,6 +458,8 @@ npm test
 npm run build
 ```
 
+The HTTP smoke runner is available at `tools/demo_smoke.py`. Run `.\.venv\Scripts\python.exe tools/demo_smoke.py --help` for its parameters. It uses an isolated backend on port 8011, DeepSeek, sample material, and a PDF selected with `--file`; `--check` reads configuration and attempt records without submitting model work.
+
 - For prompt or algorithm changes, register a new version in `v2/policies/`, compare it offline, and switch `ACTIVE` in a separate commit.
 - Use the design tokens in `src/frontend/src/styles.css` and the components in `shared/ui/` for frontend changes.
 - Keep `README.md` and `README.zh-CN.md` in sync when updating the project description, feature status, or usage instructions.
@@ -399,7 +468,6 @@ npm run build
 ## Known limitations
 
 - **Speed:** latency varies with material length, model, selection, and cache state. Individual runs are recorded in the [evaluation overview](docs/evaluation.md). Startup maintenance, backups, and indexing also affect response times.
-- **Task continuation:** a retained intermediate-draft case still exceeds its next planning input budget (**15,619 > 14,000 tokens**) and leaves a partial receipt. This failure remains unresolved; see [task recall acceptance](docs/evaluation.md#内置任务-v2-召回) (Chinese).
 - **Platform:** basic complete flows have been checked on Windows. Application deployment, CPU embeddings, and real DeepSeek Harness execution in isolation have been checked separately on Ubuntu 22.04. The application interface is currently Chinese only.
 - **Mobile sharing and website login:** OS sharing and iPhone Shortcuts await device validation; real-account QR confirmation has not been verified. Xiaohongshu sessions currently use cookie import.
 - **In progress:** validation of the mobile shell, shared projects, production public-network task submission, and real-account execution and reconnection for Claude Code and Codex.

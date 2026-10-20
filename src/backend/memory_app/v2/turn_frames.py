@@ -69,7 +69,7 @@ class _StreamRecords:
 
     def read(self, collection, identity):
         if collection not in {STREAMS, FRAMES, 'v2_turns', 'v2_model_wire_prices',
-                              'v2_task_profiles', 'v2_task_methods'}:
+                              'v2_task_profiles', 'v2_task_methods', 'v2_task_styles'}:
             raise ValueError('unsupported_stream_record')
         row = self.connection.execute('''SELECT payload_json,revision
             FROM crp_structured_records WHERE collection=? AND object_id=?''', (collection, identity)).fetchone()

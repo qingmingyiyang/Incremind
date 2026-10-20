@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import contextmanager
 
-from tests.memory_app.v2.test_workbench_ask import env, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, publish
 from backend.memory_app import workspace_query
 
 

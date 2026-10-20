@@ -1,7 +1,7 @@
 import pytest
 
 from backend.memory_app.v2.policies import ACTIVE
-from tests.memory_app.v2.test_workbench_ask import env, ask, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, ask, publish
 from tests.memory_app.v2.test_workbench_do import env as do_env
 from tests.memory_app.v2.test_divided_do import _real_kernel_drafts
 from types import SimpleNamespace

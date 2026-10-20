@@ -17,7 +17,8 @@ from backend.recognition.external_turn_facts import IDENTITIES, delivery_facts
 from backend.recognition.sql_source_identities import KIND
 from core.storage_provider.record_lineage import capture_lineage
 from core.job_runner.runtime import InMemoryJobRepository
-from tests.memory_app.v2.test_external_context import env, document, material, prepare, settings
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
+from tests.memory_app.v2.test_external_context import document, material, prepare, settings
 from tests.memory_app.v2.test_sql_source_identities import recognition
 from tests.recognition.test_artifact_dependencies import _root, _retain, _publish
 

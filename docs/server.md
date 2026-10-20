@@ -240,7 +240,7 @@ sudo -u chriptmas -H /opt/chriptmas/.venv/bin/python /opt/chriptmas/tools/server
 
 ## 备份与恢复
 
-备份复用在线 SQLite 快照，产物带 UTC 日期。先准备低权限用户可写的备份目录：
+设置、每日任务和命令行备份均复用在线 SQLite 快照，包含运行根内的原件、文稿、认识及历史，产物带 UTC 日期。日志和受管恢复目录中的已有备份、恢复操作记录不进入新快照；备份目录保持原位。先准备低权限用户可写的备份目录：
 
 ```sh
 sudo install -d -m 0700 -o chriptmas -g chriptmas /var/backups/chriptmas
@@ -260,7 +260,11 @@ sudo -u chriptmas -H /opt/chriptmas/.venv/bin/python /opt/chriptmas/tools/backup
 
 恢复目标必须尚不存在，包括空目录也会被拒绝；为恢复后的正式部署选择与旧数据分开的目录，并同步修改服务配置。服务器主密钥位于 `/etc/chriptmas`，不在数据快照里，恢复后仍需要原密钥；Windows 跨机器恢复需要重新填写模型密钥。
 
-[chriptmas-backup.service](../deploy/chriptmas-backup.service) 和 [chriptmas-backup.timer](../deploy/chriptmas-backup.timer) 提供每日备份模板，路径与本文一致。安装后可使用 timer 调度；备份、恢复和权限的完整链路仍需在实际服务器确认。
+当前设置备份包含 `.rebuild-data/`、`workspace/` 等运行根相对路径，恢复后将 `CHRIPTMAS_APP_ROOT` 指向新目录。旧设置快照的 payload 直接包含 vault 内部文件，应恢复到新运行根下尚不存在的 `.rebuild-data` 目录，再指向其父目录启动。旧快照未包含的原件仍需从原先的数据副本取得。运行根内的受管原件随备份保留，并按当前运行根定位；运行根外显式授权的文件沿原授权路径检查，文件本身需要另行保留。既有备份及恢复操作目录不参与当前业务完整性检查。运行根快照通过上述命令恢复到新目录，旧离线 vault 切换入口继续处理 vault 层级快照。
+
+已保存的文稿、认识和历史保留。换根后，旧音频转写检查点和配对图片评论定位继续核对原物理文件身份；需要重新上传并处理才能建立新的媒体处理资格。
+
+[chriptmas-backup.service](../deploy/chriptmas-backup.service) 和 [chriptmas-backup.timer](../deploy/chriptmas-backup.timer) 提供每日备份模板，路径与本文一致，安装后可使用 timer 调度。隔离用户根已完成 Windows 快照及长路径自检、Linux 新目录恢复，以及原件、文稿、认识和历史的真实 HTTP 回读。
 
 2026-10-12 实际部署：Ubuntu 22.04 实例的应用与 Nginx 已设置开机启动，通过 HTTPS 公网入口访问，8001 保持 loopback。受信任 TLS、页面与健康检查、未授权接口拒绝、HTTPS 同源判断、跨源拒绝、版本资源缓存、错误响应不缓存及 gzip 共十一项检查通过；CSS 从 86694 字节压缩为 20083 字节。IP 证书正式签发、续期定时器及续期演练通过，应用进程由 PID 1 托管。
 

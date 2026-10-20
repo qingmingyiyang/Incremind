@@ -20,7 +20,8 @@ import uvicorn
 
 from backend.recognition import WorkScope
 from core.effect_log import EffectState
-from tests.memory_app.v2.test_external_context import env, settings, setup, request, DAY
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
+from tests.memory_app.v2.test_external_context import settings, setup, request, DAY
 
 ROOT = Path(__file__).resolve().parents[3]
 TOOLS = ['projects', 'recall', 'methods', 'read', 'remember', 'propose_insight', 'report_use']

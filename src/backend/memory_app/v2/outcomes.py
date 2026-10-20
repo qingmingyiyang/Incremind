@@ -309,6 +309,12 @@ def versions(reader, *, project, document_id, documents):
     rows = qualified_lineages(reader, project)
     chosen = rows.get(document_id)
     if chosen is None:
+        if reader.read(COLLECTION, document_id) is None:
+            # 旧成果只沿真实出生事实读取，不补写版本或授予续写资格。
+            for execution in reader.list('v2_task_executions'):
+                if (execution.payload.get('project_id') == project
+                        and _birth(reader, project, document_id, execution.object_id) is not None):
+                    return {'items': [], 'previous': None}
         raise RecognitionConflict('outcome_unavailable')
     root = chosen.payload['root_id']
     items = []

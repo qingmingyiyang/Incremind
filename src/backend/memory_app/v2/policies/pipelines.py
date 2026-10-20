@@ -44,6 +44,8 @@ def interfaces_for_turn(kind):
         recipe = (*recipe, 'material_analysis')
         if version('material_analysis') in {'@2', '@3', '@4'}:
             recipe = (*recipe, 'context_preparation')
+    if kind == 'project.task':
+        recipe = (*recipe, 'context_preparation')
     return tuple(sorted(set(recipe)))
 
 

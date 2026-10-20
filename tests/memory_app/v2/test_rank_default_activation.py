@@ -5,7 +5,7 @@ from backend.memory_app.v2.policies import ACTIVE, get, override
 from backend.memory_app.v2.policies.types import RankInput
 from tests.memory_app.v2.test_search_default_activation import OLD_ACTIVE
 from tests.memory_app.v2.test_rank_freshness_query import publish_period
-from tests.memory_app.v2.test_workbench_ask import env, ask
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, ask
 
 
 def test_default_rank_selects_only_the_new_freshness_version():

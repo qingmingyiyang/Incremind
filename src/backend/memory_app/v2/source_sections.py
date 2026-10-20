@@ -11,6 +11,7 @@ from backend.recognition import RecognitionConflict, WorkScope, normalize_condit
 from core.storage_provider.connection_scope import borrow_read_connection
 from core.storage_provider.observability import observe_connection
 from ..original_sources import document_roots, original, source_store
+from ..uploaded_media import original_path
 from .policies.extract_comments import _sources
 
 
@@ -53,8 +54,10 @@ def _image_inputs(reader, row, binding):
     try:
         entries = actual_group['images'] if actual_group else [{'path': row.payload['original_path'],
             'name': row.payload.get('original_name') or row.payload['title']}]
+        runtime_root = source_store(reader).root.parent
         images = [{'item_id': row.object_id, 'ordinal': ordinal,
-            'identity': _audio_original_identity(Path(entry['path']))}
+            'identity': _audio_original_identity(original_path(runtime_root, row.payload,
+                recorded_path=entry['path'], ordinal=ordinal))}
             for ordinal, entry in enumerate(entries, 1)]
         if images != binding['images'] or entries[0]['path'] != row.payload['original_path']:
             _fail()

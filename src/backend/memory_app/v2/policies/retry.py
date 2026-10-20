@@ -11,6 +11,13 @@ _RETRY_BUDGETS = {'before_output': 10, 'thinking_error': 2,
                   'thinking_stall': 1, 'header': 1, 'fallback': 1}
 
 
+def v2(request: Mapping[str, object]) -> dict[str, object]:
+    if request.get('kind') == 'answer_lifecycle':
+        seconds = decide({'kind': 'limits'})['total_timeout']
+        return {'tool_timeout_ms': int(seconds * 1000), 'wait_timeout_seconds': seconds + 10}
+    return decide(request)
+
+
 def _retry_display(request):
     budget, reason, counts = request.get('budget'), request.get('reason'), request.get('counts')
     if (type(budget) is not str or budget not in _RETRY_BUDGETS

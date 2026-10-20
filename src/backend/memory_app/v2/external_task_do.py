@@ -13,6 +13,7 @@ from .external_runner import ARCHIVE
 from .external_runs import ExternalRuns
 from core.ai_kernel import validate_turn_request
 from .task_do import TASK_EXECUTIONS
+from .outcomes import record_outcome
 
 
 class ExternalTaskDo:
@@ -152,6 +153,9 @@ class ExternalTaskDo:
                     expected_revision=turn.revision)
                 tx.put(TASK_EXECUTIONS, turn_id, {**saved.payload, 'owner': None, 'claimed_at': None},
                     expected_revision=saved.revision)
+                if completed:
+                    record_outcome(tx, project=values['project_id'], document_id=result['document_id'],
+                        turn_id=turn_id, scene=values['scene'], task_text=values['task_text'])
                 from .turn_frames import complete_stream
                 updated = tx.read('v2_turns', turn_id)
                 complete_stream(tx, {'thread_id': updated.payload['thread_id'],

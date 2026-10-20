@@ -7,6 +7,14 @@ source_roots =
 include_external_packages = true
 exclude_type_checking_imports = true
 
+[importlinter:contract:core_must_not_import_backend]
+name = core must not import backend
+type = forbidden
+source_modules =
+    core
+forbidden_modules =
+    backend
+
 [importlinter:contract:api_must_not_depend_on_memory_app]
 name = api must not depend on memory_app
 type = forbidden

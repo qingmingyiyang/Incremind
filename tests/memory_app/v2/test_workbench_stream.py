@@ -10,7 +10,7 @@ from backend.memory_app.v2.workbench_transport import negotiate_turn_response
 from backend.memory_app.v2.turn_execution import TurnExecutionService
 from backend.memory_app.v2.privacy import set_private_project
 from backend.security.secrets import InMemorySecretStore
-from tests.memory_app.v2.test_workbench_ask import env as workbench_env, assemble, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as workbench_env, assemble, publish
 
 
 @pytest.mark.parametrize("accept,expected", [
@@ -40,14 +40,18 @@ def events(response):
             for part in response.text.split("\n\n") if part.startswith("event: ")]
 
 
-def native_app(env, *, after_chunk=None, invalid=False, finish_reason="stop"):
+def native_app(env, *, after_chunk=None, invalid=False, finish_reason="stop", structured_payload=None):
     calls = []
     closed = []
-    raw = json.dumps({"answer": "流式答案😀\n第二行", "citations": [999] if invalid else [1]})
+    legacy_raw = json.dumps({"answer": "流式答案😀\n第二行", "citations": [999] if invalid else [1]})
     def completion(**request):
         calls.append(request)
+        raw = (json.dumps(structured_payload(request), ensure_ascii=False)
+               if structured_payload is not None else legacy_raw)
         if not request.get("stream"):
-            return {"choices": [{"finish_reason": "stop", "message": {"content": raw}}]}
+            return {"choices": [{"finish_reason": "stop", "message": {"content": raw}}],
+                    **({"usage": {"prompt_tokens": 3, "completion_tokens": 2}}
+                       if structured_payload is not None else {})}
         def stream():
             try:
                 for offset in range(0, len(raw), 5):

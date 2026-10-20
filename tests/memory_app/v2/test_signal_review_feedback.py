@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import pytest
 
 from backend.memory_app.v2.signal_reviews import install_signal_review_routes
-from tests.memory_app.v2.test_workbench_ask import env, add_document, ask, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, add_document, ask, publish
 
 
 def prepare_confirmed(env, action='confirm'):

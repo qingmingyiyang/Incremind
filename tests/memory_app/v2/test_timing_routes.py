@@ -2,7 +2,7 @@
 import time
 import asyncio
 
-from tests.memory_app.v2.test_workbench_ask import env as ask_env, publish, ask
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as ask_env, publish, ask
 from tests.memory_app.v2.test_workbench_remember import env as remember_env, post, wait
 from tests.memory_app.v2.test_workbench_do import env as do_env
 from core.storage_provider.sqlite_uow import SQLiteStructuredRecordUnitOfWork

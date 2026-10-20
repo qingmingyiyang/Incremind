@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 import pytest
 
-from tests.memory_app.v2.test_workbench_ask import env, ask, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, ask, publish
 from backend.memory_app.v2 import policies
 
 

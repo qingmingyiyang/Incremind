@@ -23,7 +23,8 @@ from backend.security.turn_boundary_adapter import TurnBoundaryRequestFactory
 from core.ai_boundary import BoundaryGrant, SanitizationResult, ScanSummary
 from core.ai_kernel import context_manifest_to_payload, manifest_to_payload
 from core.ai_tooling import tool_destination_identity
-from tests.memory_app.v2.test_external_context import env, prepare as prepare_context
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
+from tests.memory_app.v2.test_external_context import prepare as prepare_context
 from tests.memory_app.v2.test_external_host import setup_host
 from tests.memory_app.v2.test_external_runner_binding import bound
 

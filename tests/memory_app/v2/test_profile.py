@@ -180,7 +180,7 @@ def test_task_profile_requires_frozen_authority_and_current_eligibility(profile_
         frozen_task_profile(env.records, env.service, request)
 
 
-from tests.memory_app.v2.test_workbench_ask import env as ask_env, ask
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as ask_env, ask
 
 
 def test_profile_only_question_reaches_real_answer_turn_without_fake_citations(ask_env):

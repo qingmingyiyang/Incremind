@@ -9,7 +9,8 @@ from backend.memory_app.v2.external_context import ExternalContext, ExternalCont
 from backend.memory_app.v2.privacy import set_private_project
 from backend.shared.secret_detection import contains_secret
 from core.ai_kernel import ScopedCapabilityRegistry
-from tests.memory_app.v2.test_external_context import (env, prepare, TURN,
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
+from tests.memory_app.v2.test_external_context import (prepare, TURN,
     formal_snapshot, settings)
 
 

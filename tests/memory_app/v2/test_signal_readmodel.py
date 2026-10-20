@@ -183,7 +183,7 @@ def frozen_reader(records):
         return value[1] if value else None
     return read
 
-from tests.memory_app.v2.test_workbench_ask import env as ask_env
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as ask_env
 
 def test_real_answer_wire_and_persona_projection(ask_env):
     from tests.memory_app.v2.test_workbench_ask import publish,ask

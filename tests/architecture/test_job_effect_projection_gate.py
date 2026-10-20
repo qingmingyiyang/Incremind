@@ -66,11 +66,44 @@ def test_production_job_store_is_readonly_legacy_import_only() -> None:
 
 
 def test_production_job_repository_has_no_configurable_authority_split() -> None:
-    runtime = (ROOT / "src/backend/api/job_runtime.py").read_text(encoding="utf-8")
+    runtime = (ROOT / "src/backend/shared/job_runtime.py").read_text(encoding="utf-8")
     routed = (ROOT / "src/core/job_runner/routed_repository.py").read_text(encoding="utf-8")
     assert "os.environ" not in runtime
     assert "job.get(\"job_type\") in self.sqlite_job_types" not in routed
     assert "self.legacy.save(updated)" not in routed
+
+
+def test_job_runtime_api_adapter_only_reexports_shared_composition() -> None:
+    tree = ast.parse((ROOT / "src/backend/api/job_runtime.py").read_text(encoding="utf-8"))
+    expected_exports = {"build_rebuild_job_repository", "configured_sqlite_job_types"}
+    imports: dict[str, set[str]] = {}
+    exports: list[str] | None = None
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            continue
+        if isinstance(node, ast.ImportFrom):
+            assert node.level == 0
+            assert node.module is not None and node.module not in imports
+            assert all(alias.asname is None for alias in node.names)
+            imports[node.module] = {alias.name for alias in node.names}
+            continue
+        assert isinstance(node, ast.Assign), "Job API adapter must only re-export shared composition"
+        assert exports is None and len(node.targets) == 1
+        target = node.targets[0]
+        assert isinstance(target, ast.Name) and target.id == "__all__"
+        exports = ast.literal_eval(node.value)
+        assert isinstance(exports, list)
+
+    assert imports == {
+        "__future__": {"annotations"},
+        "backend.shared.job_runtime": expected_exports,
+    }
+    assert exports is not None and len(exports) == len(expected_exports)
+    assert set(exports) == expected_exports
 
 
 def test_production_has_no_generic_job_worker_or_job_lease_execution_path() -> None:
@@ -150,7 +183,7 @@ def test_legacy_history_module_cannot_plan_transition_or_recover_effects() -> No
 
 def test_direct_legacy_job_repository_construction_is_limited_to_cutover_composition() -> None:
     allowed = {
-        "src/backend/api/job_runtime.py",
+        "src/backend/shared/job_runtime.py",
         "src/core/composition.py",
     }
     violations: list[str] = []

@@ -6,6 +6,7 @@ from .policies.pipelines import interfaces_for_turn, versions_for_turn
 from datetime import datetime, timedelta, timezone
 from collections import Counter
 import json
+import logging
 import re
 from time import monotonic
 from typing import Literal
@@ -13,24 +14,27 @@ import unicodedata
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, model_serializer, model_validator
 
 from ..kernel.policy_runtime import ProductPolicyRuntime
 from core.ai_kernel import ScopedCapabilityRegistry
 from core.storage_provider.connection_scope import with_connection_scope
 from ..kernel.memory_turn import MemoryTurn
 from ..turn_routing import CONFIGURATION_FIELDS, _revision
-from .intent import _LEADING_TAG, _TRAILING_TAG, parse_scope_tag, route_intent
+from .intent import parse_scope_tag, route_intent, scope_tag_match
 from .privacy import egress_allowed
 from .projects import DEFAULT_NAME, display_name, project_by_tag
 from .turn_requests import freeze_product_turn, validate_frozen_inputs
 
 _KEYS = "v2_route_turn_keys"
 _OUTPUT = "workbench-route-output-v1"
+_LOG = logging.getLogger(__name__)
 # 连接词，以及"记一下""问下""帮我"这类口头指令词：模型拆分时可以不放进片段。
-_CONNECTORS = re.compile(r"(?:然后|并且|以及|同时|另外|接着|顺便|再|并|还|和|记一下|记下来|记下|记住|帮我记|记录一下|备忘|问一下|问下|请问|想问|我想问|帮我|麻烦|请|一下)+")
+_CONNECTORS = re.compile(r"(?:然后|并且|以及|同时|另外|接着|顺便|再|并|还|和|记一下|记下来|记下|记住|帮我记|记录一下|备忘|问一下|问下|请问|想问|我想问|问|帮我|麻烦|请|一下)+")
 _PROMPT = """将输入原文分成1至3个独立部分，返回指定JSON结构。意图为remember、ask、do或inspiration。
+先识别用户直接要求你完成的动作。请求你写作、生成成果、制定方案或执行任务的部分属于do；以笔记、文章或资料为依据的生成请求仍属于do。明确询问信息属于ask，要求保存内容属于remember。
 同一意图的内容合成一个部分，只有意图不同时才拆分；整段陈述作为一个remember。
+用户只投喂整份笔记、文章或资料时，将全文作为一个remember。正文内部的做法、步骤、建议、问题和命令句属于要保存的材料；用户另外提出独立的问题或任务时，再拆出ask或do。
 span必须逐字截取原文，不重叠，除范围标签、连接词、"记一下""问下""帮我"这类指令词及标点外覆盖全部原文，不得改写记住内容。
 instruction仅用于ask或do，可为null，非空时用不超过200字表达可独立执行的要求。
 situation仅用于ask或do，可省略，非空时用不超过60字概括任务类型、领域与阶段。
@@ -60,6 +64,20 @@ class RouteOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     parts: list[RoutePart] = Field(min_length=1, max_length=3)
 
+    @model_validator(mode='wrap')
+    @classmethod
+    def report_schema_failure(cls, value, handler):
+        try:
+            return handler(value)
+        except ValidationError as error:
+            # 只记录固定字段位置及错误分类，正文和未知额外字段名均不进入日志。
+            fields = {'parts', 'intent', 'span', 'instruction', 'depends_on', 'situation'}
+            failures = [{'location': [part if type(part) is int or part in fields else 'extra'
+                                      for part in row['loc']], 'type': row['type']}
+                        for row in error.errors(include_input=False, include_context=False, include_url=False)]
+            _LOG.warning('workbench_route_schema_invalid: %s', failures)
+            raise
+
 
 class RoutePlan(RouteOutput):
     mode: Literal["model", "rules", "manual"]
@@ -67,11 +85,6 @@ class RoutePlan(RouteOutput):
     egress_receipt_id: str | None = None
     turn_id: str | None = None
     reason: str | None = None
-
-
-def _scope_match(text):
-    matches = [pattern.search(text) for pattern in (_LEADING_TAG, _TRAILING_TAG)]
-    return min((match for match in matches if match is not None), key=lambda match: match.start(), default=None)
 
 
 def resolve_scope_project(records, text, project_id):
@@ -123,10 +136,10 @@ def validate_route_output(text, value, *, has_files=False, deadline=None):
                 raise ValueError("dependency_direction")
             if source.depends_on:
                 raise ValueError("dependency_depth")
-    scope = _scope_match(text)
+    scope = scope_tag_match(text)
     # A cheap necessary condition prevents repeated short spans from creating
     # a cubic search over long omitted substantive input.
-    content = text[:scope.start()] + text[scope.end():] if scope else text
+    content = text[:scope[0]] + text[scope[1]:] if scope else text
     required = Counter(char for char in _CONNECTORS.sub("", content)
         if not char.isspace() and not unicodedata.category(char).startswith("P"))
     available = Counter("".join(part.span for part in parts))
@@ -139,7 +152,7 @@ def validate_route_output(text, value, *, has_files=False, deadline=None):
     def assign(index, intervals):
         nonlocal attempts
         if index == len(parts):
-            covered = list(intervals) + ([(scope.start(), scope.end())] if scope else [])
+            covered = list(intervals) + ([(scope[0], scope[1])] if scope else [])
             cursor = 0
             for start, end in sorted(covered):
                 if start > cursor and not _gap_allowed(text[cursor:start]):
@@ -162,7 +175,7 @@ def validate_route_output(text, value, *, has_files=False, deadline=None):
             start = text.find(span, max(overlaps) if overlaps else start + 1)
         return False
 
-    if not assign(0, []):
+    if not assign(0, [(scope[0], scope[1])] if scope and scope[4] else []):
         raise ValueError("span_not_literal_overlapping_or_incomplete")
     return output
 
@@ -332,7 +345,9 @@ class RouteService:
                 from ..kernel.provider_store_binding import route_provider_store_activation
                 activation = route_provider_store_activation(owner.models, models, owner.records,
                     owner.store, frozen, binding)
-                messages = [{"role": "system", "content": _PROMPT}, {"role": "user", "content": frozen["input"]["text"]}]
+                schema = json.dumps(RouteOutput.model_json_schema(), ensure_ascii=False, separators=(',', ':'))
+                messages = [{"role": "system", "content": _PROMPT + '\nJSON Schema:\n' + schema},
+                            {"role": "user", "content": frozen["input"]["text"]}]
                 output, metadata = models.complete_governed(messages, routing_snapshot=binding,
                     execution_control=execution_control, metadata_sink=execution_control, wire_attempt_sink=execution_control,
                     max_tokens=400, response_model=RouteOutput, validate_current=guard, purpose="aux", retry_policy=get('retry'),
@@ -340,7 +355,16 @@ class RouteService:
                 guard()
                 execution_control.checkpoint()
                 value = output.model_dump() if isinstance(output, BaseModel) else output
-                validated = validate_route_output(text, value, has_files=has_files, deadline=deadline)
+                try:
+                    validated = validate_route_output(text, value, has_files=has_files, deadline=deadline)
+                except ValueError as error:
+                    codes = {'multiple_do_parts', 'same_intent_parts', 'empty_span', 'instruction_not_allowed',
+                        'situation_not_allowed', 'duplicate_dependency', 'invalid_dependency', 'dependency_direction',
+                        'dependency_depth', 'uncovered_substantive_text', 'span_validation_budget_exceeded',
+                        'span_not_literal_overlapping_or_incomplete'}
+                    code = str(error) if type(error) is ValueError and str(error) in codes else 'output_invalid'
+                    _LOG.warning('workbench_route_output_rejected: %s', code)
+                    raise
                 guard()
                 ref = owner.store.get_or_create_immutable_payload(turn_id, _OUTPUT, validated.model_dump())
                 return {"type": "complete", "summary": "Workbench route validated", "payload_ref": ref}

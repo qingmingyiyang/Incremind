@@ -22,7 +22,7 @@ from core.ai_kernel import AIKernelContractError, validate_turn_request
 from core.ai_kernel.turn_kinds import freeze_turn_request
 from core.document_engine.ports import DocumentDraft
 from core.effect_log import EffectState
-from tests.memory_app.v2.test_workbench_ask import env as _env_fixture, add_document
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as _env_fixture, add_document
 
 
 env = _env_fixture

@@ -21,7 +21,7 @@ from starlette.concurrency import run_in_threadpool
 from .model_config import ModelConfigurationError
 from .processing_lease import ProcessingLeaseConflict
 from backend.memory_app.workspace_media_url import media_platform
-from core.product_core.local_document_text_extractor import BuiltinDocumentTextExtractor
+from core.product_core.local_document_text_extractor import BuiltinDocumentTextExtractor, LocalDocumentInputError
 from . import workspace_audio as audio
 from . import workspace_generation as generation
 from . import workspace_links as links
@@ -57,6 +57,14 @@ def _check_intake_bytes(size):
     check = _INTAKE_BUDGET.get()
     if check is not None:
         check(size)
+
+
+def _upload_name(value):
+    name = Path(value or 'upload').name
+    suffix = Path(name).suffix
+    stem = name[:-len(suffix)] if suffix else name
+    # 显示名只缩短主名，类型判断和原件路径继续使用真实后缀。
+    return stem[:max(0, 180 - len(suffix))] + suffix
 
 
 async def _run_lease_operation(operation, *args):
@@ -129,9 +137,10 @@ async def _read_xiaohongshu_source(owner, item, project_id, item_id, run_id, asr
 async def _read_audio_source(owner, item, project_id, item_id, run_id, asr_target, checkpoint, validate_remote):
     if checkpoint is not None:
         return item, checkpoint["text"]
+    from .uploaded_media import original_path
     try:
-        original_identity = audio._audio_original_identity(Path(item["original_path"]))
-        transcription_path = Path(item["original_path"])
+        transcription_path = original_path(owner.runtime_root, item)
+        original_identity = audio._audio_original_identity(transcription_path)
         if item["input_kind"] == "video" and not transcription_path.resolve().is_relative_to(owner.root.resolve()):
             raise ValueError("audio_transcription_evidence_invalid")
         if item["input_kind"] == "video" and asr_target is None:
@@ -144,7 +153,7 @@ async def _read_audio_source(owner, item, project_id, item_id, run_id, asr_targe
             store_kind="rebuild" if asr_target else "workspace_asr_internal")
         item = owner.items.update(item_id, project_id, {"processing"}, expected_run_id=run_id,
             source_text=source, audio_transcription=checkpoint)
-        if audio._audio_original_identity(Path(item["original_path"])) != original_identity:
+        if audio._audio_original_identity(original_path(owner.runtime_root, item)) != original_identity:
             raise ValueError("audio_transcription_evidence_invalid")
     except ValueError as exc:
         if str(exc) in {"asr_unavailable", "remote_processing_target_changed", "audio_transcription_evidence_invalid"}:
@@ -295,12 +304,12 @@ class WorkspaceIntake:
     @_admitted
     async def add_file(self, project_id: str = Form("default"), file: UploadFile = File(...)):
         project_id = _project(project_id)
-        name = Path(file.filename or "upload").name[:180]
+        name = _upload_name(file.filename)
         suffix = Path(name).suffix.lower()
         from .uploaded_media import MAX_VIDEO_BYTES, VIDEO_SUFFIXES
         is_video = suffix in VIDEO_SUFFIXES or (suffix == ".webm" and file.content_type == "video/webm")
         maximum = MAX_VIDEO_BYTES if is_video else _MAX_FILE
-        if not is_video and suffix not in {".txt", ".md", ".pdf", ".docx", ".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}:
+        if not is_video and suffix not in {".txt", ".md", ".csv", ".pdf", ".docx", ".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}:
             raise HTTPException(415, "unsupported_file_type")
         item_id = "workspace-" + uuid4().hex
         path = self.root / (item_id + suffix)
@@ -318,13 +327,20 @@ class WorkspaceIntake:
                     await run_in_threadpool(output.write, chunk)
             if not size:
                 raise HTTPException(413, "file_size_invalid")
-            if suffix in {".txt", ".md"}:
-                content = _text(path.read_bytes().decode("utf-8-sig"), "source_text")
+            if suffix in {".txt", ".md", ".csv"}:
+                try:
+                    source_text = path.read_bytes().decode("utf-8-sig")
+                except UnicodeDecodeError:
+                    raise HTTPException(400, "text_file_encoding_invalid") from None
+                content = _text(source_text, "source_text")
             elif kind in {"audio", "image", "video"}:
                 content = ""
             else:
-                content = _text(await run_in_threadpool(BuiltinDocumentTextExtractor().extract, path,
-                                mimetypes.guess_type(name)[0] or "application/octet-stream"), "source_text")
+                try:
+                    content = _text(await run_in_threadpool(BuiltinDocumentTextExtractor().extract, path,
+                                    mimetypes.guess_type(name)[0] or "application/octet-stream"), "source_text")
+                except LocalDocumentInputError as error:
+                    raise HTTPException(400, error.code) from None
             payload = dict(id=item_id, project_id=project_id, input_kind=kind, title=name,
                            source_text=content, status="staged", draft=None, error=None,
                            document_id=None, created_at=_now(), original_path=str(path), original_name=name)
@@ -341,7 +357,7 @@ class WorkspaceIntake:
         project_id = _project(project_id)
         if not isinstance(files, list) or not files:
             raise HTTPException(400, 'image_group_invalid')
-        names = [Path(file.filename or 'upload').name[:180] for file in files]
+        names = [_upload_name(file.filename) for file in files]
         if any(Path(name).suffix.lower() not in {'.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.webp'} for name in names):
             raise HTTPException(415, 'unsupported_file_type')
         item_id = 'workspace-' + uuid4().hex

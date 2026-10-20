@@ -11,7 +11,7 @@ from .processing_lease import ProcessingLease
 from backend.recognition import RecognitionService
 from backend.memory_app.workspace_confirmation import WorkspaceConfirmation
 from backend.memory_app.legacy_intake_review import LegacyIntakeReview
-from backend.api.rebuild_storage_runtime import build_rebuild_object_store
+from .rebuild_storage import build_rebuild_object_store
 from backend.security.audited_records import audit_records
 from backend.security.user_context import json_attribution
 from core.aggregate_repository_factory import AggregateRepositoryFactory

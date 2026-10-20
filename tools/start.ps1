@@ -20,6 +20,7 @@ $Frontend = Join-Path $Root 'src\frontend'
 $LogDir = Join-Path $Root 'logs'
 $AppUrl = 'http://127.0.0.1:4173'
 $HealthUrl = 'http://127.0.0.1:8001/api/health'
+$ExplicitDataRoot = $PSBoundParameters.ContainsKey('DataRoot')
 if (-not $DataRoot) { $DataRoot = Join-Path $Root 'runtime' }
 $DataRoot = [IO.Path]::GetFullPath($DataRoot)
 
@@ -51,8 +52,8 @@ function Stop-Tree($Process) {
     }
 }
 
-# 已经在运行：只打开浏览器。
-if ((Test-Ready $HealthUrl) -and (Test-Ready $AppUrl)) {
+# 默认入口复用就绪服务，显式目录继续检查端口占用。
+if (-not $ExplicitDataRoot -and (Test-Ready $HealthUrl) -and (Test-Ready $AppUrl)) {
     Say "已经在运行：$AppUrl"
     if (-not $NoBrowser) { Start-Process $AppUrl }
     exit 0

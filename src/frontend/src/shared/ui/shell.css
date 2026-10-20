@@ -18,8 +18,8 @@
 .ui-project-switcher svg{width:14px;height:14px;color:var(--muted);flex-shrink:0}
 .ui-project-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .ui-project-dot{width:6px;height:6px;flex-shrink:0;background:var(--red);border-radius:999px}
-.ui-project-options{position:absolute;top:100%;left:0;min-width:180px;max-width:calc(100vw - 24px);padding:8px;background:var(--panel);border:1px solid var(--line2);border-radius:var(--r-panel);box-shadow:0 12px 32px var(--shadow);z-index:110}
-.ui-project-options button{display:block;width:100%;min-height:40px;text-align:left;padding:8px 12px;border-radius:var(--r-control);overflow-wrap:anywhere}
+.ui-project-options{position:absolute;top:100%;left:0;min-width:180px;width:max-content;max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);box-sizing:border-box;overflow-y:auto;overscroll-behavior:contain;padding:8px;background:var(--panel);border:1px solid var(--line2);border-radius:var(--r-panel);box-shadow:0 12px 32px var(--shadow);z-index:110}
+.ui-project-options button{display:block;width:100%;min-height:40px;box-sizing:border-box;text-align:left;padding:8px 12px;border-radius:var(--r-control);white-space:normal;overflow-wrap:anywhere}
 .ui-project-options button:hover,.ui-project-options [aria-selected=true]{background:var(--sunk)}
 .ui-tray{position:relative;font-family:var(--sans)}
 .ui-tray-pill{display:flex;align-items:center;gap:16px;min-height:36px;padding:0 16px!important;border:1px solid var(--line2)!important;border-radius:999px;background:var(--panel)!important}
@@ -44,13 +44,12 @@
  .ui-tray{position:static}
  .ui-tray-pill{min-height:32px;padding:0 8px!important;gap:8px}
  .ui-tray-list{position:absolute;top:56px;left:0;right:0;bottom:auto;width:auto;max-width:none;border-radius:0;border-left:0;border-right:0}
- .ui-project-options{left:50%;transform:translateX(-50%)}
 }
 
 .ui-shell-avatar[aria-current=page] img{outline:2px solid var(--red);outline-offset:3px}
 
 .ui-shell-header-start{display:flex;align-items:center;flex-shrink:0;margin-right:12px}
-@media(min-width:760px){.ui-shell-header-start+.ui-project-switcher{margin-right:auto}}
+@media(min-width:760px){.ui-shell-header-start+.ui-project-switcher{margin-right:auto;flex:1}}
 .ui-shell-user-space{width:32px;height:32px;padding:0;border-radius:999px!important;background:var(--sunk)!important;color:var(--ink2)!important;font-size:14px!important}
 .ui-shell-header-status{display:flex;align-items:center;gap:12px;flex-shrink:0}
 

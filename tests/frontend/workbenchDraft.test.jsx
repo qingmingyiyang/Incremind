@@ -16,6 +16,9 @@ beforeEach(() => {
   sources: [{ id: 'source-1', title: 'Original title', kind: 'text' }], documents: [{document_id:'doc-1', title:'Draft title'}] };
  vi.stubGlobal('fetch', vi.fn(async (url, options={}) => {
   const path = String(url);
+  if (options.method !== 'PATCH' && path.includes('/api/v2/library/documents/')) return reply(saveConflict
+    ? { id: 'doc-1', project_id: 'alpha', title: 'Draft title', revision: 5, markdown: 'Server version' }
+    : { id: 'doc-1', project_id: 'alpha', title: 'Draft title', revision: 4, markdown });
   if (options.method === 'PATCH') {
    if (saveConflict) { detail = {...detail, note:{...note, revision: 5, markdown: 'Server version'}}; return reply({detail:'revision_conflict'},409); }
    return reply({revision:5});
@@ -79,7 +82,7 @@ it('saves the edited draft with the revision captured at opening',async()=>{
  await open(); fireEvent.click(screen.getByRole('button',{name:'更多编辑'})); fireEvent.click(screen.getByRole('button',{name:'源码'})); fireEvent.change(screen.getByRole('textbox',{name:'整理稿正文'}),{target:{value:'My edited draft'}});
  fireEvent.click(screen.getByRole('button',{name:'保存'})); await act(async()=>{});
  const call = fetch.mock.calls.find(([,opts])=>opts?.method==='PATCH');
- expect(String(call[0])).toContain('/api/recognition/documents/doc-1');
+ expect(String(call[0])).toContain('/api/v2/library/documents/doc-1');
  expect(JSON.parse(call[1].body)).toEqual({project_id:'alpha',expected_revision:4,markdown:'My edited draft'});
 });
 it('reads current data after 409 and preserves all three snapshots',async()=>{
@@ -210,5 +213,5 @@ it('preserves input and waits to send into the newly loaded thread',async()=>{
  expect(screen.getByRole('textbox',{name:'输入'})).toHaveValue('Keep this input');
  fireEvent.click(screen.getByRole('button',{name:'发送'})); await act(async()=>{});
  expect(posted()).toHaveLength(1);
- expect(JSON.parse(posted()[0][1].body)).toEqual({project_id:'alpha',thread_id:'thread-2',text:'Keep this input',intent:'remember'});
+ expect(JSON.parse(posted()[0][1].body)).toEqual({project_id:'alpha',thread_id:'thread-2',text:'Keep this input'});
 });

@@ -1,7 +1,7 @@
 from backend.memory_app.v2.bookshelf import consult_bookshelf
 from backend.memory_app.recall_preferences import set_preference
 from backend.recognition import WorkScope
-from tests.memory_app.v2.test_workbench_ask import env as _env_fixture, publish, ask, add_document
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as _env_fixture, publish, ask, add_document
 
 env = _env_fixture
 

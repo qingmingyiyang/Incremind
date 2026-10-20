@@ -7,7 +7,7 @@ from core.document_engine import DocumentDraft, SQLiteDocumentRepository
 from core.storage_provider import SQLiteStructuredRecordStore
 from tests.memory_app.v2.test_origin_integrity import copy
 from tests.memory_app.v2.test_candidate_destinations import seed, confirm_to
-from tests.memory_app.v2.test_workbench_ask import env
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
 
 
 def publish(service, scope, experience):

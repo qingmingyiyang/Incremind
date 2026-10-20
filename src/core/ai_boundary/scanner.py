@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import re
+from uuid import UUID
 
 from .token_vault import EphemeralTokenVault
 
@@ -17,6 +18,12 @@ _PAYMENT_CANDIDATE = re.compile(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)")
 _EMAIL = re.compile(r"(?i)(?<![\w.+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}(?![\w.-])")
 _PHONE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
 _HARD_CLASSES = frozenset({"credential", "government_id", "payment"})
+_NUMERIC_CLASSES = frozenset({"government_id", "payment", "phone"})
+_MACHINE_IDENTIFIER = re.compile(
+    r"(?<![A-Za-z0-9_])(?:[0-9A-Fa-f]{32}|"
+    r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+    r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})(?![A-Za-z0-9_])"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +62,9 @@ class SensitiveTextScanner:
                 findings.append(SensitiveFinding("payment", match.start(), match.end(), True))
         findings.extend(_matches(_EMAIL, text, "email", hard=False))
         findings.extend(_matches(_PHONE, text, "phone", hard=False))
+        identifiers = _machine_identifier_ranges(text)
+        findings = [finding for finding in findings
+                    if not _inside_machine_identifier(finding, text, identifiers)]
         return tuple(_non_overlapping(findings))
 
     def sanitize_for_remote(
@@ -109,6 +119,31 @@ def _matches(
         SensitiveFinding(data_class, match.start(), match.end(), hard)
         for match in pattern.finditer(text)
     ]
+
+
+def _machine_identifier_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    ranges = []
+    for match in _MACHINE_IDENTIFIER.finditer(text):
+        value = match.group(0)
+        identifier = UUID(value)
+        if value.lower() in (identifier.hex, str(identifier)):
+            ranges.append((match.start(), match.end()))
+    return tuple(ranges)
+
+
+def _inside_machine_identifier(
+    finding: SensitiveFinding,
+    text: str,
+    identifiers: tuple[tuple[int, int], ...],
+) -> bool:
+    if finding.data_class not in _NUMERIC_CLASSES:
+        return False
+    end = finding.end
+    if finding.data_class == "payment":
+        # 银行卡候选可带末尾分隔符，范围判断只使用数字所在部分。
+        end = finding.start + len(text[finding.start:end].rstrip(" -"))
+    # 只排除完整标识内部的数字；凭据和标识之外的号码继续按原规则扫描。
+    return any(start <= finding.start and end <= stop for start, stop in identifiers)
 
 
 def _non_overlapping(findings: list[SensitiveFinding]) -> list[SensitiveFinding]:

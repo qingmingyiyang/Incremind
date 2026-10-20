@@ -202,7 +202,7 @@ class DailyBackup:
             prune_automatic_backups, verification_metadata)
         now = self.now()
         identity = identity or now.date().isoformat()
-        active, backups, _ = runtime_backup_roots(self.runtime_root)
+        _, backups, _ = runtime_backup_roots(self.runtime_root)
         snapshot_id = f"snap-{'auto-' if automatic else ''}{now.strftime('%Y%m%dt%H%M%Sz')}-{uuid4().hex[:8]}"
         with self.records.begin() as tx:
             prior = tx.read('v2_backup_jobs', identity)
@@ -219,7 +219,7 @@ class DailyBackup:
                 'snapshot_id': snapshot_id, 'updated_at': now.isoformat()}, expected_revision=prior.revision if prior else 0)
             tx.commit()
         try:
-            snapshot = backup_runtime(active, backups,
+            snapshot = backup_runtime(self.runtime_root, backups,
                 snapshot_id=snapshot_id, automatic=automatic, job_id=identity if automatic else None)
             write_backup_catalog(snapshot.snapshot_root, {'schema_version': '2.0.0', 'id': snapshot.snapshot_id,
                 'created_at': now.isoformat(), 'label': '', 'namespace_id': 'default', 'layer_fingerprints': {},

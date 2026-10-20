@@ -35,9 +35,11 @@ def filing_view(reader, document_id, project):
         filing_experience(reader, WorkScope('local-user', marker.payload['target_project_id']), marker.object_id)
     except RecognitionError:
         return None
+    auxiliary = reader.read('v2_document_filing_aux', marker.object_id)
     return {'target_project_id': destination, 'target_document_id': target_id,
         'filing_document_id': marker.object_id, 'filing_revision': marker.revision,
-        'state': marker.payload['state']}
+        'state': marker.payload['state'],
+        'error': auxiliary.payload.get('error') if auxiliary and marker.payload['state'] == 'filed' else None}
 
 
 class DocumentFilings:
@@ -47,7 +49,7 @@ class DocumentFilings:
     def _view(self, row):
         return {**dict(row.payload), 'filing_revision': row.revision}
 
-    def move(self, document_id, source_project, target_project, *, scene=None, expected_revision):
+    def move(self, document_id, source_project, target_project, *, scene=None, expected_revision, retry_token=None):
         if type(expected_revision) is not int or expected_revision < 1:
             raise RecognitionConflict('document_revision_invalid')
         existing = None
@@ -67,6 +69,9 @@ class DocumentFilings:
                 if (row.payload.get('source_document_id') == document_id
                         and row.payload.get('source_project_id') == source_project
                         and row.payload.get('state') == 'filed'):
+                    # 已移动资料的显式重试沿原场景提炼，不重新执行归属操作。
+                    if retry_token is not None and scene is None:
+                        scene = row.payload.get('scene')
                     if (row.payload.get('source_document_revision') != expected_revision
                             or row.payload.get('target_project_id') != target_project
                             or row.payload.get('scene') != scene):
@@ -124,42 +129,88 @@ class DocumentFilings:
                     'state': 'pending', 'insights': [], 'error': None}, expected_revision=0)
                 tx.commit()
         result = self._view(existing)
-        result.update(self._extract(existing))
+        result.update(self._extract(existing, retry_token=retry_token))
         return result
 
-    def _extract(self, filing):
+    def _insight_attempt(self, project, identity, revision):
+        key = f'candidate-v2-{identity}-r{revision}-'
+        rows = {row.payload['identity']['key']: row for row in self.records.list('v2_memory_turn_keys')
+            if row.payload['identity'].get('kind') == 'memory.propose_insights'
+            and row.payload['identity'].get('project') == project}
+        current, seen = rows.get(key), set()
+        while current is not None:
+            if current.object_id in seen:
+                raise RecognitionConflict('insight_retry_identity_changed')
+            seen.add(current.object_id)
+            successor = rows.get(key + ':retry-of:' + current.object_id)
+            if successor is None:
+                return current
+            current = successor
+        return None
+
+    def _pending_attempt(self, project, identity, revision):
+        from .memory_turn import MemoryTurn
+        attempt = self._insight_attempt(project, identity, revision)
+        if attempt is None:
+            return False
+        store = MemoryTurn.store_for(self.records)
+        events = tuple(store.events_after(attempt.object_id))
+        return (store.get_immutable_payload(attempt.object_id, 'memory-generation-output-v1') is None
+            and (not events or events[-1]['type'] not in {'turn.completed', 'turn.failed', 'turn.cancelled'}))
+
+    def _extract(self, filing, *, retry_token=None):
         identity, project = filing.object_id, filing.payload['target_project_id']
-        row = self.records.read('v2_document_filing_aux', identity)
-        if row is None or row.payload['state'] != 'pending':
-            return {'insights': row.payload['insights'] if row else [], 'error': row.payload['error'] if row else None}
+        if retry_token is not None and (not isinstance(retry_token, str) or not retry_token):
+            raise RecognitionError('insight_retry_token_invalid')
+        with self.records.begin() as tx:
+            current_filing = tx.read('v2_document_filings', identity)
+            if current_filing != filing or filing.payload['state'] != 'filed':
+                raise RecognitionConflict('document_filing_changed')
+            filing_experience(tx, WorkScope('local-user', project), identity)
+            row = tx.read('v2_document_filing_aux', identity)
+            if row is None or (row.payload['state'] == 'done'
+                    and (not row.payload.get('error') or retry_token is None)):
+                return {'insights': row.payload['insights'] if row else [], 'error': row.payload['error'] if row else None}
+            document = tx.read('documents', identity)
+            if document is None or document.payload.get('project_id') != project or document.payload.get('status') == 'archived':
+                raise RecognitionConflict('document_unavailable')
+            owner = row.payload.get('retry_token')
+            revision = row.payload['document_revision']
+            if row.payload['state'] == 'done':
+                owner, revision = retry_token, document.payload['revision']
+            elif revision != document.payload['revision']:
+                raise RecognitionConflict('document_revision_changed')
+            elif owner is None:
+                previous = self._insight_attempt(project, identity, revision)
+                owner = (previous.payload.get('retry_token') if previous is not None
+                    and self._pending_attempt(project, identity, revision) else retry_token or uuid4().hex)
+            selected = {**row.payload, 'state': 'pending', 'document_revision': revision}
+            if owner is not None:
+                selected['retry_token'] = owner
+            if selected != row.payload:
+                row = tx.put(row.collection, identity, selected, expected_revision=row.revision)
+                tx.commit()
         errors, insights = [], []
         try:
             from .insight_generation import generate_insights
             insights = generate_insights(self.models, self.service, self.documents, project, identity,
-                on_error=errors.append)
+                on_error=errors.append, retry_token=owner)
         except Exception as error:
             logging.getLogger(__name__).warning('document_filing_aux_failed exception_type=%s', type(error).__name__)
             errors.append('insight_generation_failed')
         if errors and not insights:
-            # The Turn, rather than this auxiliary sidecar, owns dispatch.
-            # A concurrent replay without its durable output cannot finalize
-            # the first caller's still-running result as a permanent failure.
-            from .memory_turn import MemoryTurn
-            key = {'kind': 'memory.propose_insights', 'project': project,
-                'key': f"candidate-v2-{identity}-r{row.payload['document_revision']}-"}
-            request = next((item for item in self.records.list('v2_memory_turn_keys')
-                if item.payload['identity'] == key), None)
-            if request is not None:
-                store = MemoryTurn.store_for(self.records)
-                events = tuple(store.events_after(request.object_id))
-                if (events and events[-1]['type'] not in {'turn.completed', 'turn.failed', 'turn.cancelled'}
-                        and store.get_immutable_payload(request.object_id, 'memory-generation-output-v1') is None):
-                    return {'insights': [], 'error': None}
-        # The move is already durable. Derived extraction errors remain an
-        # error on its receipt and cannot turn a successful move into a failure.
+            # 实际 Turn 仍在执行时只回读，后到请求不能把原调用登记成失败。
+            if self._pending_attempt(project, identity, revision):
+                return {'insights': row.payload['insights'],
+                    'error': row.payload.get('error') or 'insight_generation_failed'}
         with self.records.begin() as tx:
+            if tx.read('v2_document_filings', identity) != filing:
+                raise RecognitionConflict('document_filing_changed')
+            filing_experience(tx, WorkScope('local-user', project), identity)
             current = tx.read('v2_document_filing_aux', identity)
-            if current.payload['state'] == 'pending':
+            if current is None or current.payload.get('retry_token') != owner:
+                raise RecognitionConflict('insight_retry_changed')
+            if current.payload['state'] == 'pending' or insights and current.payload.get('error'):
                 current = tx.put(current.collection, identity, {**current.payload,
                     'state': 'done', 'insights': insights, 'error': errors[0] if errors else None},
                     expected_revision=current.revision)

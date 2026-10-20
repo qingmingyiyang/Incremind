@@ -5,7 +5,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.recognition import WorkScope
-from tests.memory_app.v2.test_partial_answer import env, interrupted_app
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
+from tests.memory_app.v2.test_partial_answer import interrupted_app
 from tests.memory_app.v2.test_workbench_ask import publish, add_document
 from tests.memory_app.v2.test_workbench_stream import events
 

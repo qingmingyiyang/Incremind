@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from backend.memory_app.v2.policies import ACTIVE, get, override, register, version
 from backend.memory_app.v2.policies.pipelines import interfaces_for_turn
 from tests.memory_app.v2.kernel_receipts import requests
-from tests.memory_app.v2.test_workbench_ask import env as ask_env, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as ask_env, publish
 from tests.memory_app.v2.test_workbench_remember import env as remember_env, post, wait
 from tests.memory_app.v2.test_workbench_stream import events
 

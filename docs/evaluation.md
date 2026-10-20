@@ -1,8 +1,80 @@
 # 测评与验收
 
-更新于 2026-10-15。本文公开方法、版本和聚合结果，分别呈现回答质量、材料处理进度及工程验收。原始输入、逐题回答、回执和失败产物保存在私有验收记录中，不随代码发布；历史结果按原冻结版本保留。
+更新于 2026-10-21。先列固定开发题的回答质量、延迟与用量，再列多轮功能验收和历史实验。所有指标保留各自的样本、版本与评分方式。
+
+## 固定开发题结果
+
+`RAG30-20261011` 使用 LoCoMo 第一份英文对话的 19 个 session、12 道固定开发题，以及真实 DeepSeek Flash 和本机 EmbeddingGemma 2。这轮运行的策略为 `compose@30 / ladder@15 / retrieve@5 / rerank@2`。
+
+![RAG30固定开发题的质量、全题延迟与实际词元用量](images/evaluation-rag30.svg)
+
+2026-10-21 对这批冻结回答重新逐题核对全部原文，结果为 **10 正确、2 部分正确、0 错误、0 未发布**。全 12 次尝试的总耗时中位数为 **22.160 秒**，输入 **335,444**、输出 **12,498** 词元，共 **36 次物理模型请求**。用量包含主要作答和重排；货币费用没有记录。这些题反复参与开发，本次审阅沿用原回答，没有新增作答请求。
+
+图示与[机器可读聚合](images/evaluation-summary.json)由 [`tools/rag_report.py`](../tools/rag_report.py) 从实际逐题结果、调用用量和独立审阅生成。工具逐项核对送审回答与运行回答、问题分母、策略、调用数量及原文件内容；SVG 内含聚合数据，并校验条形比例。用公开聚合重建图示，无需模型或私有语料：
+
+```powershell
+.\.venv\Scripts\python.exe tools/rag_report.py `
+  --summary docs/images/evaluation-summary.json `
+  --output work/evaluation-report
+```
+
+已有完整原始档案时，可以重新汇总并用 `--check` 核对现有产物。以下为通用目录示例：
+
+```powershell
+.\.venv\Scripts\python.exe tools/rag_report.py `
+  --rag30 work/evaluation/rag30-results `
+  --pilot work/evaluation/pilot-results `
+  --review work/evaluation/independent-review.json `
+  --output work/evaluation-report --check
+```
+
+原始目录包含 `manifest.json`、`project-*.json`、主要调用的 `canonical-*.json`、`rerank-wires.json`、冻结运行与送审清单。独立裁决使用 `kind=independent_source_review`、`method` 和 `verdicts`；每题有 `qa_index`、`verdict`，取值为 `correct / partial / wrong / unpublished`。单独的送审清单只证明覆盖范围。公开聚合保留来源类型及复核日期，原文、标准答案、逐题回答和私人运行信息保存在本地档案中。
 
 当前问答默认是 `compose@30 / ladder@15 / retrieve@7 / rerank@2`，另用 `rank@4 / vector@1`。整理默认仍为 `organize@1 / material_analysis@1 / extract@5`。较新的候选实现可显式选择，是否合入源码与是否启用为默认分别记录。
+
+## 留出数据与标注质量
+
+`locomo-heldout@1` 固定种子 `20261021`，在原始 10 份会话中先排除开发会话，再要求原类别 1–4 各至少 3 题，从符合条件的会话中抽取 4 份，每份按类别各取 3 题。抽样先于答案生成与评分，清单、原话投影及标注质量分别冻结。
+
+| 数据 | 会话 | 问题 | 对话 session / 消息 | 状态 |
+|---|---:|---:|---:|---|
+| 原开发集 | 1 | 12 | 19 / 419 | 冻结回答与原文复核见上节 |
+| 新留出集 | 4 | 48 | 116 / 2,536 | 仅准备资料，模型调用 0 |
+
+新会话为 `conv-41 / conv-44 / conv-47 / conv-49`，原数组位置为 `2 / 5 / 6 / 8`；类别 1–4 各 12 题。与原开发集的会话和问题文本重叠均为 0。新题没有作答或语义评分。
+
+48 题均有答案和非空证据标注，其中 47 题的全部原子证据编号可在对应原文中找到。`conv-47` 的 `qa_index=38` 包含不存在的 `D4:36`，另两条证据 `D18:1 / D18:7` 存在。原标注保持，显式新数据运行将该题记为 `invalid_source_annotation`，Evidence Recall 与 `all_evidence_found` 为 null，有效证据 Recall 问题分母为 47；答案语义仍可独立评分。编号存在的检查只验证定位资格，具体证据与答案的关系由后续事实审阅判断。
+
+`quality.json` 登记全部 1,986 条上游 QA 的类别、缺失标注、组合编号、无效格式及不存在的编号。类别 5 按其原有标注边界另列。标准答案、类别及上游总结保留在评测侧，`sessions.json` 只由唯一原始文件的对话消息生成，供原检索与生成流程读取。
+
+使用本地已有的原始 LoCoMo、许可证和开发清单准备数据；原资料继续按上游 CC BY-NC 4.0 管理。运行入口不复制整份原始文件：
+
+```powershell
+.\.venv\Scripts\python.exe tools/rag_dataset.py `
+  --raw-data work/rag-pilot-20261010/locomo10.json `
+  --development-manifest work/rag-pilot-20261010/manifest.json `
+  --license work/rag-pilot-20261010/LICENSE.locomo.txt `
+  --seed 20261021 --conversations 4 `
+  --output work/evaluation-data/heldout-v1
+```
+
+入口为输出目录的 `index.json`，它指向四份原形状 `manifest.json` 和四份原话 `sessions.json`，同目录另有质量记录 `quality.json`。复现时加 `--index work/evaluation-data/heldout-v1/index.json`，并将 `--output` 指向新目录。已有输出先整体核对，相同重放保留字节与修改时间，冲突在写入前抛出错误。
+
+原 `rag_pilot.py` 与 `rag_compare.py` 可直接消费冻结会话。以下仅准备第一份新会话，另外三份将 `conversation-2` 换为 `conversation-5 / conversation-6 / conversation-8`，并分别使用新的输出目录：
+
+```powershell
+.\.venv\Scripts\python.exe tools/rag_pilot.py `
+  --raw-data work/rag-pilot-20261010/locomo10.json `
+  --manifest work/evaluation-data/heldout-v1/conversation-2/manifest.json `
+  --seed 20261021 --output work/evaluation-data/pilot-conv41 --prepare-only
+
+.\.venv\Scripts\python.exe tools/rag_compare.py `
+  --raw-data work/rag-pilot-20261010/locomo10.json `
+  --manifest work/evaluation-data/heldout-v1/conversation-2/manifest.json `
+  --seed 20261021 --output work/evaluation-data/compare-conv41 --prepare-only
+```
+
+`--prepare-only` 在模型配置、索引和问答执行前结束。两种入口先核冻结题目、完整原话与 baseline 身份；已有答案只能沿对应冻结输入读取。原默认 12 题清单和原 36 条已保存结果的默认评分保持。真实验证包括八次会话准备、四次失配前置拒绝、十份 JSON 重建一致及已有文件保护，新增模型调用 0。
 
 ## Agentic RAG 真实多轮验收
 
@@ -30,19 +102,19 @@ B 的追问同时解释了已读到的条件差异，实际动作为 clarify，�
 
 ## 历史 12 题问答（retrieve@5）
 
-运行标签 `RAG30-20261011`，当时已激活组合为 `compose@30 / ladder@15 / retrieve@5 / rerank@2`。DeepSeek Flash 真实作答，EmbeddingGemma 2 文字模型输出 256 维向量；独立 Agent 对照全部原文审核回答，没有调用新评分模型，也没有人工评分。
+运行标签 `RAG30-20261011`，当时已激活组合为 `compose@30 / ladder@15 / retrieve@5 / rerank@2`。DeepSeek Flash 真实作答，EmbeddingGemma 2 文字模型输出 256 维向量。2026-10-21 独立 Agent 完整读取 19 个 session、419 条消息、12 份最终回答及其 34 项引用，按来源事实逐题审阅；审阅没有新增模型 API 调用。
 
 | 指标 | 实际结果 |
 |---|---:|
 | 固定问题 / 对话原件 | 12 / 19 |
-| 正确 / 部分正确 / 错误 / 未发布 | **8 / 4 / 0 / 0** |
+| 2026-10-21 事实复核：正确 / 部分正确 / 错误 / 未发布 | **10 / 2 / 0 / 0** |
 | 新增真实模型请求 | 36 |
 | 输入 / 输出词元 | 335,444 / 12,498 |
 | 合计词元 | 347,942 |
 | 全 12 题总耗时中位数 | 22.160 秒 |
 | 召回耗时中位数 | 14.292 秒 |
 
-正确包含证据支持的未知回答，不意味着模型肯定了资料未明确的身份或意愿。生日、开放活动列举、符号意义及关系状态仍有覆盖缺口。这批题反复用于开发，只有一份英文对话，不能作为留出集成绩、中文效果或总体正确率。
+正确要求主要结论与完整原文一致，并完成问题需要的事实；有证据支持的未知回答及明确标注的合理推断可以正确。部分正确表示已有内容有依据，但漏掉关键事实或可完成的日期推算；本轮两题分别存在关键身份线索与日期遗漏。错误表示主要结论与原文冲突，或将无依据的关键判断当成事实；未发布表示没有最终公开回答。判定逐题读取完整回答，结合说话人、时间和图像说明，不按答案子串、F1 或长度自动定级。样本只有一份英文对话。
 
 该轮复用 112 条已有资料向量；问题向量缓存命中不计作新编码。新请求在原账本之后追加，范围为 259–294，旧前缀保留，无隐藏单题重试。输入与输出是实际记录用量，未依据价格换算账单。延迟包含该轮检索与回答，不代表所有设备、模型或材料长度的响应保证。
 
@@ -56,7 +128,7 @@ B 的追问同时解释了已读到的条件差异，实际动作为 clarify，�
 
 | 运行标签与日期 | compose / ladder / retrieve / rerank | 实际结果 | 全 12 次尝试总耗时中位数 | 输入 / 输出词元 |
 |---|---|---|---:|---:|
-| **RAG30 · 2026-10-11，当时已激活** | 30 / 15 / 5 / 2 | 8 正确、4 部分、0 错误、0 未发布 | 22.160 秒 | 335,444 / 12,498 |
+| **RAG30 · 2026-10-11，当时已激活** | 30 / 15 / 5 / 2 | 2026-10-21 复核：10 正确、2 部分、0 错误、0 未发布 | 22.160 秒 | 335,444 / 12,498 |
 | RAG31 · 2026-10-12，未激活 | 31 / 16 / 5 / 2 | 8 正确、2 部分、1 错误、1 未发布 | 22.4875 秒 | 363,001 / 11,188 |
 | RAG32 · 2026-10-12，未激活 | 32 / 16 / 5 / 2 | 6 题发布、6 题未发布；已发布题为保守有据回答，仍漏一处已知庆祝日 | 25.525 秒 | 465,671 / 17,920 |
 
@@ -101,7 +173,9 @@ RAG32 对保守未知的分类与 RAG30 不完全一致，生日题虽然保守�
 
 存储、选材、任务与 Agent 记录、读取证明、草稿和回执使用项目实现，模型 HTTP 使用替身。21 项为 18 + 2 + 1；18 项已包含更早的 13 项存储控制和 2 项条数/归属控制，不重复相加。五个变更 Python 文件的 F821/F823 检查及差异检查通过。本轮新增付费模型请求为 **0**，不更新或覆盖此前真实 DeepSeek 的回答、用量及延迟结果，也不据此报告模型质量提升。
 
-保留的旧用例没有声明匹配最终交付的 `final_for`。它已召回资料并生成中间草稿，但第三次工作者规划估算 **15,619 输入词元**，超过 **16,000 上下文减 2,000 输出预留后的 14,000 输入容量**，在 HTTP 发送前被拒绝，回执为部分完成。预算和原完成断言均未放宽，**该失败尚未修复**；表中的最终草稿成功按另一合同单列。
+新建 `project.task` 默认冻结 `context_preparation@3`，沿用事件和正文去重，并向模型说明已可见工具的真实参数与用途。旧请求沿原冻结版本回放。任务召回及翻书只选取具备原件快照的资料，缺少证明的候选记为 `source_unavailable`，最终来源校验继续执行。
+
+2026-10-20，使用公开间隔重复笔记和真实 DeepSeek 完成初稿及同线程 `continue_from`：初稿 **744 字、done、成果版本 1**，续接稿 **885 字、done、成果版本 2**，新增每日执行清单。两稿均保留每天新卡不超过 20 张及第 1、2、4、7、15 天复习的事实；原稿正文、修订与出生引用保持，两个文稿修订均为 1，成果版本通过 root/previous 关联。两轮各自的研究读取证明均核到同一原笔记，HTTP 正文、修订及上一版本回读通过。本项累计登记 **24 次模型尝试，全部终态**。
 
 相关旧来源边界检查组为 **15 通过、22 失败**。其中两个代表节点已在未修改主线上独立复现旧夹具缺少 Agent 权限表、被 `authority_facts` 严格校验拒绝的同样失败；其余 20 项未逐项做基线对照。该组与上述 21 项定向控制分别记录，不能写成来源边界检查已全部通过。
 

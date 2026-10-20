@@ -5,7 +5,7 @@ import pytest
 from backend.memory_app.v2.usage import UsageService
 from backend.memory_app.recall_preferences import set_preference
 from backend.recognition import WorkScope
-from tests.memory_app.v2.test_workbench_ask import env, publish, add_document, ask
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, publish, add_document, ask
 
 
 def clock():

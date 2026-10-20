@@ -6,7 +6,7 @@ from backend.memory_app.v2.signal_reviews import install_signal_review_routes
 from backend.memory_app.v2.signals import SignalService
 from backend.memory_app.transaction_records import TransactionRecords
 from tests.memory_app.v2.test_signal_reviews import real_owner, action
-from tests.memory_app.v2.test_workbench_ask import env as ask_env, publish, ask
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as ask_env, publish, ask
 
 
 def install(env):

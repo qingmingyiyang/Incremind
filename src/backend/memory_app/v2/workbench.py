@@ -50,89 +50,17 @@ from .workbench_transport import negotiate_turn_response, SSEDelivery, routed_re
 from .route import RouteService
 from .multipart import execute_parts, project_parts
 
+from .workbench_receipts import (
+    ITEM_STATES,
+    _ASK_LAYERS,
+    _ERRORS,
+    _ask_receipt,
+    _safe_error,
+    persist_workbench_turn,
+)
+
 
 _LOGGER = logging.getLogger(__name__)
-ITEM_STATES = "v2_workbench_item_states"
-
-
-def persist_workbench_turn(tx, *, turn_id, project, thread_id, cleaned, now, created_at,
-                           intent, receipt, item_id, item, instance, run_id, title_prefix,
-                           replace_turn, research_state, parent_turn_id=None, route_meta=None, track_item=True):
-    """共用原创建写入，完成回执与提交仍由调用方的同一事务负责。"""
-    thread = tx.read("v2_threads", thread_id)
-    if thread is not None and thread.payload.get("project_id") != project:
-        raise HTTPException(404, "workbench_not_found")
-    if thread is None:
-        tx.put("v2_threads", thread_id, {"project_id": project, "title": cleaned[:40] or item["title"],
-            **({'parent_turn_id':parent_turn_id} if parent_turn_id else {}),
-            "created_at": now, "updated_at": now}, expected_revision=0)
-    else:
-        tx.put("v2_threads", thread_id, {**thread.payload, "updated_at": now}, expected_revision=thread.revision)
-    saved = tx.put("v2_turns", turn_id, {"project_id": project, "thread_id": thread_id,
-        "intent": intent, "user_text": cleaned, "created_at": created_at, "updated_at": now,
-        "receipt": receipt, "item_id": item_id, "instance": instance, "run_id": run_id,
-        **({'parent_turn_id':parent_turn_id} if parent_turn_id else {}),
-        **({'route':route_meta} if route_meta else {}),
-        **({"favorite_title_prefix": title_prefix} if title_prefix else {})},
-        expected_revision=tx.read("v2_turns", turn_id).revision if replace_turn else 0)
-    if intent == "remember" and track_item:
-        tx.put(ITEM_STATES, turn_id, {"project_id": project, "item_id": item_id,
-            "turn_id": turn_id, "thread_id": thread_id, "state": "processing", "error": None,
-            "created_at": now, "updated_at": now}, expected_revision=0)
-    if research_state is not None:
-        tx.put(TASK_EXECUTIONS, turn_id, research_state, expected_revision=0)
-    return saved
-
-
-_ERRORS = {"processing_failed", "insight_generation_failed", "insight_invalid_output",
-    "insight_private_project", "confirmation_failed", "related_retrieval_failed", "interrupted",
-    "remote_disabled", "private_project_remote_blocked", "scene_assignment_failed"}
-_ASK_LAYERS = {"L3": "insight", "L2": "summary", "L1": "note", "L0": "source", "inspiration": "inspiration"}
-
-
-def _ask_receipt(plan, chosen, result, egress_receipt_id, egress=None):
-    layers = dict.fromkeys(('insight', 'summary', 'note', 'source', 'persona'), 0)
-    if any(candidate['layer'] == 'inspiration' for candidate in chosen):
-        layers['inspiration'] = 0
-    layers['persona'] = plan.get('profile', {}).get('count', 0)
-    for candidate in chosen:
-        layers[_ASK_LAYERS[candidate["layer"]]] += 1
-        layers["persona"] += int(bool(candidate.get("persona")))
-    citations = []
-    for source in result["sources"]:
-        candidate = chosen[source["number"] - 1]
-        entry = candidate["entry"]
-        layer = _ASK_LAYERS[candidate["layer"]]
-        identity = (entry["id"] if layer in {"insight", "inspiration"} else entry["document_id"] if layer in {"summary", "note"}
-                    else entry.get("item_id") or entry["source_id"])
-        citations.append({"n": source["number"], "layer": layer, "persona": bool(candidate.get("persona")),
-            "id": identity, "title": source["title"], "quote": source["excerpt"],
-            "locator": {"coordinate_space": source["coordinate_space"], "windows": source["windows"]},
-            **({'url':candidate['url']} if candidate.get('url') else {}),
-            **({"bookshelf": True} if candidate.get("bookshelf") else {}),
-            **({"stale": True} if layer == "insight" and candidate.get("stale") is True else {}),
-            **({"historical": True} if layer == "insight" and candidate.get("temporal")
-               and candidate.get("validity", {}).get("valid_until") else {})})
-    context = result.get("context") if not result.get("no_match") else _empty_ask_context()
-    if isinstance(context, dict):
-        egress = egress or {}
-        basis = egress.get('consent_basis', {})
-        context = {**context, 'egress': {'model': egress.get('target', {}).get('model'),
-            'consent_scope': basis.get('scope'), 'settings_revision': basis.get('settings_revision'),
-            'excluded_private': None}}
-    if isinstance(context, dict) and plan.get("bookshelf", {}).get("hits"):
-        context["bookshelf"] = plan["bookshelf"]
-    return {"answer": result["answer"], "citations": citations, "layers": layers,
-        "trace": [{**row, "layer": _ASK_LAYERS[row["layer"]]} for row in plan["trace"]],
-        "egress_receipt_id": egress_receipt_id, "no_match": result.get("no_match", False),
-        "context": context,
-        "model_usage": result.get("model_usage", {}), "excluded_sources": result.get("excluded_sources", []),
-        **({key: result[key] for key in ('partial', 'interruption')} if 'interruption' in result else {})}
-
-
-def _safe_error(error, fallback):
-    code = getattr(error, "detail", None)
-    return code if isinstance(code, str) and code in _ERRORS else fallback
 
 
 def install_workbench_routes(application, *, records, models, documents, service, workspace, organization=None, research_reader=None, topology_reader=None, usage_reader=None, reminders=None):
@@ -154,6 +82,9 @@ def install_workbench_routes(application, *, records, models, documents, service
         query=workspace.query, service=service,
         execution_getter=lambda: (getattr(application.state, 'ai_runtime', None),
                                   getattr(application.state, 'ai_turn_runner', None)))
+    def observe_task(turn):
+        return research.observe(turn) if turn.payload.get('instance') != instance else turn.payload['receipt']['do']
+    application.state.workbench_task_observer = observe_task
     from .external_task_do import ExternalTaskDo
     external_research = ExternalTaskDo(application, records, models, TaskDrafts(records, documents), workspace.query)
     def task_service(turn_id):
@@ -180,7 +111,7 @@ def install_workbench_routes(application, *, records, models, documents, service
                 await task_service(turn_id).advance(turn_id)
                 row = records.read("v2_turns", turn_id)
                 if (row is None or row.payload["receipt"]["do"].get("task_id")
-                        or row.payload["receipt"]["do"].get("state") in {"done", "partial", "failed", "interrupted"}):
+                        or row.payload["receipt"]["do"].get("state") in {"done", "partial", "failed", "interrupted", "stopped"}):
                     break
                 await asyncio.sleep(1)
         finally:
@@ -206,6 +137,12 @@ def install_workbench_routes(application, *, records, models, documents, service
         if row is None or row.payload.get("project_id") != project:
             raise HTTPException(404, "workbench_not_found")
         return row
+
+    def record_stop(turn_id, project, generation):
+        signal = application.state.memory_signals
+        prepared = signal.prepare({'project_id': project, 'kind': 'stop',
+            'client_id': 'stop-' + turn_id + '-' + str(generation), 'turn_id': turn_id}, server=True)
+        signal.safe_record(prepared)
 
     @timed_stage("persist")
     def save(turn_id, receipt, *, run_id):
@@ -247,6 +184,21 @@ def install_workbench_routes(application, *, records, models, documents, service
             memory["verified"] = bool(memory["document_id"] and is_verified(records, documents, memory["document_id"]))
             from .document_filings import filing_view
             filed = filing_view(records, memory['document_id'], project) if memory['document_id'] else None
+            if (filed is not None and filed['state'] == 'filed'
+                    and not (memory['state'] == 'processing' and row.object_id in running)):
+                auxiliary = records.read('v2_document_filing_aux', filed['filing_document_id'])
+                if auxiliary is not None and auxiliary.payload.get('project_id') == filed['target_project_id']:
+                    extraction_error = memory.get('error') in {
+                        None, 'insight_generation_failed', 'insight_invalid_output', 'insight_private_project'}
+                    # 资料库显式补提炼后，原对话直接读取同一份已完成结果。
+                    if auxiliary.payload['state'] == 'done':
+                        memory['insights'] = list(auxiliary.payload['insights'])
+                    if (filed.get('error') and status == 'confirmed'
+                            and memory['state'] in {'done', 'failed'} and extraction_error):
+                        memory.update(state='failed', error=filed['error'])
+                    elif (auxiliary.payload['state'] == 'done' and status == 'confirmed'
+                            and memory['state'] == 'failed' and extraction_error):
+                        memory.update(state='done', error=None)
             # An automatically filed item's insights were extracted in its new project.
             insight_scope = (WorkScope("local-user", filed['target_project_id'])
                 if filed is not None and filed['state'] == 'filed' else scope)
@@ -272,13 +224,26 @@ def install_workbench_routes(application, *, records, models, documents, service
                     memory['filing'] = filed
             receipt = {"remember": memory}
         elif payload["intent"] == "ask":
-            from ..kernel.receipt_projection import question_receipt
+            from ..kernel.receipt_projection import question_receipt, frozen_answer_request
+            from .turn_frames import failed_stream_event
             receipt = {"ask": question_receipt(workspace.query.answer_turns.root, row.object_id,
                                                scope.project_id, receipt["ask"],
                                                records=records if read_records is None else read_records)}
+            frozen = frozen_answer_request(workspace.query.answer_turns.root, row.object_id,
+                project, question=payload['user_text'])
+            failure = (failed_stream_event(workspace.query.answer_turns.root, row.object_id,
+                frozen, safe_errors=SAFE_ERRORS) if frozen is not None else None)
+            runtime = getattr(application.state, 'ai_runtime', None)
+            if failure is not None:
+                receipt = {'ask': {**{key: value for key, value in receipt['ask'].items() if key != 'interruption'},
+                    'answer': None, 'error': failure['code']}}
+            elif (runtime is not None and receipt['ask'].get('interruption') == 'stopped'
+                    and runtime.product_stops.continuing(row.object_id)):
+                receipt = {'ask': {**{key: value for key, value in receipt['ask'].items() if key != 'interruption'},
+                    'answer': None}}
         elif payload["intent"] == "do":
             receipt = {"do": read_task(records if read_records is None else read_records,
-                scope, documents, receipt["do"], models=models, usage_reader=usage_reader)}
+                scope, documents, observe_task(row), models=models, usage_reader=usage_reader)}
         elif payload["intent"] == "inspiration":
             old = receipt["inspiration"]["insight"]
             receipt = {"inspiration": {"insight": insight_view(records, scope, old["id"], service=service)}}
@@ -292,6 +257,8 @@ def install_workbench_routes(application, *, records, models, documents, service
             receipt = project_parts(records, payload, view)
         return {"id": row.object_id, "thread_id": payload["thread_id"], "intent": payload["intent"],
             "user_text": payload["user_text"], "created_at": payload["created_at"], "receipt": receipt}
+
+    application.state.workbench_remember_observer = lambda row: view(row)['receipt']['remember']
 
     def related(scope, text, insights):
         own = {row.object_id for insight in insights
@@ -329,24 +296,27 @@ def install_workbench_routes(application, *, records, models, documents, service
             placement_input = records.read('v2_place_inputs', turn_id)
             automatic = (placement_input is not None and not placement_input.payload['tagged']
                 and project == 'default')
+            from .document_filings import filing_view
+            prior_filing = filing_view(records, memory['document_id'], project)
+            already_filed = prior_filing is not None and prior_filing['state'] == 'filed'
             if placement_input is not None:
                 if placement_input.payload.get('project_id') != project:
                     raise RecognitionConflict('placement_scope_changed')
                 # 日常里由模型自动归属，不再另给关键词建议，免得两边说法不一。
-                if not automatic:
+                if not automatic and not already_filed:
                     await run_in_threadpool(placement.admit, memory['document_id'], project,
                         tagged=placement_input.payload['tagged'],
                         policy_version=placement_input.payload['policy_version'])
             filed = None
-            if automatic:
+            if automatic or already_filed:
                 # 没写 #项目 的资料不堆在日常：由模型判断归到已有项目或新建项目（用户 2026-10-08）。
                 from .auto_place import auto_file
                 filed = await run_in_threadpool(auto_file, records, documents, service, models,
-                    project, memory['document_id'])
+                    project, memory['document_id'], retry_token=run_id)
             if filed is not None:
                 # 认识在目标项目里重新提炼，回执照样列出，确认时按 filing 的目标项目；移动可以撤销。
                 memory["insights"], memory["related"] = list(filed.get("insights") or []), []
-                memory.update(state="done", error=None)
+                memory.update(state='failed' if filed.get('error') else 'done', error=filed.get('error'))
             else:
                 stage = "insight_generation_failed"
                 errors = []
@@ -636,6 +606,8 @@ def install_workbench_routes(application, *, records, models, documents, service
                     parent_turn_id=parent_turn_id, on_frame=on_frame, situation=situation,
                     tagged=tag is not None or forced_project is not None, elsewhere_version=elsewhere_version))
             receipt, chosen = answered["receipt"], answered["chosen"]
+            stopped_generation = (application.state.ai_runtime.product_stops.current(turn_id).payload['generation']
+                if receipt['ask'].get('interruption') == 'stopped' else None)
             from ..kernel.receipt_projection import question_receipt
             receipt = {"ask": question_receipt(workspace.query.answer_turns.root, turn_id,
                                                project, receipt["ask"], records=records)}
@@ -711,6 +683,8 @@ def install_workbench_routes(application, *, records, models, documents, service
         elif intent == "ask" and not receipt["ask"]["no_match"] and 'interruption' not in receipt['ask']:
             record_answer_usage(records, chosen, receipt["ask"]["citations"], project)
             relearn_cited(records, chosen, receipt["ask"]["citations"], turn_id=turn_id if parent_turn_id else None)
+        if intent == 'ask' and receipt['ask'].get('interruption') == 'stopped':
+            record_stop(turn_id, project, stopped_generation)
         if research_state is not None:
             start_research(turn_id)
         if title_prefix:
@@ -906,14 +880,40 @@ def install_workbench_routes(application, *, records, models, documents, service
                 accepted = {'turn': {key: turn[key] for key in
                     ('id', 'thread_id', 'intent', 'user_text', 'created_at')},
                     'request': execution.payload['request']}
-                response = read_turn_stream(turn['id'], _project(product.payload['project_id']), 0,
-                    accepted=accepted)
+                response = _read_turn_stream(records, workspace.query.answer_turns.root, turn['id'],
+                    _project(product.payload['project_id']), 0, view=view, safe_errors=SAFE_ERRORS, accepted=accepted)
                 response.headers['Vary'] = 'Accept'
                 return response
             delivery = SSEDelivery(records)
             return delivery.response(lambda started, delta, frame: execute_created(started, delta, frame))
         result = await execute_created()
         return JSONResponse(result, headers={"Vary": "Accept", "Cache-Control": "no-store"})
+
+    @router.post('/turns/{turn_id}/stop')
+    async def stop_turn(turn_id: str, body: dict):
+        if set(body) != {'project_id'}:
+            raise HTTPException(400, 'invalid_turn_fields')
+        project, identity = _project(body['project_id']), _project(turn_id)
+        product = records.read('v2_turns', identity)
+        if (product is not None and product.payload.get('project_id') == project
+                and product.payload.get('intent') == 'ask' and view(product)['receipt']['ask'].get('error')):
+            raise HTTPException(409, 'turn_finished')
+        if (product is not None and product.payload.get('project_id') == project
+                and product.payload.get('receipt', {}).get('do', {}).get('executor')):
+            raise HTTPException(409, 'external_task_continuation_unsupported')
+        runtime = await run_in_threadpool(workspace.query.answer_turns._runtime)
+        try:
+            state, generation = await run_in_threadpool(runtime.product_stops.request, identity, project,
+                application.state.ai_turn_runner)
+        except ValueError as error:
+            if str(error) == 'workbench_not_found':
+                raise HTTPException(404, 'workbench_not_found') from None
+            if str(error) == 'turn_finished':
+                raise HTTPException(409, 'turn_finished') from None
+            raise
+        if product is not None:
+            record_stop(identity, project, generation)
+        return JSONResponse({'state': state}, status_code=202)
 
     @router.post('/turns/{turn_id}/continue')
     async def continue_answer(turn_id: str, body: dict, request: Request):
@@ -929,16 +929,27 @@ def install_workbench_routes(application, *, records, models, documents, service
             if turn.payload['receipt']['do'].get('executor'):
                 raise HTTPException(409, 'external_task_continuation_unsupported')
             try:
-                await research.continue_on_request(turn_id, project, key)
+                await research.continue_on_request(turn_id, project, key, instance=instance)
             except ValueError:
                 raise HTTPException(409, 'source_changed_retry') from None
             return view(scoped('v2_turns', turn_id, project))
         if turn.payload.get('intent') != 'ask':
             raise HTTPException(409, 'turn_interrupted')
+        if view(turn)['receipt']['ask'].get('error'):
+            raise HTTPException(409, 'turn_interrupted')
         service = workspace.query.answer_turns
         def validate_current(row):
-            _restored_answer_plan(workspace.query, row)
+            from ..kernel.answer_continuations import plan_binding
+            if 'parameters' in plan_binding(workspace.query, row):
+                workspace.query.validate_answer_request(workspace.query.models, service.store_request(turn_id))
+            else:
+                _restored_answer_plan(workspace.query, row)
         async def operation(row, invocation):
+            from ..kernel.answer_continuations import plan_binding, decode
+            binding = plan_binding(workspace.query, row)
+            if 'parameters' in binding:
+                return await _answer_workbench(workspace, records, on_started=None, on_delta=None,
+                    **decode(binding['parameters']))
             return await _continue_answer_workbench(workspace.query, records, turn, row, invocation)
         try:
             result = await service.continue_on_request(identity=turn_id, project=project, key=key,
@@ -989,234 +1000,23 @@ def install_workbench_routes(application, *, records, models, documents, service
         start = cursor(after) if after is not None else cursor(header) if header is not None else 0
         if header is not None and cursor(header) != start:
             raise HTTPException(400, 'invalid_stream_cursor')
-        return read_turn_stream(identity, project, start)
+        return _read_turn_stream(records, workspace.query.answer_turns.root, identity, project, start,
+            view=view, safe_errors=SAFE_ERRORS)
 
-    def read_turn_stream(identity, project, start, *, accepted=None):
-        from .turn_frames import FRAMES, STREAMS, MAX_SEQUENCE, frame_text, read_stream_records, failed_stream_event, stream_status
-        from .workbench_transport import read_stream_response
-        from ..kernel.receipt_projection import frozen_answer_request, frozen_task_request
-        announced = False
-        def snapshot(position):
-            try:
-                with read_stream_records(records) as reader:
-                    return read_snapshot(position, reader)
-            except (sqlite3.Error, OSError, ValueError, TypeError, KeyError, AttributeError):
-                raise HTTPException(404, 'workbench_not_found') from None
-
-        def read_snapshot(position, reader):
-            nonlocal announced
-            head = reader.read(STREAMS, identity)
-            product = reader.read('v2_turns', identity)
-            if product is not None and product.payload.get('project_id') != project:
-                raise HTTPException(404, 'workbench_not_found')
-            if accepted is not None:
-                original = accepted['request']
-                turn = accepted['turn']
-                if (product is None or turn['id'] != identity or turn['intent'] != 'do'
-                        or any(product.payload[key] != turn[key] for key in
-                            ('thread_id', 'intent', 'user_text', 'created_at'))
-                        or original['turn_id'] != product.payload['receipt']['do']['kernel_turn_id']
-                        or original['session_id'] != 'session-' + identity
-                        or original['scope']['project_id'] != project
-                        or original['desired_outcome'] != 'project.task'
-                        or json.loads(original['input']['text']).get('task') != turn['user_text']):
-                    raise ValueError('invalid_accepted_stream_binding')
-                sealed = frozen_task_request(workspace.query.answer_turns.root,
-                    original['turn_id'], project, question=original['input']['text'])
-                if sealed is not None and any(original.get(key) != sealed.get(key) for key in
-                        ('turn_id', 'session_id', 'operation_id', 'idempotency_key', 'scope', 'input',
-                         'desired_outcome', 'privacy', 'policy_versions', 'created_at')):
-                    raise ValueError('invalid_accepted_stream_request')
-                if head is None:
-                    state = product.payload['receipt']['do']['state']
-                    failure = (failed_stream_event(workspace.query.answer_turns.root,
-                        original['turn_id'], sealed, safe_errors=SAFE_ERRORS) if sealed is not None else None)
-                    if failure is not None or state == 'failed':
-                        return [(None, 'error', failure or {'code': 'answer_generation_failed'})], True
-                    if state in {'done', 'partial', 'interrupted'}:
-                        if sealed is None:
-                            raise ValueError('unsealed_task_stream_terminal')
-                        return [(None, 'done', {'thread_id': turn['thread_id'],
-                            'turn': view(product, read_records=reader)})], True
-                    if not announced:
-                        # This carries already accepted metadata, not a made-up
-                        # persisted cursor. The first real head owns sequence 1.
-                        announced = True
-                        return [(None, 'started', {'thread_id': turn['thread_id'], 'turn':
-                            {key: turn[key] for key in ('id', 'intent', 'user_text')}})], False
-                    return [], False
-            if head is None:
-                # Historical/best-effort missing heads have no provable cursor.
-                # Read a terminal only; never manufacture or persist sequence 1.
-                if product is None or product.payload.get('intent') != 'ask':
-                    raise HTTPException(404, 'workbench_not_found')
-                sealed = frozen_answer_request(workspace.query.answer_turns.root, identity, project,
-                    question=product.payload.get('user_text'))
-                if sealed is None or product.payload.get('receipt', {}).get('ask') is None:
-                    raise HTTPException(404, 'workbench_not_found')
-                if position != 0:
-                    raise HTTPException(400, 'invalid_stream_cursor')
-                return [(None, 'done', {'thread_id': product.payload['thread_id'],
-                    'turn': view(product, read_records=reader)})], True
-            payload = head.payload
-            try:
-                if (set(payload) != {'project_id', 'thread_id', 'turn', 'binding', 'sequence', 'events', 'terminal'}
-                        or payload['project_id'] != project or payload['turn']['id'] != identity
-                        or payload['turn']['thread_id'] != payload['thread_id']
-                        or payload['turn']['intent'] not in {'ask', 'do'}
-                        or type(payload['sequence']) is not int or not 1 <= payload['sequence'] <= MAX_SEQUENCE
-                        or not isinstance(payload['events'], list) or len(payload['events']) != payload['sequence']
-                        or set(payload['binding']) != {'kernel_turn_id', 'request'}):
-                    raise ValueError('invalid_stream_projection')
-                frozen = payload['binding']['request']
-                sealed_reader = frozen_answer_request if payload['turn']['intent'] == 'ask' else frozen_task_request
-                sealed = sealed_reader(workspace.query.answer_turns.root, payload['binding']['kernel_turn_id'], project,
-                    question=frozen['input']['text'])
-                if sealed != frozen or sealed['turn_id'] != payload['binding']['kernel_turn_id']:
-                    raise ValueError('invalid_stream_binding')
-                if payload['turn']['intent'] == 'ask' and (sealed['turn_id'] != identity
-                        or sealed['input']['text'] != payload['turn']['user_text']):
-                    raise ValueError('invalid_stream_binding')
-                if payload['turn']['intent'] == 'do' and (product is None
-                        or sealed['session_id'] != 'session-' + identity
-                        or product.payload.get('receipt', {}).get('do', {}).get('kernel_turn_id') != sealed['turn_id']
-                        or json.loads(sealed['input']['text']).get('task') != payload['turn']['user_text']):
-                    raise ValueError('invalid_stream_binding')
-                if product is not None and any(product.payload[key] != payload['turn'][key]
-                        for key in ('thread_id', 'intent', 'user_text')):
-                    raise ValueError('invalid_stream_result')
-                if position > payload['sequence']:
-                    raise HTTPException(400, 'invalid_stream_cursor')
-                terminal = payload['terminal']
-                if terminal is not None and (type(terminal) is not int or terminal != payload['sequence']
-                        or product is None):
-                    raise ValueError('invalid_stream_terminal')
-                if any(not isinstance(event, dict) or type(event.get('sequence')) is not int
-                        or event['sequence'] != index or event.get('kind') not in
-                        {'started', 'delta', 'reset', 'status', 'done'}
-                        for index, event in enumerate(payload['events'], 1)):
-                    raise ValueError('invalid_stream_events')
-                for event in payload['events']:
-                    if event['kind'] == 'status':
-                        stream_status(event)
-                failure = failed_stream_event(workspace.query.answer_turns.root,
-                    payload['binding']['kernel_turn_id'], sealed, safe_errors=SAFE_ERRORS)
-                if failure is not None:
-                    return [(None, 'error', failure)], True
-                final = {'thread_id': payload['thread_id'], 'turn': view(product, read_records=reader)} if product is not None else None
-                answer = product.payload.get('receipt', {}).get('ask', {}) if product is not None else {}
-                task = product.payload.get('receipt', {}).get('do', {}) if product is not None else {}
-                if ((payload['turn']['intent'] == 'ask' and isinstance(answer.get('answer'), str)
-                        and 'interruption' not in answer) or (payload['turn']['intent'] == 'do'
-                        and task.get('state') in {'done', 'partial'} and task.get('document_id'))):
-                    # The actual completed result survives a best-effort head
-                    # failure. An older interrupted segment cannot label the
-                    # new answer with its already delivered terminal cursor.
-                    committed = terminal is not None and payload['events'][-2:] == [
-                        {'sequence': terminal - 1, 'kind': 'status', 'state': 'completed'},
-                        {'sequence': terminal, 'kind': 'done'}]
-                    return [(terminal if committed else None, 'done', final)], True
-                frames = reader.read(FRAMES, identity)
-                if reader.read(STREAMS, identity) != head:
-                    raise HTTPException(503, 'stream_snapshot_changed')
-                if frames is not None and (frames.payload.get('project_id') != project
-                        or frames.payload.get('thread_id') != payload['thread_id']
-                        or frame_text(frames.payload) is None):
-                    raise ValueError('invalid_stream_frames')
-                values = []
-                segment = max((event['sequence'] for event in payload['events']
-                    if event['kind'] == 'reset' and event.get('source') == 'frame_prefix'), default=0)
-                for event in payload['events']:
-                    sequence, kind = event['sequence'], event['kind']
-                    if sequence <= position or sequence < segment:
-                        continue
-                    if kind == 'delta':
-                        if set(event) != {'sequence', 'kind', 'frame_sequence', 'offset', 'length'} or frames is None:
-                            raise ValueError('invalid_stream_delta')
-                        number, offset, length = (event[key] for key in ('frame_sequence', 'offset', 'length'))
-                        if (any(type(value) is not int for value in (number, offset, length))
-                                or not 1 <= number <= len(frames.payload['frames']) or offset != 0 or length < 1):
-                            raise ValueError('invalid_stream_delta')
-                        text = frames.payload['frames'][number - 1]['text']
-                        if len(text) != length:
-                            raise ValueError('invalid_stream_delta')
-                        data = {'text': text}
-                        if values and values[-1][1] == 'delta':
-                            data['text'] = values.pop()[2]['text'] + text
-                    elif kind == 'started':
-                        if set(event) != {'sequence', 'kind'}:
-                            raise ValueError('invalid_stream_started')
-                        data = {'thread_id': payload['thread_id'], 'turn':
-                            {key: payload['turn'][key] for key in ('id', 'intent', 'user_text')}}
-                    elif kind == 'reset':
-                        if set(event) != {'sequence', 'kind', 'source'} or event['source'] not in {'terminal_partial', 'frame_prefix'}:
-                            raise ValueError('invalid_stream_reset')
-                        if event['source'] == 'frame_prefix':
-                            if frames is None or type(frames.payload.get('text_prefix')) is not str:
-                                raise ValueError('invalid_stream_prefix')
-                            data = {'text': frames.payload['text_prefix']}
-                        else:
-                            data = {'text': product.payload['receipt'][payload['turn']['intent']]['partial']}
-                    elif kind == 'status':
-                        data = stream_status(event)
-                    else:
-                        if set(event) != {'sequence', 'kind'} or sequence != terminal or final is None:
-                            raise ValueError('invalid_stream_done')
-                        data = final
-                    values.append((sequence, kind, data))
-                if terminal is not None and not values:
-                    values.append((terminal, 'done', final))
-                return values, terminal is not None
-            except (ValueError, KeyError, TypeError, IndexError, AttributeError):
-                raise HTTPException(404, 'workbench_not_found') from None
-        return read_stream_response(snapshot, start)
+    from .workbench_stream import read_turn_stream as _read_turn_stream
 
     @router.get("/threads/{thread_id}")
     async def thread(thread_id: str, project_id: str = "default"):
         project = _project(project_id)
         scoped("v2_threads", _project(thread_id), project)
         rows = records.list_matching("v2_turns", project_id=project, thread_id=thread_id)
-        from ..kernel.receipt_projection import frozen_task_request
-        from .turn_frames import FRAMES, frame_text
-        partial_tasks = {}
         for row in rows:
             if row.payload["intent"] == "do":
                 if row.payload["receipt"]["do"].get("executor"):
                     await external_research.advance(row.object_id, observe_only=row.payload.get("instance") != instance)
                     continue
                 if row.payload.get('instance') != instance:
-                    # A restarted read cannot reclaim or start an old task.
-                    try:
-                        frame = records.read(FRAMES, row.object_id)
-                        execution = records.read(TASK_EXECUTIONS, row.object_id)
-                        old = row.payload
-                        original = execution.payload['request'] if execution is not None else None
-                        if (frame is None or original is None or old['receipt']['do']['state'] in
-                                {'done', 'partial', 'failed', 'interrupted'} or old['receipt']['do'].get('task_id')
-                                or frame.payload.get('project_id') != project
-                                or frame.payload.get('thread_id') != thread_id
-                                or frame.payload.get('projection') != {
-                                    'kernel_turn_id': old['receipt']['do']['kernel_turn_id'], 'request': original}
-                                or any(frame.payload.get('turn', {}).get(key) != value for key, value in
-                                    {'id': row.object_id, 'thread_id': thread_id, 'intent': 'do',
-                                     'user_text': old['user_text'], 'created_at': old['created_at']}.items())
-                                or execution.payload.get('project_id') != project
-                                or execution.payload.get('task_text') != old['user_text']
-                                or json.loads(original['input']['text']).get('task') != old['user_text']):
-                            continue
-                        sealed = frozen_task_request(workspace.query.answer_turns.root,
-                            old['receipt']['do']['kernel_turn_id'], project, question=original['input']['text'])
-                        if (sealed is None or sealed['session_id'] != 'session-' + row.object_id
-                                or any(original.get(key) != sealed.get(key) for key in
-                                    ('turn_id', 'session_id', 'operation_id', 'idempotency_key', 'scope', 'input',
-                                     'desired_outcome', 'privacy', 'policy_versions', 'created_at'))):
-                            continue
-                        text = frame_text(frame.payload)
-                        if text is not None:
-                            partial_tasks[row.object_id] = get('retry', version=(sealed.get('policy_versions') or {}).get(
-                                'retry', '@1'))({'kind': 'partial_output', 'text': text})
-                    except (ValueError, KeyError, TypeError, AttributeError):
-                        pass
+                    # 重启后只读原任务，保留未知执行且不重新派发。
                     continue
                 if (row.payload["receipt"]["do"].get("kernel_turn_id")
                         and not row.payload["receipt"]["do"].get("task_id")
@@ -1228,10 +1028,6 @@ def install_workbench_routes(application, *, records, models, documents, service
         aggregated = {identity for row in rows if row.payload.get('intent') == 'multi'
                       for identity in row.payload['part_turn_ids']}
         turns = [view(row) for row in rows if row.object_id not in aggregated]
-        for turn in turns:
-            if turn['id'] in partial_tasks:
-                turn['receipt'] = {'do': {**turn['receipt']['do'], 'state': 'interrupted',
-                                         **partial_tasks[turn['id']]}}
         from ..kernel.receipt_projection import frozen_answer_request
         from .turn_frames import FRAMES, frame_text
         saved = {row.object_id for row in rows}
@@ -1366,6 +1162,34 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
     query = workspace.query
     if query.ask_target()["execution_location"] == "remote" and is_private_project(records, project):
         raise HTTPException(409, "private_project_remote_blocked")
+    from ..kernel.answer_continuations import save_preparation
+    from ..kernel.answer_turns import ACTIVE_ANSWER
+    from .turn_frames import TurnFrames, STREAMS
+    active_request, active_store, _, _ = ACTIVE_ANSWER.get()
+    original_request = active_store.get_request(active_request['turn_id'])
+    query.validate_answer_request(query.models, original_request)
+    with records.begin() as tx:
+        thread = tx.read('v2_threads', thread_id)
+        if thread is not None and thread.payload.get('project_id') != project:
+            raise HTTPException(404, 'workbench_not_found')
+        if thread is None:
+            now = _now()
+            tx.put('v2_threads', thread_id, {'project_id': project, 'title': cleaned[:40],
+                'created_at': now, 'updated_at': now}, expected_revision=0)
+            tx.commit()
+    stream = records.read(STREAMS, turn_id)
+    turn = stream.payload['turn'] if stream is not None else {
+        'id': turn_id, 'thread_id': thread_id, 'intent': 'ask', 'user_text': cleaned, 'created_at': _now()}
+    frames = TurnFrames(records, turn_id=turn_id, project_id=project, recipe=get('retry'), turn=turn,
+        request=original_request, on_frame=on_frame,
+        text_prefix='' if query.answer_turns.active[turn_id].get('continuation') is not None else None)
+    stream_bound = frames.start()
+    save_preparation(query, turn_id, {'project': project, 'cleaned': cleaned, 'scene': scene,
+        'thread_id': thread_id, 'turn_id': turn_id, 'part_context': part_context, 'parent_turn_id': parent_turn_id,
+        'situation': situation, 'tagged': tagged, 'elsewhere_version': elsewhere_version},
+        request=active_request, store=active_store, runtime=query.answer_turns.application.state.ai_runtime)
+    if on_started and (on_frame is None or not stream_bound):
+        on_started({'thread_id': thread_id, 'turn': {'id': turn_id, 'intent': 'ask', 'user_text': cleaned}})
     target, budget, overhead = query.ask_budget()
     history = read_history(records, project, thread_id, cleaned, budget=budget,
         prompt_overhead=overhead, excluded_turn=turn_id, query=query)
@@ -1402,6 +1226,7 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
             raise HTTPException(409, 'source_changed_retry') from None
         except ModelConfigurationError as failure:
             code = str(failure)
+            _LOGGER.warning("ask model configuration failure: %s", code)
             if target['execution_location'] == 'remote' and code in {
                 'model_configuration_changed_before_request', 'model_egress_remote_not_consented'
             }:
@@ -1488,25 +1313,6 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         active_request, active_store, _, _ = ACTIVE_ANSWER.get()
         save_plan(query, turn_id, plan, history, request=active_request, store=active_store,
             runtime=query.answer_turns.application.state.ai_runtime)
-    with records.begin() as tx:
-        thread = tx.read('v2_threads', thread_id)
-        if thread is not None and thread.payload.get('project_id') != project:
-            raise HTTPException(404, 'workbench_not_found')
-        if thread is None:
-            now = _now()
-            tx.put('v2_threads', thread_id, {'project_id': project, 'title': cleaned[:40],
-                'created_at': now, 'updated_at': now}, expected_revision=0)
-            tx.commit()
-    from .turn_frames import TurnFrames
-    from ..kernel.answer_turns import ACTIVE_ANSWER
-    active_request, active_store, _, _ = ACTIVE_ANSWER.get()
-    original_request = active_store.get_request(active_request['turn_id'])
-    frames = TurnFrames(records, turn_id=turn_id, project_id=project, recipe=get('retry'),
-        turn={'id': turn_id, 'thread_id': thread_id, 'intent': 'ask', 'user_text': cleaned, 'created_at': _now()},
-        request=original_request, on_frame=on_frame)
-    stream_bound = frames.start()
-    if on_started and (on_frame is None or not stream_bound):
-        on_started({"thread_id": thread_id, "turn": {"id": turn_id, "intent": "ask", "user_text": cleaned}})
     def streamed(text):
         frames.delta(text)
         if on_delta is not None and (on_frame is None or not stream_bound):

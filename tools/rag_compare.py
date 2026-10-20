@@ -119,6 +119,12 @@ def summarize(output, manifest, budget):
             'answer_and_retrieval_token_usage': {key: sum(row.get('usage', {}).get(key, 0) or 0 for row in wires)
                 for key in ('prompt_tokens', 'completion_tokens', 'total_tokens',
                             'prompt_cache_hit_tokens', 'prompt_cache_miss_tokens')}}
+        if mode == 'project' and any('evidence_annotation' in row for row in rows):
+            summary['modes'][mode].update(pilot.annotation_summary(rows))
+            eligible = [row for row in rows if row['evidence_recall'] is not None]
+            summary['modes'][mode]['diagnostic_evidence_questions'] = len(eligible)
+            summary['modes'][mode]['diagnostic_mean_evidence_recall'] = statistics.mean(
+                row['evidence_recall'] for row in eligible) if eligible else None
     for item in manifest['questions']:
         identity = item['qa_index']
         grade = pilot.read(output / f'judge-{identity}.json')
@@ -133,12 +139,16 @@ def summarize(output, manifest, budget):
     return summary
 
 
-def prepare_corpus(output, baseline, formal):
-    if output == formal or formal in output.parents or output in formal.parents:
+def prepare_corpus(output, baseline, formal, *, copy_baseline=True):
+    if formal is not None and (output == formal or formal in output.parents or output in formal.parents):
         raise ValueError('compare_output_overlaps_formal_root')
-    if output == baseline or baseline in output.parents or output in baseline.parents:
+    if baseline is not None and (output == baseline or baseline in output.parents or output in baseline.parents):
         raise ValueError('compare_output_overlaps_baseline')
     output.mkdir(parents=True, exist_ok=True)
+    if not copy_baseline:
+        return
+    if baseline is None:
+        raise ValueError('compare_baseline_or_raw_data_required')
     for name in ('locomo10.json', 'manifest.json', 'LICENSE.locomo.txt', 'README.locomo.md'):
         source, target = baseline / name, output / name
         if not source.is_file():
@@ -151,8 +161,16 @@ def prepare_corpus(output, baseline, formal):
 
 def run(args):
     output = args.output.resolve()
-    prepare_corpus(output, args.baseline.resolve(), args.config_root.resolve())
-    manifest, sessions = pilot.prepare_data(output, args.seed)
+    prepare_corpus(output, args.baseline.resolve() if args.baseline else None,
+        args.config_root.resolve() if args.config_root else None, copy_baseline=args.raw_data is None)
+    manifest, sessions = pilot.prepare_data(output, args.seed, raw_data=args.raw_data,
+        conversation_index=args.conversation_index, manifest_path=args.manifest)
+    if args.baseline and pilot.read(args.baseline.resolve() / 'manifest.json') != manifest:
+        raise ValueError('compare_baseline_manifest_changed')
+    questions = pilot.prepared_questions(output, manifest, sessions, args.raw_data or output / 'locomo10.json',
+        explicit=args.raw_data is not None or args.manifest is not None or args.conversation_index is not None)
+    if args.prepare_only:
+        return pilot.prepared_only(output, manifest, sessions)
     sources = corpus_sources(sessions)
     estimates = [_estimate_input_tokens(direct_messages(item['question'], sources)) for item in manifest['questions']]
     if max(estimates) + 768 >= 1_048_576:
@@ -195,7 +213,11 @@ def run(args):
             'audit_instruction': pilot.schema_instruction(pilot.AUDIT_INSTRUCTION, pilot.AnswerAudits),
             'audit_schema': pilot.AnswerAudits.model_json_schema(),
             'atoms_schema': pilot.ReferenceAtoms.model_json_schema(), 'checks_schema': pilot.AnswerChecks.model_json_schema(),
-            'baseline': str(args.baseline.resolve()), 'input_budget_comparison': 'unequal: direct full corpus versus bounded project retrieval'}
+            'baseline': str(args.baseline.resolve()) if args.baseline else None,
+            'input_budget_comparison': 'unequal: direct full corpus versus bounded project retrieval'}
+        if args.raw_data is not None or args.manifest is not None or args.conversation_index is not None:
+            configuration['dataset'] = {'conversation_index': manifest['conversation_index'],
+                                        'sample_id': manifest['sample_id'], 'manifest': manifest}
         previous = pilot.read(output / 'run-config.json')
         if previous is not None and previous != json.loads(json.dumps(configuration)):
             raise ValueError('compare_configuration_changed')
@@ -224,7 +246,7 @@ def run(args):
         pilot.workspace_query.chunk_vector_scores = observed_scores
         try:
             # 先全量输入真实预检，拒绝上下文过长而不截断语料，再占用本机向量内存。
-            items = manifest['questions'][:args.questions]
+            items = questions[:args.questions]
             direct_question(models, items[0], sources, output, budget)
             pilot.phase(output, 'loading_vector')
             started = time.perf_counter()
@@ -278,13 +300,23 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ('output', 'baseline', 'config-root', 'config-db', 'models-root'):
-        parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    for name in ('baseline', 'config-root', 'config-db', 'models-root'):
+        parser.add_argument('--' + name, type=Path)
     parser.add_argument('--seed', type=int, default=20261010)
     parser.add_argument('--questions', type=int, default=12, choices=range(1, 13))
     parser.add_argument('--max-calls', type=int, default=100, choices=range(1, 101))
     parser.add_argument('--policy', action='append', default=[])
-    run(parser.parse_args())
+    parser.add_argument('--raw-data', type=Path, help='只读权威原始 JSON，不复制到运行目录')
+    parser.add_argument('--conversation-index', type=int)
+    parser.add_argument('--manifest', type=Path, help='读取已冻结题目；seed 必须与清单一致')
+    parser.add_argument('--prepare-only', action='store_true')
+    args = parser.parse_args()
+    if args.raw_data is None and args.baseline is None:
+        parser.error('--baseline or --raw-data is required')
+    if not args.prepare_only and any(getattr(args, name) is None for name in ('config_root', 'config_db', 'models_root')):
+        parser.error('--config-root, --config-db and --models-root are required for model execution')
+    run(args)
 
 
 if __name__ == '__main__':

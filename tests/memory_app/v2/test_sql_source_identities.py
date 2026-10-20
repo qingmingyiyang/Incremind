@@ -18,8 +18,9 @@ from backend.recognition import RecognitionService, WorkScope
 from backend.recognition.product_draft_dependencies import product_draft_source
 from core.storage_provider import SQLiteStructuredRecordStore
 from core.storage_provider.record_lineage import FACTS, HEAD_COLLECTIONS, WITNESS_COLLECTIONS, verify_lineage
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
 from tests.memory_app.v2.test_external_context import (
-    ARCHIVE, DAY, DELIVERIES, TURN, document, encoded, env, material, prepare, request, settings, setup,
+    ARCHIVE, DAY, DELIVERIES, TURN, document, encoded, material, prepare, request, settings, setup,
 )
 from tests.memory_app.v2.test_product_draft_dependencies import draft
 from tests.recognition.test_artifact_dependencies import env as artifact_env, _root, _retain

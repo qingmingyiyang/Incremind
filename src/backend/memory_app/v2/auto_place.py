@@ -75,22 +75,27 @@ def decide(records, documents, models, project_id, document_id):
     return None
 
 
-def auto_file(records, documents, service, models, project_id, document_id):
-    """Move a freshly organized document out of 日常 when the model finds its home.
-
-    Returns the DocumentFilings result (with re-extracted insights) or None. Any
-    failure leaves the document where it is; placement never fails a remember.
-    """
+def auto_file(records, documents, service, models, project_id, document_id, *, retry_token=None):
+    """复用已提交归属或决定新归属，目标认识提炼错误随实际移动结果返回。"""
+    from .document_filings import DocumentFilings
+    existing = next((row for row in records.list('v2_document_filings')
+        if row.payload.get('source_document_id') == document_id
+        and row.payload.get('source_project_id') == project_id and row.payload.get('state') == 'filed'), None)
+    if existing is not None:
+        # 归属已经提交，重试只补目标文稿的认识，原失败继续由回执显示。
+        document = documents.read(document_id)
+        return DocumentFilings(records, documents, service, models).move(document_id, project_id,
+            existing.payload['target_project_id'], scene=existing.payload.get('scene'),
+            expected_revision=document['revision'], retry_token=retry_token)
     try:
         choice = decide(records, documents, models, project_id, document_id)
         if choice is None:
             return None
         target = choice.get("project_id") or create_named_project(records, choice["new_name"])
         document = documents.read(document_id)
-        from .document_filings import DocumentFilings
         return DocumentFilings(records, documents, service, models).move(
-            document_id, project_id, target, expected_revision=document["revision"])
-    except Exception as error:  # noqa: BLE001 - a placement failure keeps the document in 日常
+            document_id, project_id, target, expected_revision=document["revision"], retry_token=retry_token)
+    except Exception as error:  # noqa: BLE001 - 归属未返回结果时沿原记住流程处理
         _LOGGER.warning("auto_place_failed exception_type=%s", type(error).__name__)
         return None
 

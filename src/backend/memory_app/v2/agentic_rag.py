@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
-from backend.recognition import RecognitionConflict, WorkScope
+from backend.recognition import RecognitionConflict, RecognitionError, WorkScope
 from ..kernel.answer_turns import ACTIVE_ANSWER, RESULT_KIND, gap_answer_input, generate_answer, answer_observation, abandon_answer_model
 from ..kernel.ai_execution_control import execution_checkpoint
 from ..kernel.answer_continuations import encode, decode
@@ -497,4 +497,34 @@ def pending_clarification(query, records, project, thread):
     rows = sorted(rows, key=lambda row: (row.payload.get('created_at', ''), row.object_id))
     if not rows or rows[-1].payload.get('intent') != 'ask':
         return None
-    return clarification(query, rows[-1])
+    row = rows[-1]
+    try:
+        return clarification(query, row)
+    except RecognitionError as error:
+        if str(error) not in {'turn material revision conflicted', 'source changed during question',
+                             'source excluded from recall during question'}:
+            raise
+        # 原完成轮的标记和模型证明已严格核对，仅正常资料变化可以解除旧澄清控制。
+        marker = row.payload['receipt']['ask']['trace'][0]['agentic']
+        store = query.answer_turns.application.state.ai_turn_store
+        prepared = store.get_immutable_payload(row.object_id, 'answer-gap-input-' + marker['invocation'] + '-v1')
+        selection = prepared[1]['material_proof']['selection']
+        from backend.shared.memory_sidecars import recall_weight
+        for material in selection['privacy']['material_refs']:
+            if material['type'] != 'document':
+                continue
+            current = records.read('documents', material['id'])
+            if (current is not None and current.payload.get('project_id') == material['project_id']
+                    and (current.revision > material['revision']
+                         or recall_weight(records, 'document', material['id']) == 0)):
+                return None
+        if str(error) == 'source excluded from recall during question':
+            for candidate in decode(selection['candidates']):
+                if candidate['kind'] != 'source':
+                    continue
+                documents = [records.read('documents', identity) for identity in candidate.get('document_ids', [])]
+                if documents and all(document is not None
+                        and document.payload.get('project_id') == candidate['scope'].project_id
+                        and recall_weight(records, 'document', document.object_id) == 0 for document in documents):
+                    return None
+        raise

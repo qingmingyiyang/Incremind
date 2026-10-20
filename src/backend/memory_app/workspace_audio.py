@@ -8,7 +8,7 @@ import wave
 from collections.abc import Callable
 from pathlib import Path
 from fastapi import HTTPException
-from backend.api.rebuild_storage_runtime import build_rebuild_object_store
+from .rebuild_storage import build_rebuild_object_store
 from backend.api.tokenhub_asr_provider import TokenHubChunkedAudioAssetTranscriber, freeze_workbench_asr_binding, workbench_local_transcriber_settings
 from core.product_core.audio_asset_transcriber import TranscribeGeneratedAudioAsset
 from core.product_core.cloud_asr_provider_settings import GetCloudAsrProviderSettings
@@ -16,6 +16,7 @@ from core.storage_provider import JsonObjectStore
 from backend.security.user_context import json_attribution
 from backend.shared.server_resources import RESOURCE_POOL
 from backend.api.server_asr_runner import asset_runner
+from .uploaded_media import original_path
 from core.product_core.audio_asset_transcriber import BUILTIN_FASTER_WHISPER_COMMAND
 
 
@@ -68,7 +69,7 @@ def _validated_audio_transcription(item: dict, runtime_root: Path) -> dict | Non
     if not isinstance(evidence, dict):
         raise HTTPException(409, "audio_transcription_evidence_invalid")
     try:
-        original_identity = _audio_original_identity(Path(item["original_path"]))
+        original_identity = _audio_original_identity(original_path(runtime_root, item))
         rebuild_store, storage = build_rebuild_object_store(runtime_root)
         if (evidence.get("schema_version") != 1
                 or evidence.get("project_id") != item["project_id"]

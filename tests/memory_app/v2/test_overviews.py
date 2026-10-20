@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import pytest
 from backend.memory_app.v2.overviews import ScopeOverviews
 from backend.memory_app.v2.projects import assign_scene
-from tests.memory_app.v2.test_workbench_ask import env as env, add_document
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, add_document
 from tests.memory_app.v2.test_consolidation import PatternModel
 from tests.memory_app.v2.kernel_receipts import requests
 

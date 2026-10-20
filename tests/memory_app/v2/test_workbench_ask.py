@@ -13,13 +13,14 @@ from backend.memory_app.v2 import install_v2_routes
 from backend.memory_app.v2.auto_confirm import process_and_confirm
 from backend.memory_app.v2.privacy import set_private_project
 from backend.memory_app.v2.projects import assign_scene
+from backend.memory_app.v2.policies import override
 from backend.memory_app.workspace import install_workspace_routes
 from backend.recognition import RecognitionService, WorkScope
 from core.document_engine import SQLiteDocumentRepository
 from core.storage_provider import SQLiteStructuredRecordStore
 
 
-from tests.memory_app.governed_model_fixture import GovernedModel
+from tests.memory_app.governed_model_fixture import GovernedModel, evidence_first_payload
 
 
 class Model(GovernedModel):
@@ -52,7 +53,8 @@ class Model(GovernedModel):
                 raise RuntimeError("synthetic secret must stay out of response")
             numbers = self.numbers if self.numbers is not None else [int(n) for n in re.findall(r"^\[(\d+)\]", messages[-1]["content"], re.MULTILINE)]
             self.after()
-            return json.dumps({"answer": "Synthetic answer", "citations": numbers}), {"usage": {"total_tokens": 7}}
+            payload = evidence_first_payload(messages, numbers=self.numbers)
+            return json.dumps(payload if payload is not None else {"answer": "Synthetic answer", "citations": numbers}), {"usage": {"total_tokens": 7}}
         if wire_attempt_sink is None:
             return calculate()
         wire = wire_attempt_sink.begin_model_wire_attempt()
@@ -79,14 +81,26 @@ def assemble(root, records, documents, service, model):
     return app, domains
 
 
-@pytest.fixture
-def env(tmp_path):
+def _workbench_environment(tmp_path):
     records = SQLiteStructuredRecordStore(tmp_path / "records.sqlite3")
     documents, service, model = SQLiteDocumentRepository(records), recognition_service(records), Model()
     app, domains = assemble(tmp_path, records, documents, service, model)
     with TestClient(app) as http:
         yield SimpleNamespace(root=tmp_path, records=records, documents=documents, service=service,
                               model=model, http=http, domains=domains)
+
+
+@pytest.fixture
+def env(tmp_path):
+    """默认入口沿用调用者策略，未显式选择时使用产品当前 ACTIVE。"""
+    yield from _workbench_environment(tmp_path)
+
+
+@pytest.fixture
+def legacy_retrieve_env(tmp_path):
+    """历史回执、权限与坐标测试隔离调查决策，仍执行当前首末稿审核。"""
+    with override(retrieve="@3"):
+        yield from _workbench_environment(tmp_path)
 
 
 def publish(env, text="alpha beta gamma", project="alpha", doc=None):
@@ -113,7 +127,8 @@ def ask(env, text="alpha beta gamma?", **body):
     return env.http.post("/api/v2/workbench/turns", json={"project_id": "alpha", "text": text, **body})
 
 
-def test_ask_receipt_fields_persona_counts_trace_and_durable_read(env):
+def test_ask_receipt_fields_persona_counts_trace_and_durable_read(legacy_retrieve_env):
+    env = legacy_retrieve_env
     primary, _ = publish(env)
     persona, _ = publish(env, text="alpha beta gamma my preferred tools are notebooks", project="me")
     response = ask(env)
@@ -124,34 +139,44 @@ def test_ask_receipt_fields_persona_counts_trace_and_durable_read(env):
     assert set(receipt) == {"answer", "citations", "layers", "trace", "egress_receipt_id", "no_match",
                             "context", "model_usage", "model_cost", "excluded_sources"}
     assert receipt['model_cost'] is None
-    assert receipt["answer"] == "Synthetic answer" and receipt["no_match"] is False
+    assert receipt["answer"] == "Synthetic answer [1]" and receipt["no_match"] is False
     assert receipt["layers"] == {"insight": 1, "summary": 0, "note": 0, "source": 0, "persona": 1}
     parts = {part["key"]: part for part in receipt["context"]["parts"]}
     assert parts["insight"]["count"] == 1 and parts["persona"]["count"] == 1
     assert parts["question"]["count"] == 1 and parts["instruction"]["count"] == 1
-    assert receipt["model_usage"] == {"total_tokens": 7}
-    assert receipt["trace"] == [{"layer": "insight", "considered": 1, "selected": 1, "skipped_budget": 0, "coverage": 1.0, "stopped": True,
+    assert receipt["model_usage"] == {"total_tokens": 14}
+    expected_trace = [{"layer": "insight", "considered": 1, "selected": 1, "skipped_budget": 0, "coverage": 1.0, "stopped": False,
+        "missing": ["alpha", "beta", "gamma"], "stop_reason": "pool_exhausted",
         "condensed_question": None, "condense_receipt_ids": [], "condense_status": "skipped",
         "condense_usage_known": False, "history_turn_ids": [],
         "rewrite": {"queries": [], "used": False}, "rewrite_status": "skipped", "rewrite_receipt_ids": [], "bookshelf": {"hits": 0, "used": 0}}]
+    expected_trace.extend({"layer": layer, "considered": 0, "selected": 0, "skipped_budget": 0,
+        "coverage": 1.0, "stopped": False, "missing": ["alpha", "beta", "gamma"],
+        "stop_reason": "pool_exhausted"} for layer in ("summary", "note", "source"))
+    assert receipt["trace"] == expected_trace
+    frozen = env.http.app.state.ai_turn_store.get_request(turn["id"])["policy_versions"]
+    assert {key: frozen[key] for key in ("retrieve", "compose", "ladder", "rerank")} == {
+        "retrieve": "@3", "compose": "@30", "ladder": "@15", "rerank": "@2"}
     assert [c["id"] for c in receipt["citations"]] == [primary.id]
     assert [c["persona"] for c in receipt["citations"]] == [False]
     assert all(set(c) == {"n", "layer", "persona", "id", "title", "quote", "locator"} for c in receipt["citations"])
     egress = env.records.read("workspace_ask_receipts", receipt["egress_receipt_id"])
     assert egress.payload["status"] == "completed" and '"content"' not in json.dumps(egress.payload)
     assert "alpha beta gamma" not in json.dumps(egress.payload)
-    assert [{**t, "layer": "insight"} for t in egress.payload["trace"]] == receipt["trace"]
-    assert env.model.calls == 1
+    layer_names = {"L3": "insight", "L2": "summary", "L1": "note", "L0": "source"}
+    assert [{**t, "layer": layer_names[t["layer"]]} for t in egress.payload["trace"]] == receipt["trace"]
+    assert env.model.calls == 2
     for _ in range(2):
         assert env.http.get(f"/api/v2/workbench/threads/{saved['thread_id']}?project_id=alpha").json()["turns"] == [turn]
     app, _ = assemble(env.root, env.records, env.documents, env.service, env.model)
     with TestClient(app) as restarted:
         assert restarted.get(f"/api/v2/workbench/threads/{saved['thread_id']}?project_id=alpha").json()["turns"] == [turn]
-    assert env.model.calls == 1
+    assert env.model.calls == 2
     assert env.http.post(f"/api/v2/workbench/turns/{turn['id']}/retry", json={"project_id": "alpha"}).status_code == 409
 
 
-def test_no_match_has_complete_empty_receipt_without_model_or_egress(env):
+def test_no_match_has_complete_empty_receipt_without_model_or_egress(legacy_retrieve_env):
+    env = legacy_retrieve_env
     env.model.allowed = False
     response = ask(env, intent="ask")
     assert response.status_code == 200, response.text
@@ -165,7 +190,8 @@ def test_no_match_has_complete_empty_receipt_without_model_or_egress(env):
     assert env.model.calls == 0 and env.records.list("workspace_ask_receipts") == ()
 
 
-def test_tag_name_scene_and_cross_project_thread_are_checked_before_model(env):
+def test_tag_name_scene_and_cross_project_thread_are_checked_before_model(legacy_retrieve_env):
+    env = legacy_retrieve_env
     project = env.http.post("/api/v2/projects", json={"name": "研究"}).json()["id"]
     included, _ = publish(env, project=project)
     excluded, _ = publish(env, project=project)
@@ -179,11 +205,12 @@ def test_tag_name_scene_and_cross_project_thread_are_checked_before_model(env):
     assert env.records.read("v2_turns", saved["turn"]["id"]).payload["project_id"] == project
     assert env.http.get(f"/api/v2/workbench/threads/{saved['thread_id']}?project_id=alpha").status_code == 404
     assert ask(env, thread_id=saved["thread_id"]).status_code == 404
-    assert env.model.calls == 1
+    assert env.model.calls == 2
 
 
 @pytest.mark.parametrize("change", ["global", "private", "source", "provider"])
-def test_permission_source_and_model_failures_preserve_safe_query_errors(env, change):
+def test_permission_source_and_model_failures_preserve_safe_query_errors(legacy_retrieve_env, change):
+    env = legacy_retrieve_env
     _, experience = publish(env)
     if change == "global":
         env.model.before = lambda: setattr(env.model, "allowed", False)
@@ -199,17 +226,23 @@ def test_permission_source_and_model_failures_preserve_safe_query_errors(env, ch
     assert response.json()["detail"] == {"global": "remote_disabled", "private": "private_project_remote_blocked",
         "source": "source_changed_retry", "provider": "answer_generation_failed"}[change]
     assert "synthetic secret" not in response.text
-    assert env.records.list("v2_turns") == () and env.records.list("v2_threads") == ()
+    assert env.records.list("v2_turns") == ()
+    threads = env.records.list("v2_threads")
+    assert len(threads) == 1
+    assert threads[0].payload["project_id"] == "alpha" and threads[0].payload["title"] == "alpha beta gamma?"
+    assert env.http.get(f"/api/v2/workbench/threads/{threads[0].object_id}?project_id=alpha").json()["turns"] == []
     assert env.records.list("workspace_ask_receipts")[0].payload["status"] == "failed"
 
 
-def test_current_private_project_keeps_remote_409_before_no_match(env):
+def test_current_private_project_keeps_remote_409_before_no_match(legacy_retrieve_env):
+    env = legacy_retrieve_env
     set_private_project(env.records, "alpha", True, 0)
     assert ask(env).status_code == 409
     assert env.model.calls == 0 and env.records.list("v2_turns") == ()
 
 
-def test_citation_subset_maps_number_to_same_document_layer_and_sent_counts(env):
+def test_citation_subset_maps_number_to_same_document_layer_and_sent_counts(legacy_retrieve_env):
+    env = legacy_retrieve_env
     doc, item = add_document(env, summary="alpha", body="beta", original="gamma 原文")
     env.model.numbers = [3, 1]
     response = ask(env, text="alpha beta gamma 原文?")
@@ -225,12 +258,6 @@ def test_citation_subset_maps_number_to_same_document_layer_and_sent_counts(env)
     assert parts["insight"]["count"] == 0 and parts["persona"]["count"] == 0
     assert sum(part["tokens"] for part in context["parts"]) == _estimate_input_tokens(env.model.messages)
     assert [t["layer"] for t in receipt["trace"]] == ["insight", "summary", "note", "source"]
-
-
-def test_legacy_result_with_unknown_context_does_not_invent_zero_input():
-    from backend.memory_app.v2.workbench import _ask_receipt
-    receipt = _ask_receipt({"trace": []}, (), {"answer": "old answer", "sources": []}, "old")
-    assert receipt["context"] is None
     for citation in receipt["citations"]:
         content = "gamma 原文" if citation["layer"] == "source" else env.documents.markdown(doc)
         windows = citation["locator"]["windows"]
@@ -238,8 +265,16 @@ def test_legacy_result_with_unknown_context_does_not_invent_zero_input():
         assert citation["locator"]["coordinate_space"] == ("workspace_source_text_v1" if citation["layer"] == "source" else "document_markdown_v1")
 
 
-def test_disjoint_source_windows_remain_exact_in_locator_and_quote(env):
-    content = "alpha " + "middle-gap " * 400 + " beta"
+def test_legacy_result_with_unknown_context_does_not_invent_zero_input():
+    from backend.memory_app.v2.workbench import _ask_receipt
+    receipt = _ask_receipt({"trace": []}, (), {"answer": "old answer", "sources": []}, "old")
+    assert receipt["context"] is None
+
+
+def test_disjoint_source_windows_remain_exact_in_locator_and_quote(legacy_retrieve_env):
+    # 动态窗口可容纳旧的短夹具，使用超出合成模型容量的正文制造真实分离窗口。
+    env = legacy_retrieve_env
+    content = "alpha is the first supported fact.\n\n" + "middle-gap " * 4000 + "\n\nbeta is the second supported fact."
     env.domains.query.source_store.write("sources", "window-source", {"id": "window-source", "title": "Original",
         "project_id": "alpha", "metadata": {"content": content}}, expected_revision=0)
     response = ask(env, text="alpha beta?")
@@ -255,7 +290,8 @@ def test_disjoint_source_windows_remain_exact_in_locator_and_quote(env):
     assert all(text_tokens(content[w["start"]:w["end"]]) <= 1200 for w in windows)
 
 
-def test_existing_thread_accepts_consecutive_ask_turns_once_each(env):
+def test_existing_thread_accepts_consecutive_ask_turns_once_each(legacy_retrieve_env):
+    env = legacy_retrieve_env
     first = env.http.post("/api/v2/workbench/turns", json={"project_id": "alpha", "text": "Synthetic idea", "intent": "inspiration"}).json()
     publish(env, project="inbox")
     answers = []
@@ -266,14 +302,15 @@ def test_existing_thread_accepts_consecutive_ask_turns_once_each(env):
         assert "ask" in turn["receipt"] and response.json()["thread_id"] == first["thread_id"]
         answers.append(turn)
     assert answers[0]["id"] != answers[1]["id"]
-    assert env.model.calls == 3
+    assert env.model.calls == 5
     assert answers[1]["receipt"]["ask"]["trace"][0]["condense_status"] == "failed"
     assert env.http.get(f"/api/v2/workbench/threads/{first['thread_id']}?project_id=inbox").json()["turns"][1:] == answers
-    assert env.model.calls == 3
+    assert env.model.calls == 5
     assert answers[1]["receipt"]["ask"]["trace"][0]["condense_status"] == "failed"
 
 
-def test_context_lists_all_sent_entries_not_only_answer_citations(env):
+def test_context_lists_all_sent_entries_not_only_answer_citations(legacy_retrieve_env):
+    env = legacy_retrieve_env
     primary, _ = publish(env)
     persona, _ = publish(env, text='alpha beta gamma my preferred tools are notebooks', project='me')
     env.model.numbers = [1]

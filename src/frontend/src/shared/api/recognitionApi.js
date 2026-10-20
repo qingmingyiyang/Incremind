@@ -39,9 +39,6 @@ export class RecognitionApiError extends Error {
 }
 
 export const recognitionApi = Object.freeze({
-  setRecallPreference: ({ projectId, recognitionId, expectedRevision, expectedPreferenceRevision, state, fetchImpl } = {}) => request(`${API_PREFIX}/recognitions/${encodeURIComponent(recognitionId)}/recall`, {
-    fetchImpl, method: "PATCH", body: JSON.stringify({ project_id: projectId, expected_revision: expectedRevision, expected_preference_revision: expectedPreferenceRevision, state }),
-  }),
   loadRecognitionVersions: ({ projectId, recognitionId, fetchImpl } = {}) => request(`${API_PREFIX}/recognitions/${encodeURIComponent(recognitionId)}/versions?project_id=${encodeURIComponent(projectId)}`, { fetchImpl }),
   previewErasure: ({ projectId, recognitionId, expectedRevision, fetchImpl } = {}) => request(`${API_PREFIX}/recognitions/${encodeURIComponent(recognitionId)}/erase-preview`, {
     fetchImpl, method: "POST", body: JSON.stringify({ project_id: projectId, expected_revision: expectedRevision }),
@@ -58,27 +55,10 @@ export const recognitionApi = Object.freeze({
     if (focus) query.set("focus", focus);
     return request(`${API_PREFIX}/graph?${query.toString()}`, { fetchImpl });
   },
-  listGraphViews: ({ projectId, fetchImpl } = {}) => request(
-    `${API_PREFIX}/graph-views?project_id=${encodeURIComponent(projectId || "default")}`,
-    { fetchImpl },
-  ),
-  loadGraphView: ({ projectId, viewId, fetchImpl } = {}) => request(
-    `${API_PREFIX}/graph-views/${encodeURIComponent(viewId)}?project_id=${encodeURIComponent(projectId || "default")}`,
-    { fetchImpl },
-  ),
   saveGraphView: ({ projectId, viewId, expectedRevision, nodeIds, positions, collapsedIds, hiddenIds, selectedIds, focusId, fetchImpl } = {}) => request(
     `${API_PREFIX}/graph-views/${encodeURIComponent(viewId)}`,
     { fetchImpl, method: "PUT", body: JSON.stringify({ project_id: projectId, expected_revision: expectedRevision, node_ids: nodeIds, positions, collapsed_ids: collapsedIds, hidden_ids: hiddenIds, selected_ids: selectedIds, focus_id: focusId || null }) },
   ),
-  loadTask: ({ projectId, taskId, fetchImpl } = {}) => request(
-    `${API_PREFIX}/tasks/${encodeURIComponent(taskId)}?project_id=${encodeURIComponent(projectId || "default")}`,
-    { fetchImpl },
-  ),
-  createExperience: ({ projectId, content, sourceRefs, fetchImpl } = {}) => request(`${API_PREFIX}/experiences`, {
-    fetchImpl,
-    method: "POST",
-    body: JSON.stringify({ project_id: projectId, content, source_refs: sourceRefs }),
-  }),
   loadSourcePolicy: ({ projectId, sourceType, sourceId, revision, fetchImpl } = {}) => request(
     `${API_PREFIX}/source-policies/${encodeURIComponent(sourceType)}/${encodeURIComponent(sourceId)}?project_id=${encodeURIComponent(projectId || "default")}&revision=${encodeURIComponent(revision)}`,
     { fetchImpl },
@@ -92,26 +72,6 @@ export const recognitionApi = Object.freeze({
     method: "PATCH",
     body: JSON.stringify({ project_id: projectId, expected_revision: expectedRevision, decision, ...(content === undefined ? {} : { content }) }),
   }),
-  editCandidate: ({ candidateId, projectId, expectedRevision, content, conditions, fetchImpl } = {}) => request(`${API_PREFIX}/candidates/${encodeURIComponent(candidateId)}/draft`, {
-    fetchImpl, method: "PATCH",
-    body: JSON.stringify({ project_id: projectId, expected_revision: expectedRevision, content, conditions }),
-  }),
-  previewMarkdown: ({ recognitionId, projectId, markdown, expectedRevision, fetchImpl } = {}) => request(`${API_PREFIX}/recognitions/${encodeURIComponent(recognitionId)}/markdown`, {
-    fetchImpl,
-    method: "POST",
-    body: JSON.stringify({ mode: "preview", project_id: projectId, markdown, expected_revision: expectedRevision }),
-  }),
-  commitMarkdown: ({ recognitionId, projectId, markdown, expectedRevision, fetchImpl } = {}) => request(`${API_PREFIX}/recognitions/${encodeURIComponent(recognitionId)}/markdown`, {
-    fetchImpl,
-    method: "POST",
-    body: JSON.stringify({ mode: "commit", project_id: projectId, markdown, expected_revision: expectedRevision }),
-  }),
-  revokeRecognition: ({ recognitionId, projectId, expectedRevision, fetchImpl } = {}) => request(`${API_PREFIX}/recognitions/${encodeURIComponent(recognitionId)}`, {
-    fetchImpl,
-    method: "DELETE",
-    body: JSON.stringify({ project_id: projectId, expected_revision: expectedRevision, mode: "revoke" }),
-  }),
-  exportMarkdownUrl: (recognitionId, projectId) => backendUrl(`${API_PREFIX}/recognitions/${encodeURIComponent(recognitionId)}/markdown?project_id=${encodeURIComponent(projectId)}`),
   splitRecognition: ({ recognitionId, projectId, expectedRevision, parts, fetchImpl } = {}) => request(`${API_PREFIX}/recognitions/${encodeURIComponent(recognitionId)}/split`, {
     fetchImpl,
     method: "POST",
@@ -140,13 +100,8 @@ export const recognitionApi = Object.freeze({
     method: "POST",
     body: JSON.stringify({ project_id: projectId, from_id: fromId, to_id: toId, relation, evidence }),
   }),
-  reviewRelationProposal: ({ proposalId, projectId, expectedRevision, decision, fetchImpl } = {}) => request(`${API_PREFIX}/relation-proposals/${encodeURIComponent(proposalId)}`, {
-    fetchImpl,
-    method: "PATCH",
-    body: JSON.stringify({ project_id: projectId, expected_revision: expectedRevision, decision }),
-  }),
-  loadDocument: ({ documentId, projectId, fetchImpl } = {}) => request(`${API_PREFIX}/documents/${encodeURIComponent(documentId)}?project_id=${encodeURIComponent(projectId)}`, { fetchImpl }),
-  saveDocument: ({ documentId, projectId, expectedRevision, markdown, fetchImpl } = {}) => request(`${API_PREFIX}/documents/${encodeURIComponent(documentId)}`, {
+  loadDocument: ({ documentId, projectId, fetchImpl } = {}) => request(`/api/v2/library/documents/${encodeURIComponent(documentId)}?project_id=${encodeURIComponent(projectId)}`, { fetchImpl }),
+  saveDocument: ({ documentId, projectId, expectedRevision, markdown, fetchImpl } = {}) => request(`/api/v2/library/documents/${encodeURIComponent(documentId)}`, {
     fetchImpl,
     method: "PATCH",
     body: JSON.stringify({ project_id: projectId, expected_revision: expectedRevision, markdown }),
@@ -160,7 +115,6 @@ export const recognitionApi = Object.freeze({
   saveConstraint: ({ projectId, constraintId, expectedRevision, content, enabled, validFrom, validUntil, fetchImpl } = {}) => request(`${API_PREFIX}/constraints/${encodeURIComponent(constraintId)}`, {
     fetchImpl, method: "PUT", body: JSON.stringify({ project_id: projectId, expected_revision: expectedRevision, content, enabled, valid_from: validFrom, valid_until: validUntil }),
   }),
-  loadSettings: ({ fetchImpl } = {}) => request(`${API_PREFIX}/settings`, { fetchImpl }),
   saveGenerationMode: ({ mode, localEnabled, localBaseUrl, expectedRevision, fetchImpl } = {}) => request(`${API_PREFIX}/settings/generation-mode`, {
     fetchImpl,
     method: "PUT",

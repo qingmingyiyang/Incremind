@@ -12,7 +12,8 @@ from backend.recognition.sql_source_identities import KIND as SQL_IDENTITIES
 from backend.memory_app.source_graph import SourceGraph, validate_graph
 from backend.memory_app.source_egress import _frozen_packet_authority
 from core.effect_log import EffectState
-from tests.memory_app.v2.test_external_context import env, settings, setup, request, DAY
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
+from tests.memory_app.v2.test_external_context import settings, setup, request, DAY
 
 
 COMPANION = 'external-context-identities-v1'

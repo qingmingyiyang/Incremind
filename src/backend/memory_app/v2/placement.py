@@ -141,6 +141,8 @@ class PlacementSuggestions:
         return payload
 
     def correct_scene(self, document_id, project, scene, *, expected_revision, assignment_revision):
+        if scene == '':
+            scene = None
         if (type(expected_revision) is not int or expected_revision < 1
                 or type(assignment_revision) is not int or assignment_revision < 0):
             raise RecognitionConflict('placement_revision_invalid')
@@ -150,7 +152,7 @@ class PlacementSuggestions:
             if (document is None or document.payload.get('project_id') != project
                     or document.payload.get('status') == 'archived'
                     or document.payload.get('revision') != expected_revision
-                    or target is None or scene not in target.payload['scenes']):
+                    or target is None or (scene is not None and scene not in target.payload['scenes'])):
                 raise RecognitionConflict('placement_document_unavailable')
             current = tx.read('v2_scene_assignments_document', document_id)
             if (current.revision if current else 0) != assignment_revision:
@@ -161,6 +163,9 @@ class PlacementSuggestions:
                 document_revision=expected_revision, assignment_revision=assignment_revision,
                 title=document.payload['title'], summary=summary)
             if current is None or current.payload != {'project_id': project, 'scene': scene}:
-                assign_scene(TransactionRecords(tx), 'document', document_id, project, scene)
+                # 保留手动清除记录与递增修订，阻止自动继承覆盖及旧修订重新有效。
+                tx.put('v2_scene_assignments_document', document_id,
+                    {'project_id': project, 'scene': scene},
+                    expected_revision=current.revision if current else 0)
             tx.commit()
         return event

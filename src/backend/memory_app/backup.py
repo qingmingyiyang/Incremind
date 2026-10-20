@@ -1,8 +1,4 @@
-"""Consistent SQLite backup and restore to an empty destination.
-
-Keys and derived vector caches are intentionally outside the authority backup.
-The SQLite online backup API includes committed WAL state.
-"""
+"""完整运行根备份与新目录恢复，SQLite 在线快照包含已提交的 WAL 内容。"""
 from pathlib import Path
 from contextlib import closing
 import argparse
@@ -34,6 +30,18 @@ def backup_database(source: Path, destination: Path) -> dict:
     return {"destination": str(destination), "records": count, "credentials_included": False}
 
 
+def runtime_backup_exclusions(source: Path) -> tuple[Path, ...]:
+    """备份和完整性检查共用已知运行根的恢复管理目录。"""
+    source = Path(source).resolve(strict=True)
+    candidates = [source]
+    for name in ('users', 'shared'):
+        parent = source / name
+        if parent.is_dir() and not parent.is_symlink():
+            candidates.extend(path for path in parent.iterdir() if path.is_dir() and not path.is_symlink())
+    return tuple(runtime_backup_roots(root)[1].parent for root in candidates
+                 if (root / '.rebuild-data').is_dir())
+
+
 def backup_runtime(source: Path, backups: Path, *, user: str | None = None, snapshot_id=None, automatic=False, job_id=None):
     """Reuse the Settings data backup owner, including committed SQLite WAL."""
     from core.storage_provider.vault_backup_restore import create_vault_backup
@@ -45,10 +53,12 @@ def backup_runtime(source: Path, backups: Path, *, user: str | None = None, snap
         source = (root / 'users' / user).resolve(strict=True)
         if not source.is_relative_to(root):
             raise ValueError('user_invalid')
+    source = source.resolve(strict=True)
+    excluded = runtime_backup_exclusions(source)
     at = datetime.now(timezone.utc).strftime('%Y%m%dt%H%M%Sz')
     return create_vault_backup(source_root=source, backups_root=Path(backups),
         snapshot_id=snapshot_id or f'backup-{at}-{uuid4().hex[:8]}', sqlite_online=True,
-        exclude_logs=True, restore_verify=True, automatic=automatic, job_id=job_id)
+        exclude_logs=True, restore_verify=True, automatic=automatic, job_id=job_id, exclude_roots=excluded)
 
 
 

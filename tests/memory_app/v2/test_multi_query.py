@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from backend.memory_app.v2.multi_query import fuse_candidates
 from backend.memory_app.v2.ladder import candidate_order
-from tests.memory_app.v2.test_workbench_ask import env as _env_fixture, publish, ask
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as _env_fixture, publish, ask
 
 env = _env_fixture
 

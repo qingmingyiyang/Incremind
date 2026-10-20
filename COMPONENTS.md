@@ -1,5 +1,107 @@
 # 统一组件与公共能力索引
 
+- 评测数据准备（2026-10-21）：`tools/rag_dataset.py` 共用原开发清单形状，负责确定会话、按类别抽题、原话投影、证据编号资格和冻结核对。`rag_pilot.prepare_data` 保留原两参数调用与默认 12 题，两个原 runner 复用 `prepared_questions`，在配置、索引、缓存答案前核 baseline 与完整原话；显式新数据路径保留无效标注并输出空 Recall，`--prepare-only` 只准备。原始资料只读且不复制，gold 留在评测侧，工具和数据协议见 `docs/evaluation.md`。
+
+- 评测聚合与图示（2026-10-21）：`tools/rag_report.py` 只读原逐题结果、用量、冻结配置与独立事实裁决，生成 `docs/images/evaluation-summary.json` 和共享 SVG。`--summary` 从公开聚合重建，`--check` 只核既有产物；保护输入字节与修改时间，先核所有输出冲突，标准库 XML 校验八项指标及比例。README 两种语言和测评文档复用同一产物，新增模型调用 0。
+
+- 过期澄清控制（2026-10-21）：`agentic_rag.pending_clarification` 供 workbench 自动路由与 followup 历史读取共用；原 `clarification` 先核完成事件、冻结请求及真实模型决策。仅已知资料冲突且实际同项目文稿修订增加、遗忘，或原文全部关联稿已遗忘时返回无待澄清；其余错误保持。新输入复用原路由、召回与资料证明，不改写旧回执或原生证明。
+
+- 已遗忘整理稿阅读（2026-10-21）：`Library.documentArchived` 仅为可编辑文稿按实际 targetProject 读取原 archive 列表，并随原详情请求身份接纳；已有 readonly 来源直接沿原资格阅读。归档时复用 MarkdownBody、restoreDocument 和 DocumentPlacement，只读期间保留 DocumentMarkdownEditor 原草稿键，恢复后复用原修订冲突与保存流程。
+
+- 手写认识场景继承（2026-10-21）：`insights._scene_assignment` 供原 `insight_view` 共用，先读自身、候选别名及文档；均无归属时按同项目 `parent_ids` 读取退休父，全部父场景一致才继承。显式 null 终止回退，单次解析 memo 保存含 None 的已完成结果并保留环检测；资料库、本机查询、重排和翻书沿原投影消费，不写新字段。
+
+- 附件提交回放（2026-10-21）：`workbenchApi.createTurn` 的 remember/inspiration、自动输入及流式分支共用原 `submission`、`streamFetch` 和 JSON/SSE 协商。网络断开及原生 Abort 保留原请求键，成功后按原身份清理；`Workbench` 的已上传原件缓存与后端 `TurnExecutionService` 负责原回合回读，公开合同保持。
+
+- 归属后提炼恢复（2026-10-20）：`DocumentFilings` 复用原移动标记及 `generate_insights`，通过旁路 `retry_token` 和原 `MemoryTurn.select_insight_attempt` 串接同一资料的后继。`MemoryTurn._known_failed_attempt` 仅为完整绑定的外发前配置失败补充资格，成功 OUTPUT 复用及未知结果规则保持。`DocumentPlacement` 使用既有 file API，Workbench 记住视图和 jobs 共用只读 observer，原记录及人工确认保持。
+
+- 范围标签往返（2026-10-20）：前端 `shared/lib/scopeTag.js` 的 `formatScopeTag/scopedText/displayScopedText` 与后端 `intent.format_scope_tag/scope_tag_match/parse_scope_tag` 共用无损范围合同；特殊名称经标准 JSON 单行编码，原裸标签保留原解析。Composer、Workbench、route、multipart 与 share_capture 复用原文区间及净正文，分享只从正文提取真正链接；既有 URL、请求字段、原文和拆分坐标保持。
+
+- 单篇文稿交付（2026-10-20）：`DocumentMarkdownEditor` 将真实已保存基线交给共享 `DocumentDeliveryAction`，通过 `RichMarkdownEditor.toolbarActions` 在工作台整理稿、成果与资料库复用。沿既有 `createEditableDocumentDelivery`、`loadEditableDocumentDeliveryArtifact` 与 `productFetch` 生成并下载指定修订的 Markdown、HTML、DOCX、PPTX；未保存、冲突和失效范围停止下载，接口及后端交付服务保持。
+
+- 混合请求重试（2026-10-20）：`Workbench.replaceReceiptTurn` 递归替换实际子轮回执，并同步 remember/do 的真实状态，send、retry、continue 共用。子轮重试使用当前项目，父轮与其他部分保持；`busyReceipt` 与原线程轮询承接 processing，沿用既有 API 和请求范围控制。
+
+- 停止与继续（2026-10-20）：`ProductStops` 按真实项目、产品轮和内核成员保存停止代次、暂停证明及继续动作，复用原事务与修订，停止信号按真实代次幂等。`AnswerTurns` 和 `TaskContinuations` 核验当前租约、已完成调用、工具结果及真实关闭证明；无活动模型调用时保存独立边界证明。`ProductPolicyRuntime` 复用原取消和显式继续接口，同一问答动作的合法停止续接复用原逻辑工具额度，已完成步骤沿原身份保留；`AnswerContractRegistry` 按冻结的 `retry@2` 提供工具与 HTTP 等待合同，旧版本保持。`Workbench` 复用 Receipt、Icon 与原中断行，按权威回读恢复继续或停止入口，任务由服务器独立完成停止；真实终态失败沿既有错误区域显示并关闭无效操作，部分正文和费用记录保持。
+
+- 失败任务回读（2026-10-20）：`read_turn_stream` 在原绑定与游标校验后，为游标零的失败先提供真实 started 元信息，不建立持久游标。`workbenchApi.create` 仅为已接受 do 延后释放请求键；`Workbench` 按实际项目回读同一线程并核对原回合，确认后清除已提交输入，跨项目沿原导航切换；失败读取保留请求身份，ask/multi 沿原清理语义。
+
+- 重启状态观测（2026-10-20）：`TaskDo.observe` 核对产品轮、线程、执行记录与冻结请求，仅读取现有运行主人，合法正文帧沿原策略截取；未知执行采用现有中断显示，原终态和合法中断保持。`workbench.view` 的递归轮与 `jobs._do_view` 共用 `workbench_task_observer`，普通读取不初始化运行主人或派发任务。`continue_on_request` 的内部 instance 接点只在真实 resume action、接纳事件及回执核对后沿原 CAS 接管，公开请求保持。
+
+- 场景清除（2026-10-20）：`DocumentPlacement` 区分显式空场景与缺少归属信息。`PlacementSuggestions.correct_scene` 在原事务内校验文稿和归属双修订、写入纠正与样例，并保留同一归属行的 `scene=null` 和递增修订；`scene_of` 保留此行供召回与自动继承判断，`generate_insights` 仅继承非空场景，既有认识保持。
+
+- 资料库图片组（2026-10-20）：`Library.OriginalFiles` 沿现有 `workbenchApi.images` 取得 ordinal/name/url，以 `ProductFileLink` 展示全部上传图片。`useRequestScope` 和 AbortController 管理项目、对象及重试；其他类型继续使用原单文件入口。`workbenchApi.images` 的可选 signal 与既有两参数调用兼容。
+
+- 工作台事实定位（2026-10-20）：`WorkbenchDraftPanel` 通过 `useMemo` 复用只读 note/summary/sourceId 投影，避免普通 jobs 轮询触发 `SourceDraftView` 的对象变化清理；实际文稿、原件或保存结果变化仍更新原视图。事实范围校验、高亮算法及共享编辑器保持原实现。
+
+- 回执原件读取（2026-10-20）：`WorkbenchOriginalPanel` 复用 `workspaceApi.source`、`useRequestScope`、`FocusPanel` 和 `ProductFileLink`，为已有 item 且尚无 document 的回执读取原文与下载原文件。图片类型通过现有 `workbenchApi.images` 按 ordinal/name/url 展示全部文件，单图与旧原件沿原接口兼容。`Workbench` 沿现有 `draftPanel` 位置保存实际项目和原件编号，分享、引用、成果与外部执行者继续共用原单面板切换。
+
+- DOCX 表格正文（2026-10-20）：`BuiltinDocumentTextExtractor` 按 python-docx 原生内容块顺序递归读取嵌套表格，单元格沿原换行、整体裁边和行列分隔规则处理。上传、内容转换与本地提取设置共用同一实现，原文件及已有冻结正文保持。
+
+- 认识版本焦点（2026-10-20）：`Library` 通过现有更多按钮的 `insightMoreTrigger` ref，仅在 `versions` 动作收起菜单时恢复入口焦点；`InsightMaintenance`、`VersionHistory` 及其他维护动作保持，Tab 与 Escape 沿原 `FocusPanel`。
+
+- 编辑模式焦点（2026-10-20）：`RichMarkdownEditor.switchMode` 复用现有 `moreButton` ref，在切换模式和收起菜单后恢复入口焦点；资料库、成果及工作台整理稿共同使用，原格式、链接、保存、历史与正文解析保持。
+
+- 进度原件导航（2026-10-20）：`AppRouter.openJob` 通过现有 sources GET 核对无文稿 item 的可见原件，复用 `useRequestScope` 隔离地址、空间及最新点击；成功后仅递增此类打开的局部序号并加入 `LibraryPage` key，沿现有 `source_id` 和可选 `Library.sourceId` 打开全文。导航失败独立保留实际重试目标，`documentId` 优先及其他进度目标保持。
+
+- 成果版本焦点（2026-10-20）：`WorkbenchOutcomePanel` 为现有成果更多按钮保留 ref，版本列表切换后聚焦该按钮；原 `FocusPanel`、编辑器、版本读取及继续写作路径保持，唯一页面调用方为 `Workbench`。
+
+- 中文链接（2026-10-20）：工作台与手机分享共用 `share_capture.share_url`，按空白及分享标点区分网址和附带文案，保留中文路径与查询。`workspace_links._request_target` 复用 `urlsplit` 结果，仅为 HTTP 请求编码路径和查询；已编码百分号、签名分隔字符、原网址和现有网络资格判断保持。
+
+- 上传文件名（2026-10-20）：`workspace_intake._upload_name` 保留实际最后后缀，仅缩短主名到原有 180 字符预算，供普通文件与图片组共同使用；现有类型判断、小写磁盘后缀、随机原件路径及上传约束保持。
+
+- 外部原件投影（2026-10-20）：`LibraryRead._external_items` 按既有 MCP remember 接受记录核对 owner、项目、原件编号及修订，批量读取当前真实原件；`source_rows` 补充原有字段并按编号去重，`source_text` 复用 `WorkspaceReview.source`。原 `DocumentReadSet`、Source 与已确认原件路径保持，文稿关联允许为空。
+
+- 子轮认识范围与结算（2026-10-20）：`WorkbenchTurn` 的递归入口沿真实 `part.project_id` 传递项目，灵感 chip 显式使用此项目。`review` 复用实际审核回包及原 ID 匹配方式递归更新 `parts[].receipt`，保留各部分归属、状态、原问题和其他结果，原请求范围继续拦截迟到回包。
+
+- 整组归档恢复（2026-10-20）：`Library` 通过原列表 GET 取得建议组完整成员，`InboxProjectSuggestion` 在创建前核对并保留真实编号及修订。`v2.inbox` 在原事务内匹配既有 filing、源归档后态、目标待确认状态、项目及场景，精确回读同次结果；人工恢复及其他冲突继续沿原处理，显式确认路径保持。
+
+- 整理稿图片范围（2026-10-20）：`WorkbenchDraftPanel` 在原 `libraryApi.drill` 成功后，以 `sources` 中实际 `itemId` 及 `kind=image` 决定读取原图片接口；`useRequestScope` 同时管理文稿和图片请求，图片结果按当前范围展示，顺序和 `ProductFileLink` 沿原实现。
+
+- 手写方法更新（2026-10-20）：`SkillExportPanel` 使用原 `skillExportMethods` 按同一组 ID 读取当前来源，保留正文草稿；读取结束后的 effect 核对原 token、范围与按钮节点，仅在按钮已启用且焦点丢失时恢复入口，其他有效焦点保持。明确保存沿原 `regenerateSkillExport` 的 `document` 分支、当前修订及来源修订更新同一方法，递增 `document_version` 并清除审阅状态。后续仍由原领域服务审阅和导出，旧已下载归档及认识历史保持。
+
+- 子轮分享问题（2026-10-20）：`WorkbenchTurn` 的内部 `shareQuestion` 参数默认使用原 `turn.user_text`，多部分子轮传入真实 `part.span`。分享创建临时轮次副本供 `openShare` 与原重试共用，原轮次对象、气泡、重做及引用投影保持。
+
+- 账号配额草稿（2026-10-20）：`SettingsUsers.QuotaForm` 按现有空间范围和账号编号保持组件身份，复用项目表单的字段编辑计数；`update` 返回当前范围的真实用户响应，成功保存按提交时计数接收服务值，失败保留输入，写入继续使用当前权威修订。
+
+- 本地日期（2026-10-20）：`shared/lib/time.formatLocalDate` 复用原 `pad` 和本地 Date 读取，供 `Library` 列表、摘要及 `MemoPanel` 使用；`YYYY-MM-DD` 日期事实直接保留年月日，完整时间点按浏览器时区显示，现有短日期调用方保持。
+
+- 移动结果提示（2026-10-20）：`Library` 复用 `DocumentPlacement.onChanged` 的现有 `state/error`，以原 `drillScope` 保存瞬时提示；只对当前范围中已提交且提炼未完成的移动显示结果。列表重读保持提示，撤销及后续归属成功清除，旧范围失效后隐藏；公开请求及持久记录保持。
+
+- 认识维护重读（2026-10-20）：`InsightMaintenance` 复用原认识列表、下钻及版本 GET；`Library.reloadMaintenance` 沿原请求作用域更新当前状态，同一对象修订变化保持表单身份。全部选中编号从权威列表补齐，失效项仅供取消，旧对象最新版本仅在明确失效时只读展示；现有拆分和合并请求字段保持。
+
+- 面板 Escape（2026-10-20）：`FocusPanel` 在原 Escape 处理中停止事件传播，当前 `onClose` 仅执行一次。嵌套面板关闭后沿原卸载逻辑回到父面板入口，父面板可独立处理下一次 Escape；Tab、`focusScope` 和公开参数保持。
+
+- 聚焦面板范围（2026-10-20）：`FocusPanel` 的可选 `focusScope` 供资料库层级与对象切换恢复焦点，仅在当前焦点已离开面板时聚焦关闭按钮。原挂载时的入口记录与卸载时恢复焦点的逻辑保持，其他调用方沿原行为运行；资料库原件采用实际来源项目及原件编号，范围不含修订和正文。
+
+- 配对地址恢复（2026-10-20）：`DeviceGate.takeCode` 仅在 `/pair` 的片段包含 `code` 时消费该参数，保留当前查询与其他片段；没有配对码时保留完整地址。原设备探测返回 401 时进入正常配对表单，其他读取错误沿原重试入口处理。
+
+- 设置主题选择（2026-10-20）：`SettingsPage` 直接复用 `readStoredTheme/applyTheme` 和原浏览器偏好，选择系统时继续使用原媒体查询监听。根主题属性变化仅触发选择框重读，observer 随组件卸载断开；原 `Shell` 按钮和启动恢复共用同一实现。
+
+- 整理稿历史（2026-10-20）：`DocumentRevisionHistory` 复用 `loadEditableDocumentRevisions`、设备传输与原修订接口，只读取元数据。统一编辑器让资料库、成果面板和工作台整理稿面板共用入口，读取范围按用户、项目及文稿隔离，刷新与失败重试保持当前正文和保存基线。
+
+- 配额原因展示（2026-10-20）：`workbench_receipts._safe_error` 仅识别既有 `QuotaError` 的两种配额原因，沿原 `receipt.error` 保存；`workbenchErrorMessage` 与 `WorkbenchError` 共用对应短提示。原额度计算、投入准入、原件状态及其他错误投影保持。
+
+- 整理结果读取（2026-10-20）：`Library` 沿原状态轮询记住已接受任务，首次终态或 running 结束后刷新一次四层列表；`ConsolidationSuggestions` 复用原两个 GET 提供读取重试，读取与审核请求分别沿 `useRequestScope` 管理当前对象，确认写入保持既有流程。
+
+- 分享批次恢复（2026-10-20）：`CaptureEntry` 按条目捕获发送失败并继续后续内容，失败状态和清除操作分别绑定原投递编号；`captureQueue`、Service Worker、账号归属及既有幂等处理保持。整页不可重试错误优先控制重试入口。
+
+- 完整备份与原件定位（2026-10-20）：设置、`DailyBackup` 和 CLI 共用 `backup_runtime`，受管恢复目录由 `runtime_backup_exclusions` 同时供备份与完整性检查剪除。`uploaded_media.original_path/group_entries` 按当前运行根定位上传原件，复用于下载、图片与音频读取及完整性检查；原记录和冻结资格保持。快照沿现有 manifest 与相对路径区分运行根和旧 vault，恢复验证完成清理后报告结果。
+
+- 审阅定位（2026-10-20）：`AppRouter` 将既有 `filter=pending_memory` 转为 `Library` 的初始待确认筛选，初始化与项目变化复用原 `FilterBar`。地址变化沿原路由重挂载恢复，桌面分发及 URL 结构保持。
+
+- 一键启动（2026-10-20）：`start.bat` 原样转交参数并保留 PowerShell 的失败退出码；`tools/start.ps1` 只在省略 `DataRoot` 时复用已就绪实例，显式目录沿原端口检查处理。依赖准备、进程托管与关闭流程继续复用原实现。
+
+- 热词表草稿（2026-10-20）：`features/settings/AsrLexicon` 以当前用户和项目初始化草稿，同范围刷新沿原词表 API 只读最新修订，保留正文与格式并使旧预览失效；预览及导入继续使用真实修订与原 `useRequestScope`。
+
+- 外部成果版本（2026-10-20）：`ExternalTaskDo.advance` 在原完成事务调用 `outcomes.record_outcome`，复用现有成果链格式与出生核验。没有版本记录的旧稿通过真实出生核验后，版本接口返回原结构的空列表；原版本选择与继续资格保持，已有异常版本记录继续沿原错误路径处理。
+
+- 项目约束编辑（2026-10-20）：`features/settings/ProjectConstraints` 复用原约束 CAS API、Row、Switch、DraftConflictView 与 useRequestScope。读取失败仅重读，修订冲突明确选择后保存；新建草稿保持创建身份，等待期间的编辑和切换按实际对象结算。
+
+- 本地文档输入错误（2026-10-20）：`BuiltinDocumentTextExtractor` 复用 python-docx、lxml 与 pypdf，使用 `LocalDocumentInputError` 区分需要密码、无文字和明确的格式错误；`WorkspaceIntake.add_file` 沿原清理流程返回 HTTP 400，工作台共用短提示。依赖缺失、权限和未分类运行错误继续由原错误路径处理。
+
+- 干活规划消息投影（2026-10-20，默认 `context_preparation@3`）：`ProductTaskPlanner` 保留原消息去重，并为已可见的 `memory.recall`、`source.evidence.read`、`document.draft.propose` 提供实际参数与适用范围说明；旧请求沿冻结版本回放，权限和来源资格由原执行路径校验。投影新增模型调用为 0。
+
+- 任务召回资格（2026-10-20）：`TaskRecall` 在原阶梯选择前筛除缺少原件快照的候选，调用 `consult_bookshelf(require_source_snapshot=True)` 保持翻书候选的相同资格，并沿原 `source_unavailable` 登记。普通问答使用原默认行为，选择后的严格证明校验继续执行；`continue_from` 正文及成果版本仍沿原准备、冻结和复核路径读取。
+
 - Agentic RAG（2026-10-15，默认 `retrieve@7`）：`v2.agentic_rag.investigate` 将真实工具结果返回下一次受管模型决策；`WorkspaceQuery.rag_read` 按目录及认识与文档关联读取摘要、正文和原件，工作项与旧 Source 原件均经真实来源 owner，首次深读受原阶梯顺序约束。每次提问最多 6 次决策、单次 20 秒有效期限；重复操作、连续两步没有新增资料或阅读深度、完整输入容量不足会停止调查。`answer_contract_scope` 从冻结 retrieve 策略能力读取组合额度，当前为 9 个嵌套句柄，分供历史压缩、调查和原两次主要作答调用，实际传输和费用仍按原回执计量。`pending_clarification/clarification` 只接同项目同线程最新、真实已完成的追问，已解决追问不恢复。旧 `retrieve@5` 和 `compose@30/ladder@15/rerank@2` 保持。阶段与验证边界见 [Agentic RAG](docs/agentic-rag.md)。
 
 - RAG 证明承接：`v2.agentic_rag.validate_rag_proof` 回读原不可变输入，核对原轮次、输入引用和来源，后续轮次不重复内嵌整份证明；旧内嵌记录仍逐值校验。真实小样本、失败及用量见 [测评总览](docs/evaluation.md#agentic-rag-真实多轮验收)。
@@ -126,7 +228,7 @@
 | 模型协议能力 | `src/backend/shared/llm/model_capabilities.py` | `ModelCapabilities` 与 `resolve_model_capabilities` 为既有网关声明结构化模式、角色、token 字段、流式用量和推理等级；DeepSeek 精确主机按 Chat Completions 协议适配，未知端点保留原有有界探测，不从模型名推断代理能力。无新持久化字段；验证：`tests/backend/unit/llm/test_model_capabilities.py` |
 | 带用量的结构化生成 | `LiteLLMCompletionGateway.complete_structured_with_usage`、`ModelConfiguration.complete_structured`、`memory_app.structured_generation.generate_structured` | 问答和短认识复用 AskOutput/InsightOutput，原引用上界与认识长度规则留在领域；生产配置保留实际出网前后守卫及原用量元数据，格式降级有界、不重试无效业务输出。旧文本适配器输出也经同一校验；验证：`tests/memory_app/v2/test_structured_generation.py` |
 | 流式结构化生成 | `LiteLLMCompletionGateway.stream_structured_with_usage`、`ModelConfiguration.complete_stream`、`shared.llm.json_mode.PartialJSONField` | 复用能力声明、token 预算和完整输出契约，部分 JSON 只解码回答字段，持续复验来源/配置，正常 stop 与最终校验通过才返回完整对象及用量；关闭提供方流，不自动重发。验证：`tests/memory_app/v2/test_workbench_stream.py` |
-| 问答执行与交付 | `memory_app.v2.turn_execution.TurnExecutionService`、`memory_app.v2.workbench_transport` | 同一业务编排由 JSON/SSE 共用；旁路 CAS 幂等、断流分离、完成原子落盘与重放。交付层仅负责 RFC Accept 协商、started/delta/done/error、有界合并队列与心跳。前端 workbenchApi 保留请求键、解码 UTF-8 SSE、明确手动重试，Workbench 只临时显示未完成增量。验证：后端 test_workbench_stream、前端 workbenchStream/workbenchStreamView |
+| 回合执行与交付 | `memory_app.v2.turn_execution.TurnExecutionService`、`memory_app.v2.workbench_transport`、`v2.workbench_stream.read_turn_stream` | 同一业务编排由 JSON/SSE 共用；旁路 CAS 幂等、断流分离、完成原子保存与回读。交付层负责 RFC Accept 协商、started/delta/done/error、合并队列与心跳。前端保留请求键并续读已接受轮次；无流记录的干活通过原 GET 核对项目、线程与冻结执行后观察，仅接受零游标，不创建任务或序号。验证：既有流式用例及真实外部完成任务的断线重连 HTTP 回读。 |
 
 ## 公共能力调用入口
 
@@ -164,6 +266,8 @@
 ## 登记与验证
 
 ### 依赖方向
+
+- 静态导入收集：`tools.python_imports.collect_package_imports(path, source_root, package)` 返回目标包的导入行与模块名，供结构体检和反向依赖预算共用。仅依赖标准库，按 Python 源码编码解析 AST，覆盖父包、相对及多别名导入和嵌套作用域；目标子树的 `from` 保留基模块名。非法源码或相对层级越界直接报错，动态导入与运行时属性不在范围内。验证：`tests/tools/test_python_imports.py`、`tests/tools/test_structure_audit.py`、`tests/backend/architecture/test_reverse_dependency_budget.py`。
 
 - 前端页面装配业务hook和视图，hook按需调用API与shared；shared不反向导入业务页面。
 - 产品路由组合入口依赖领域router，领域按需调用服务、仓储和窄公共模块；领域不回调组合入口，不用动态globals或万能context转发。
@@ -246,9 +350,9 @@ T13.2 调用约束：先由既有执行服务认领整个请求的幂等所有�
 
 | 暖纸共享组件 | `src/frontend/src/shared/ui/index.js` | 导出 DESIGN §7 的 18 个组件；Shell/ProjectSwitcher/Tray、Composer/Receipt/InsightChip、LayerBadges/LadderTrace/FocusPanel/SourceDraftView、StatusDot/ProgressDots/LayerTabs/FilterBar/Row/Breadcrumb/Switch/Icon。调用方持有项目、任务、输入和领域状态，组件只展示与回调；统一使用 styles.css token 和 lucide-react。手机全屏面板按用户 A 裁决覆盖托盘并在关闭后恢复，FocusPanel 支持 Escape、焦点约束与返回。验证：`tests/frontend/shared/ui/` |
 | 原文选句与高亮 | `shared/ui/sourceEvidence.jsx` 的 `selectedSourceEvidence/SourceHighlight` | SourceDraftView 复用 DOM 范围和逐字正文校验；坐标有效时精确定位重复片段，旧无坐标输入保留首个匹配。只生成证据坐标与展示，不写业务状态或发请求。验证：`tests/frontend/shared/ui/sourceEvidence.test.jsx` |
-| 整理稿冲突展示 | `shared/ui/DraftConflictView.jsx` 的 `compact` | SourceDraftView 复用现有冲突组件，opt-in 少字模式；版本基线、选择、保存与确认仍由调用方负责，旧调用默认行为保留。验证：`tests/frontend/shared/ui/memory.test.jsx` |
+| 编辑冲突展示 | `shared/ui/DraftConflictView.jsx` 的 `compact` | SourceDraftView、DocumentMarkdownEditor 与 Library 的认识编辑共用少字三方展示；调用方持有原基线、本地字段、当前版本与明确选择，选择后另行保存。认识正文和条件沿原字符串字段展示，关闭或切换使旧读取失效。验证：既有冲突组件用例及真实文档、认识双页面 CAS 与选择后保存。 |
 | 按块排版编辑 | `shared/ui/RichMarkdownEditor.jsx`、`richMarkdown.js` | 一个ProseMirror内核做块内编辑，原字符串及分隔符保留，只序列化实际改块；CRLF/CR/LF坐标对齐。未知语法原样阅读或源码，待办只编辑文字，唯一可见事实才定位。复用Icon/token，三入口共用；验证：22篇样本及richMarkdown/editor测试。 |
-| 文档编辑会话 | `shared/ui/DocumentMarkdownEditor.jsx`、`WorkbenchOutcomePanel.jsx` | 复用既有PATCH/expected_revision及DraftConflictView三快照；调用方持有真实document/readonly/scope。SourceDraftView的renderedEditor({locateFact})显式替代右列，默认旧调用不变；验证：documentMarkdownEditor/libraryMarkdownEditor/richDraftPanel及真实后端字节/CAS/重启。 |
+| 文档编辑会话 | `shared/ui/DocumentMarkdownEditor.jsx`、`WorkbenchDraftPanel.jsx`、`WorkbenchOutcomePanel.jsx` | 工作台整理稿、资料库与成果共用既有 PATCH/expected_revision 及 DraftConflictView 三快照；按用户、目标空间、项目和文稿恢复浏览器未保存正文与原始基线，成功保存按对应内容清除。调用方持有真实 document/readonly/scope，评论继续核对正文与修订。SourceDraftView 的 renderedEditor({locateFact}) 显式替代右列；验证：真实 HTTP/CAS、跨面板和跨页面、浏览器重开、冲突选择及等待中新编辑保持。 |
 
 | 进度托盘读模型 | `backend.memory_app.v2.jobs.install_job_routes` | `/api/v2/jobs` 按项目汇总 workspace_items、recognition_tasks 和 v2 干活回执；复用待确认来源、get_task_status/task_receipt纯读状态，按保存检查点显示进度，完成任务保留24小时；关联任务去重、线程/项目漂移拒绝。目标为工作台thread/turn或真实document，无文档旧任务落整理稿列表，原记录不修改。验证：`tests/memory_app/v2/test_jobs.py`、`test_workbench_remember.py` |
 | 唯一应用路由与项目控制 | `src/frontend/src/AppRouter.jsx`、`App.jsx` 的 `AppContent` | 新 Shell 统一项目、导航、头像与托盘；兼容所有旧视图，项目来自 v2/projects 并安全读写 hash/localStorage，轮询处理中 1.5s/其余 15s、取消过期请求。旧无项目 pending_memory 保留全局入口，临时展示状态不持久化为项目。AppContent 复用旧页面分派与权限门禁，pet 初始窗口归属保持。验证：`tests/frontend/appRouter.test.jsx`、`webEntry.test.jsx` |

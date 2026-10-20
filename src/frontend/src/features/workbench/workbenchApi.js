@@ -10,6 +10,12 @@ const messages = {
   turn_interrupted: '回答已中断 · 重新发送', source_changed_retry: '资料已变化 · 重新发送',
   stream_disconnected: '连接已中断 · 重接回答', answer_generation_failed: '回答未完成 · 重试',
   interrupted: '处理已中断 · 重试',
+  storage_quota_exceeded: '空间已满 · 联系管理员调整配额',
+  job_quota_exceeded: '今日任务额度已用完 · 次日重试',
+  text_file_encoding_invalid: '请将文件保存为 UTF-8',
+  document_password_required: '文件需要密码 · 解密后上传',
+  document_text_empty: '文件没有可提取文字 · 换用文字文件',
+  document_invalid: '文件损坏或格式不符 · 重新导出后上传',
 };
 export function workbenchErrorMessage(value, fallback = '操作未完成 · 重试') {
   const code = typeof value === 'string' ? value : value?.code;
@@ -17,6 +23,12 @@ export function workbenchErrorMessage(value, fallback = '操作未完成 · 重�
   return remoteRestriction(value)?.message || (Object.hasOwn(messages, code) ? messages[code] : null) || value?.message || fallback;
 }
 function failure(code) { const error = new Error(workbenchErrorMessage(code)); error.code = code; return error; }
+function finishedFailure(error, project, turnId) {
+  if (turnId && error.name !== 'AbortError' && typeof error.code === 'string' && error.code
+      && !['turn_in_progress', 'stream_disconnected', 'server_unavailable', 'invalid_response'].includes(error.code))
+    error.finishedTurn = { project, id: turnId };
+  return error;
+}
 const pendingKeys = new Map();
 function submission(body, action = '') {
   let storage; try { storage = globalThis.sessionStorage; } catch { storage = null; }
@@ -38,7 +50,7 @@ async function streamFetch(...args) {
 }
 function readState(project, turnId = null, after = 0) {
   if (!Number.isSafeInteger(after) || after < 0) throw failure('invalid_response');
-  return { project, turnId, after, acceptedHeadless: false, consumerFailed: false };
+  return { project, turnId, turnIntent: null, after, acceptedHeadless: false, consumerFailed: false };
 }
 function waitForRead(delay, signal) {
   return new Promise((resolve, reject) => {
@@ -131,6 +143,7 @@ async function readStream(response, { onStarted, onDelta, onReset, onStatus, onC
         if (event === 'started') {
           if (typeof payload.turn?.id !== 'string' || !payload.turn.id || state.turnId && payload.turn.id !== state.turnId) throw failure('invalid_response');
           state.turnId = payload.turn.id;
+          state.turnIntent = payload.turn.intent;
           if (id === null && state.after === 0) state.acceptedHeadless = true;
           observe(onStarted, payload);
         }
@@ -141,7 +154,7 @@ async function readStream(response, { onStarted, onDelta, onReset, onStatus, onC
           if (state.turnId && payload.turn?.id !== state.turnId) throw failure('invalid_response');
           flush(); return payload;
         }
-        else if (event === 'error') throw failure(payload.code);
+        else if (event === 'error') throw finishedFailure(failure(payload.code), state.project, state.turnIntent ? state.turnId : null);
         if (id !== null) {
           received = id;
           state.acceptedHeadless = false;
@@ -191,7 +204,6 @@ async function resumeReads(state, options, initialDelay = 0) {
 }
 async function createTurn(body, options = {}) {
   // 不带意图时由后端路由判断：单个记住返回 JSON，问、干活和多部分返回 SSE。
-  if (body.intent && !['ask', 'do'].includes(body.intent)) return post('/api/v2/workbench/turns', body);
   const key = submission(body);
   const state = readState(body.project_id);
   try {
@@ -209,7 +221,11 @@ async function createTurn(body, options = {}) {
     } else value = await readResponseJson(response);
     key.clear(); return value;
   } catch (error) {
-    if (!state.consumerFailed && error.code && !['turn_in_progress', 'stream_disconnected', 'server_unavailable', 'invalid_response'].includes(error.code)) key.clear();
+    if (error.name !== 'AbortError' && !state.consumerFailed && error.code && !['turn_in_progress', 'stream_disconnected', 'server_unavailable', 'invalid_response'].includes(error.code)) {
+      // 已接受的失败先由调用方回读，确认原任务后再释放本次请求身份。
+      if (state.turnId && state.turnIntent === 'do') error.clearAcceptedRequest = key.clear;
+      else key.clear();
+    }
     throw error;
   }
 }
@@ -225,7 +241,8 @@ async function continueTurn(project, turnId, options = {}) {
     });
     const value = await readResponseJson(response);
     if (options.signal?.aborted) throw aborted();
-    if (!response.ok) throw failure(value.detail);
+    if (!response.ok) throw response.status === 503 ? failure('server_unavailable')
+      : finishedFailure(failure(value.detail), project, turnId);
     if (value?.id !== turnId || !['ask', 'do'].includes(value.intent)
         || !value.receipt || typeof value.receipt !== 'object' || Array.isArray(value.receipt)) throw failure('invalid_response');
     key.clear(); return value;
@@ -248,9 +265,19 @@ const post = (path, body) => request(path, { method: 'POST', headers: { 'Content
 export const workbenchApi = {
   createProject: name => post('/api/v2/projects',{name}),
   threads: project => request(`/api/v2/workbench/threads?${new URLSearchParams({ project_id: project })}`),
-  thread: (project, id) => request(`/api/v2/workbench/threads/${encodeURIComponent(id)}?${new URLSearchParams({ project_id: project })}`),
+  thread: (project, id, { signal } = {}) => request(`/api/v2/workbench/threads/${encodeURIComponent(id)}?${new URLSearchParams({ project_id: project })}`, { signal }),
   create: createTurn,
   continue: continueTurn,
+  stop: async (project, turnId, { signal } = {}) => {
+    const response = await fetch(libraryBackendUrl(`/api/v2/workbench/turns/${encodeURIComponent(turnId)}/stop`), {
+      method: 'POST', cache: 'no-store', signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: project }),
+    });
+    const value = await readResponseJson(response);
+    if (!response.ok) throw failure(value.detail);
+    if (response.status !== 202 || !['stopping', 'stopped'].includes(value?.state)) throw failure('invalid_response');
+    return value;
+  },
   resume: async (project, turnId, options = {}) => {
     if (typeof turnId !== 'string' || !turnId) throw failure('invalid_response');
     return resumeReads(readState(project, turnId, options.after ?? 0), options);
@@ -263,5 +290,5 @@ export const workbenchApi = {
   retry: (project, id) => post(`/api/v2/workbench/turns/${encodeURIComponent(id)}/retry`, { project_id: project }),
   insight: (project, insight, action) => post(`/api/v2/library/insights/${encodeURIComponent(insight.id)}/${action}`, { project_id: project, expected_revision: insight.revision }),
   file: (project, file, files = []) => { const body = new FormData(); body.append('project_id', project); body.append('file', file); files.forEach(image => body.append('files', image)); return request('/api/v2/workbench/files', { method: 'POST', body }); },
-  images: (project, itemId) => request(`/api/v2/workbench/items/${encodeURIComponent(itemId)}/images?project_id=${encodeURIComponent(project)}`),
+  images: (project, itemId, { signal } = {}) => request(`/api/v2/workbench/items/${encodeURIComponent(itemId)}/images?project_id=${encodeURIComponent(project)}`, { signal }),
 };

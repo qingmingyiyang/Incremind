@@ -1,5 +1,5 @@
-# Recognition web workbench and preserved Agent execution runtime.
-# Full legacy media/document adapters remain in requirements.txt.
+# 网页工作台与既有 Agent 执行环境所需依赖。
+# 本地 PDF、DOCX 正文提取随网页部署；其他媒体适配器依赖见 requirements.txt。
 fastapi>=0.115,<1
 pydantic>=2.5,<3
 PyYAML>=6,<7
@@ -15,6 +15,8 @@ langgraph-checkpoint>=4.2,<5
 langchain-core>=1.6.4,<2
 blake3==1.0.9
 Pillow>=10,<13
+python-docx>=1.1,<2
+pypdf>=4.0,<6
 # Offline device pairing QR codes; BSD-3-Clause / historical MIT.
 qrcode>=8.2,<9
 psutil>=7.0,<8

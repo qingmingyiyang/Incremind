@@ -10,7 +10,7 @@ from backend.memory_app.v2.signal_reviews import install_signal_review_routes
 from backend.security.secrets import InMemorySecretStore
 from tests.memory_app.test_fast_generation import choose
 from tests.memory_app.v2.kernel_receipts import requests, wire_receipts
-from tests.memory_app.v2.test_workbench_ask import env, add_document, ask, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, add_document, ask, publish
 
 
 def test_confirmed_real_reask_is_frozen_consumed_once_and_stays_pending(env):

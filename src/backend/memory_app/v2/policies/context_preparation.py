@@ -458,3 +458,84 @@ class ContextPreparationPolicy:
 
 
 v1 = ContextPreparationPolicy()
+
+
+class TaskContextPreparationPolicy(ContextPreparationPolicy):
+    def __call__(self, operation, *args, **kwargs):
+        if operation == 'planner_input':
+            return self.planner_input(*args, **kwargs)
+        return super().__call__(operation, *args, **kwargs)
+
+    def planner_input(self, text):
+        context = json.loads(text)
+        if 'decision_contract' not in context:
+            return text
+        seen = {}
+        changed = False
+        for event in context['events']:
+            if 'resolved_payload' not in event:
+                continue
+            data = event.get('data', {})
+            ref = data.get('payload_ref')
+            if ref is None and event.get('type') == 'expert.binding.frozen':
+                refs = data.get('evidence_refs')
+                if isinstance(refs, list) and len(refs) == 1:
+                    ref = refs[0]
+            if not isinstance(ref, str) or not ref:
+                continue
+            payload = json.dumps(event['resolved_payload'], ensure_ascii=False,
+                                 sort_keys=True, allow_nan=False)
+            if ref in seen:
+                if seen[ref] != payload:
+                    raise ValueError('context_preparation_payload_ref_conflict: ' + ref)
+                # 全部事件及引用保持；相同引用的正文只在首次事件展开。
+                del event['resolved_payload']
+                changed = True
+            else:
+                seen[ref] = payload
+        return (json.dumps(context, ensure_ascii=False, separators=(',', ':'))
+                if changed else text)
+
+
+v2 = TaskContextPreparationPolicy()
+
+
+class TaskCapabilityContextPolicy(TaskContextPreparationPolicy):
+    # 内建能力目前只有 schema URI；以下说明对应各 provider 的真实参数校验。
+    _USAGE = {
+        'memory.recall': (
+            '能力声明 input_schema_uri 为 crp://default/contracts/recall-request.schema.json。'
+            '读取当前任务项目的资料。arguments 必须包含非空 query，可选 limit 用于收紧资料数量；'
+            '项目范围和来源资格由已冻结的任务 scope 与原读取边界决定。'
+            '返回的 content 是实际证据正文，object_id、layer 和 source_refs 标明来源。'
+            '证据充分时直接据此交付，并在结果中保留真实来源。'),
+        'source.evidence.read': (
+            '能力声明 input_schema_uri 为 crp://default/contracts/source-evidence-request.schema.json。'
+            '读取已有 sources 原件的模板证据。arguments 必须包含真实 source_id 和 '
+            'template_type，后者为 answer_manual、review、project_summary、media_summary 之一。'
+            '仅在已经取得 sources 原件 source_id 且需要其模板证据时调用。'
+            'memory.recall 返回的文稿 object_id 按 documents 身份使用；读取该文稿内容沿 '
+            'memory.recall 的正文与来源处理。'),
+        'document.draft.propose': (
+            '能力声明 input_schema_uri 为 crp://default/contracts/source-document-draft-request.schema.json；'
+            '本任务使用原 create-only adapter。'
+            '本任务中只创建新整理稿。arguments 为非空 title 和完整 Markdown 正文 markdown，'
+            '可选 final_for；final_for 必须逐字等于已冻结的本子任务 deliverable，'
+            '用于声明本次写入已交付该成果。正文和来源须依据实际读取结果。'),
+    }
+
+    def planner_input(self, text):
+        projected = super().planner_input(text)
+        context = json.loads(projected)
+        visible = {row['capability_id'] for row in context.get('capabilities', [])}
+        for profile in context.get('profiles', []):
+            visible.update(profile['capabilities'])
+        usage = {identity: guidance for identity, guidance in self._USAGE.items() if identity in visible}
+        if not usage:
+            return projected
+        # 说明只覆盖原消息已经可见的能力；授权、参数校验和来源资格仍由原执行者负责。
+        context['capability_usage'] = usage
+        return json.dumps(context, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
+
+
+v3 = TaskCapabilityContextPolicy()

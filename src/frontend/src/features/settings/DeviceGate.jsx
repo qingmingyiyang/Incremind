@@ -8,8 +8,12 @@ import { UserSpaceHeader } from '../../shared/ui/UserSpaceHeader';
 
 function takeCode() {
   if (location.pathname !== '/pair') return '';
-  const code = new URLSearchParams(location.hash.slice(1)).get('code') || '';
-  if (location.hash) history.replaceState(null, '', location.pathname);
+  const params = new URLSearchParams(location.hash.slice(1)), code = params.get('code') || '';
+  if (params.has('code')) {
+    params.delete('code');
+    const hash = params.toString();
+    history.replaceState(null, '', location.pathname + location.search + (hash ? '#' + hash : ''));
+  }
   return code;
 }
 
@@ -33,7 +37,7 @@ export function DeviceGate({ children }) {
     if (globalThis.electronAPI?.backendBaseUrl) return;
     const token = gate.issue('probe', scope);
     devicesApi.list().then(value => { if (gate.isCurrent(token)) { setServer(value.mode === 'server'); setState('ready'); } })
-      .catch(reason => { if (gate.isCurrent(token)) { setState(reason.status === 401 ? 'pair' : 'error'); setError('读取未完成 · 重试'); } });
+      .catch(reason => { if (gate.isCurrent(token)) { const pairing = reason.status === 401; setState(pairing ? 'pair' : 'error'); setError(pairing ? '' : '读取未完成 · 重试'); } });
     return () => gate.invalidate('probe');
   }, [retry]);
   useEffect(() => {

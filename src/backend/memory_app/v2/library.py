@@ -1,11 +1,12 @@
 """The workbench's explicit user confirmation and dismissal actions."""
+from uuid import uuid4
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Query
 from starlette.concurrency import run_in_threadpool
 from .turn_timings import turn_timing
 from core.storage_provider.connection_scope import connection_scope, with_connection_scope
 
 from backend.recognition import RecognitionConflict, RecognitionError, WorkScope
-from ..workspace_contracts import _json, _project
+from ..workspace_contracts import _json, _now, _project
 from .insights import insight_view, resolve_insight
 from .layers import summary_of, facts_of, todos_of, is_verified, mark_verified
 from .projects import scene_of
@@ -14,6 +15,9 @@ from ..recall_state import preference
 from .recall_preferences import set_preference, restore_document_preference, DocumentRecallUnavailable
 from core.storage_provider import SQLiteUnitOfWorkConflict
 from .usage import safe_record_usage, initialize_usage
+from ..transaction_records import TransactionRecords
+from .outcome_corrections import record_edit
+from core.document_engine import DocumentExpectedRevisionError, SQLiteDocumentRepository
 from .request_reads import DocumentReadSet
 from .outcomes import hidden_outcome_ids, versions as outcome_versions, candidates as outcome_candidates
 
@@ -56,6 +60,18 @@ class LibraryRead:
                 and (include_archived or doc.get('status') != 'archived')
                 and visibility.allows(doc)}
 
+    def _external_items(self, project, *, identity=None):
+        fields = {'owner_id': 'local-user', 'tool': 'remember', 'project_id': project}
+        if identity is not None:
+            fields['object_id'] = identity
+        receipts = self.records.list_matching('v2_external_agent_intakes', **fields)
+        accepted = {row.payload['object_id']: row.payload['object_revision'] for row in receipts
+                    if row.payload.get('schema_version') == 1}
+        items = self.records.read_batch({'workspace_items': tuple(accepted)})['workspace_items']
+        return {row.object_id: row for row in items
+                if row.payload.get('id') == row.object_id and row.payload.get('project_id') == project
+                and type(accepted[row.object_id]) is int and 0 < accepted[row.object_id] <= row.revision}
+
     def source_rows(self, project, docs, *, prepared=None):
         rows = {}
         linked = {}
@@ -75,6 +91,13 @@ class LibraryRead:
             rows[row.object_id] = {'id': row.object_id, 'title': item.get('title', row.object_id),
                 'kind': item['input_kind'], 'created_at': item.get('created_at'),
                 'url': item.get('url'), 'document_id': doc}
+        # 外部客户端已接受的原件可直接阅读，整理状态由原有流程维护。
+        for row in self._external_items(project).values():
+            item = row.payload
+            doc = item.get('document_id')
+            rows.setdefault(row.object_id, {'id': row.object_id, 'title': item.get('title', row.object_id),
+                'kind': item['input_kind'], 'created_at': item.get('created_at'),
+                'url': item.get('url'), 'document_id': doc if doc in docs else None})
         for source in self.workspace.query.source_store.list('sources'):
             identity = source.get('id')
             if source.get('project_id', 'default') != project:
@@ -170,6 +193,8 @@ class LibraryRead:
         item = self.records.read('workspace_items', identity)
         if item and item.payload.get('project_id') == project and item.payload.get('status') == 'confirmed':
             return item.payload.get('source_text', '')
+        if identity in self._external_items(project, identity=identity):
+            return self.workspace.review.source(identity, project)['text']
         return ''
 
     def full_source(self, project, identity, *, docs=None, rows=None):
@@ -352,6 +377,51 @@ def install_library_routes(application, *, records, service, documents=None, wor
 
     if documents is not None and workspace is not None:
         read = LibraryRead(records, service, documents, workspace)
+
+        @router.get('/documents/{document_id}')
+        def read_document(document_id: str, project_id: str = 'default'):
+            project = _project(project_id)
+            document = documents.read(document_id)
+            visibility = LegacyDocumentVisibility.from_repository(documents, project_id=project)
+            if document is None or document.get('project_id') != project or not visibility.allows(document):
+                raise HTTPException(404, 'library_item_not_found')
+            return {**document, 'markdown': documents.markdown(document_id),
+                    'verified': is_verified(records, documents, document_id)}
+
+        @router.patch('/documents/{document_id}')
+        async def edit_document(document_id: str, request: Request):
+            body = await _json(request)
+            if (not isinstance(body, dict) or set(body) != {'project_id', 'expected_revision', 'markdown'}
+                    or not isinstance(body.get('markdown'), str) or not body['markdown'].strip()
+                    or len(body['markdown']) > 40000
+                    or type(body.get('expected_revision')) is not int or body['expected_revision'] < 0):
+                raise HTTPException(400, 'invalid_document_fields')
+            project = _project(body['project_id'])
+            document = documents.read(document_id)
+            visibility = LegacyDocumentVisibility.from_repository(documents, project_id=project)
+            if document is None or document.get('project_id') != project or not visibility.allows(document):
+                raise HTTPException(404, 'library_item_not_found')
+
+            def save():
+                with records.begin() as tx:
+                    enlisted = SQLiteDocumentRepository(TransactionRecords(tx), namespace_id=documents.namespace_id,
+                                                        now=_now())
+                    current = enlisted.read(document_id)
+                    if current is None or current.get('project_id') != project:
+                        raise RecognitionConflict('document is unavailable in this project')
+                    saved = enlisted.save_user_edit(document_id, markdown=body['markdown'],
+                                                     expected_revision=body['expected_revision'])
+                    record_edit(tx, enlisted, scope=WorkScope('local-user', project), document_id=document_id,
+                                from_revision=body['expected_revision'], to_revision=saved['revision'], now=enlisted.now)
+                    tx.commit()
+                    return saved
+            try:
+                saved = await run_in_threadpool(save)
+            except (RecognitionConflict, DocumentExpectedRevisionError):
+                raise HTTPException(409, 'document_revision_conflict') from None
+            safe_record_usage(records, 'document', document_id, project, 1.0, reset=True)
+            return {**saved, 'markdown': documents.markdown(document_id),
+                    'verified': is_verified(records, documents, document_id)}
         from .inbox import install_inbox_routes
         install_inbox_routes(router, records=records, service=service, read=read)
         from .document_filings import DocumentFilings
@@ -372,7 +442,8 @@ def install_library_routes(application, *, records, service, documents=None, wor
                 raise HTTPException(400, 'invalid_document_filing_fields')
             try:
                 return await run_in_threadpool(filings.move, _project(document_id), _project(body['project_id']),
-                    _project(body['target_project_id']), scene=body.get('scene'), expected_revision=body['expected_revision'])
+                    _project(body['target_project_id']), scene=body.get('scene'), expected_revision=body['expected_revision'],
+                    retry_token=uuid4().hex)
             except RecognitionConflict:
                 raise HTTPException(409, 'document_filing_conflict') from None
             except RecognitionError:
@@ -549,9 +620,12 @@ def install_library_routes(application, *, records, service, documents=None, wor
         revision = body['expected_revision']
         if type(revision) is not int or revision < 1:
             raise HTTPException(400, 'invalid_expected_revision')
-        row = resolve_insight(records, scope, _project(insight_id))
+        insight_id = _project(insight_id)
+        row = resolve_insight(records, scope, insight_id)
         if row is None:
             raise HTTPException(404, 'insight_not_found')
+        if row.object_id != insight_id:
+            raise HTTPException(409, 'insight_revision_conflict')
         try:
             if records.read('recognition_candidates', row.object_id) is not None:
                 saved = service.edit_candidate(scope=scope, candidate_id=row.object_id,

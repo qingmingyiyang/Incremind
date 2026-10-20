@@ -50,7 +50,98 @@ class TaskDo:
             raise HTTPException(409, 'turn_interrupted')
         return runtime, runner
 
-    async def continue_on_request(self, turn_id, project, key):
+    def observe(self, turn):
+        receipt = turn.payload['receipt']['do']
+        runtime, _ = self.execution_getter() if self.execution_getter else (None, None)
+        if (runtime is not None and receipt.get('interruption') == 'stopped'
+                and runtime.product_stops.continuing(receipt['kernel_turn_id'])):
+            return {**{key: value for key, value in receipt.items() if key not in {'interruption', 'error'}},
+                'state': 'running'}
+        if (receipt.get('state') not in {'researching', 'preparing', 'running'}
+                or receipt.get('executor') or receipt.get('task_id')):
+            return receipt
+        from ..kernel.receipt_projection import frozen_task_request
+        from .turn_frames import FRAMES, frame_text
+        from .policies import get
+        project, thread_id = turn.payload['project_id'], turn.payload['thread_id']
+        execution = self.records.read(TASK_EXECUTIONS, turn.object_id)
+        thread = self.records.read('v2_threads', thread_id)
+        if (execution is None or thread is None or thread.payload.get('project_id') != project
+                or execution.payload.get('project_id') != project):
+            raise RecognitionConflict('task observation binding changed')
+        original = execution.payload['request']
+        identity = receipt.get('kernel_turn_id')
+        if (original.get('turn_id') != identity or original.get('session_id') != 'session-' + turn.object_id
+                or original.get('scope', {}).get('project_id') != project
+                or original.get('desired_outcome') != 'project.task'
+                or execution.payload.get('task_text') != turn.payload['user_text']
+                or json.loads(original['input']['text']).get('task') != turn.payload['user_text']):
+            raise RecognitionConflict('task observation request changed')
+        sealed = frozen_task_request(self.query.answer_turns.root, identity, project,
+                                     question=original['input']['text'])
+        if sealed is not None:
+            # 接纳时补充的原生绑定保留，其他冻结字段必须逐项相等。
+            native = {'agent_binding', 'agent_policy_binding'}
+            if ({key: value for key, value in original.items() if key not in native}
+                    != {key: value for key, value in sealed.items() if key not in native}):
+                raise RecognitionConflict('task observation frozen request changed')
+        result = {**receipt, 'state': 'failed', 'error': 'turn_interrupted',
+                  'partial': '', 'interruption': 'connection'}
+        frame = None
+        runtime, _ = self.execution_getter() if self.execution_getter else (None, None)
+        # 只观察已经存在的主人，读取不能触发懒加载中的恢复或执行。
+        if sealed is not None and runtime is not None:
+            continuations = getattr(runtime, 'task_continuations', None)
+            if continuations is not None and runtime.receipt_for(identity).status == 'waiting_approval':
+                binding = continuations.paused(identity, project)
+                if binding is not None:
+                    if binding[1]['interruption'] == 'stopped' and runtime.product_stops.state(identity) != 'stopped':
+                        return receipt
+                    result = {**receipt, 'state': 'stopped' if binding[1]['interruption'] == 'stopped' else 'interrupted',
+                        'partial': binding[1]['partial'], 'interruption': binding[1]['interruption']}
+        if result['state'] == 'failed' and sealed is not None:
+            frame = self.records.read(FRAMES, turn.object_id)
+            if frame is not None:
+                expected = {'id': turn.object_id, **{key: turn.payload[key]
+                    for key in ('thread_id', 'intent', 'user_text', 'created_at')}}
+                if (frame.payload.get('project_id') != project or frame.payload.get('thread_id') != thread_id
+                        or frame.payload.get('turn') != expected
+                        or frame.payload.get('projection') != {'kernel_turn_id': identity, 'request': original}):
+                    raise RecognitionConflict('task observation frame changed')
+                text = frame_text(frame.payload)
+                if text is not None:
+                    result.update(get('retry', version=(sealed.get('policy_versions') or {}).get('retry', '@1'))(
+                        {'kind': 'partial_output', 'text': text}))
+        if (self.records.read('v2_turns', turn.object_id) != turn
+                or self.records.read(TASK_EXECUTIONS, turn.object_id) != execution
+                or self.records.read('v2_threads', thread_id) != thread
+                or frame is not None and self.records.read(FRAMES, turn.object_id) != frame):
+            raise RecognitionConflict('task observation revision changed')
+        return result
+
+    def _accepted_resume(self, service, request, key):
+        prior = service.store.get_action(key)
+        if prior is None:
+            raise HTTPException(409, 'turn_interrupted')
+        action, receipt = prior
+        if (action['turn_id'] != request['turn_id'] or action['type'] != 'resume'
+                or action['idempotency_key'] != key or action['actor'] != 'user'
+                or receipt.turn_id != request['turn_id'] or receipt.session_id != request['session_id']
+                or receipt.operation_id != request['operation_id']):
+            raise HTTPException(409, 'idempotency_key_conflict')
+        # 同键记录还须绑定真实接纳事件，拒绝记录不能取得当前实例归属。
+        if not any(event['type'] == 'turn.resumed'
+                and event['turn_id'] == request['turn_id'] and event['session_id'] == request['session_id']
+                and event['sequence'] == action['expected_sequence'] + 1
+                and event['sequence'] <= receipt.current_sequence
+                and event.get('data', {}).get('status') == 'running'
+                and event.get('data', {}).get('payload_ref')
+                and service.store.get(event['data']['payload_ref']) == action
+                for event in service.store.events_after(request['turn_id'])):
+            raise HTTPException(409, 'turn_interrupted')
+        return action
+
+    async def continue_on_request(self, turn_id, project, key, *, instance=None):
         from core.ai_kernel import validate_turn_action
         state, turn = self.records.read(TASK_EXECUTIONS, turn_id), self.records.read('v2_turns', turn_id)
         if (state is None or turn is None or state.payload['project_id'] != project
@@ -67,28 +158,46 @@ class TaskDo:
         service.validate_product_request(request, service.store.get_request(identity))
         prior = service.store.get_action(key)
         if prior is not None:
-            action, _ = prior
-            if action['turn_id'] != identity or action['type'] != 'resume':
-                raise HTTPException(409, 'idempotency_key_conflict')
+            self._accepted_resume(service, request, key)
+            if instance is not None:
+                with self.records.begin() as tx:
+                    latest = tx.read('v2_turns', turn_id)
+                    if latest.payload['project_id'] != project or latest.payload['receipt']['do'].get('kernel_turn_id') != identity:
+                        raise RecognitionConflict('task continuation binding changed')
+                    if latest.payload.get('instance') != instance:
+                        tx.put('v2_turns', turn_id, {**latest.payload, 'instance': instance},
+                               expected_revision=latest.revision)
+                        tx.commit()
             await self.advance(turn_id)
             return
         binding = service.paused(identity, project)
         if binding is None or runtime.receipt_for(identity).status != 'waiting_approval':
             raise HTTPException(409, 'turn_interrupted')
         service.validate_current(binding[1])
+        stop_generation = None
+        if binding[1]['interruption'] == 'stopped':
+            stop_generation = runtime.product_stops.continuation_generation(identity)
+            await run_in_threadpool(runtime.product_stops.resume_children, identity, project, key, runner,
+                generation=stop_generation)
+            binding = service.paused(identity, project)
+            if binding is None:
+                raise HTTPException(409, 'turn_interrupted')
         action = validate_turn_action({'schema_version': '1.0.0', 'action_id': 'action-' + uuid4().hex,
             'turn_id': identity, 'type': 'resume', 'target_event_id': None, 'reason': 'continue partial task',
             'actor': 'user', 'expected_sequence': len(tuple(service.store.events_after(identity))),
             'idempotency_key': key, 'created_at': _now()})
-        with service.executing(identity, action, binding):
+        with service.executing(identity, action, binding, stop_generation=stop_generation):
             await run_in_threadpool(runner.apply_action_and_wait, action)
+        if self._accepted_resume(service, request, key) != action:
+            raise HTTPException(409, 'idempotency_key_conflict')
         with self.records.begin() as tx:
             latest = tx.read('v2_turns', turn_id)
             receipt = dict(latest.payload['receipt']['do'])
             if runtime.receipt_for(identity).status != 'failed':
                 receipt = {key: value for key, value in receipt.items()
                            if key not in {'partial', 'interruption'}}
-            tx.put('v2_turns', turn_id, {**latest.payload, 'receipt': {'do': {**receipt, 'state': 'running'}}},
+            tx.put('v2_turns', turn_id, {**latest.payload, 'receipt': {'do': {**receipt, 'state': 'running'}},
+                **({'instance': instance} if instance is not None else {})},
                 expected_revision=latest.revision)
             tx.commit()
         await self.advance(turn_id)
@@ -180,7 +289,7 @@ class TaskDo:
         owner = uuid4().hex
         with self.records.begin() as tx:
             state, turn = tx.read(TASK_EXECUTIONS, turn_id), tx.read('v2_turns', turn_id)
-            if state is None or turn is None or turn.payload['receipt']['do']['state'] in {'done','partial','failed'}:
+            if state is None or turn is None or turn.payload['receipt']['do']['state'] in {'done','partial','failed','stopped'}:
                 tx.rollback()
                 return
             values = state.payload
@@ -216,8 +325,9 @@ class TaskDo:
                 continuations = getattr(runtime, 'task_continuations', None)
                 binding = continuations.paused(request['turn_id'], project) if continuations else None
                 if binding is not None:
-                    receipt.update(state='interrupted', partial=binding[1]['partial'],
-                                   interruption=binding[1]['interruption'])
+                    if binding[1]['interruption'] != 'stopped' or runtime.product_stops.state(request['turn_id']) == 'stopped':
+                        receipt.update(state='stopped' if binding[1]['interruption'] == 'stopped' else 'interrupted',
+                            partial=binding[1]['partial'], interruption=binding[1]['interruption'])
             if result['status'] in TERMINAL:
                 summary = result.get('summary','')
                 failed = [row for row in rows if row['state'] == 'failed']
@@ -314,7 +424,7 @@ class TaskDo:
                     lineage_error = error
                     tx.rollback()
             if lineage_error is None:
-                if receipt['state'] in {'done', 'partial', 'interrupted'}:
+                if receipt['state'] in {'done', 'partial', 'interrupted', 'stopped'}:
                     from .turn_frames import complete_stream
                     saved = tx.read('v2_turns', turn_id)
                     complete_stream(tx, {'thread_id': saved.payload['thread_id'],

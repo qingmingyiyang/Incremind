@@ -1,12 +1,14 @@
 """Bounded thread history and one guarded, accounted retrieval-only rewrite."""
 
 import asyncio
+import logging
 import re
 import time
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
 from backend.recognition import WorkScope, RecognitionError
+from backend.shared.llm.model_transport import ModelInterrupted
 from backend.shared.llm.message_metadata import (_extract_normalized_usage, _estimate_input_tokens,
     _build_prompt_fallback_messages, _build_json_mode_messages)
 from ..model_config import ModelConfigurationError
@@ -18,6 +20,8 @@ from .insights import source_documents
 from .privacy import egress_allowed, is_private_project, privacy_revision
 
 TIMEOUT_SECONDS = 10
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class CondensedQuestion(BaseModel):
@@ -209,6 +213,7 @@ def read_history(records, project, thread, question, *, budget=4000, prompt_over
             try:
                 dependencies[row.object_id] = _dependencies(query, project, row, set(), memo)
             except Exception:
+                _LOGGER.debug("followup_dependency_unavailable", exc_info=True)
                 continue
             eligible.append(row)
         rows = eligible
@@ -371,6 +376,7 @@ async def auxiliary_call(query, project, messages, response_model, *, turn_id, v
             if max(_estimate_input_tokens(value) for value in inputs) > max(0, limits["window"] - limits["reserve"]):
                 return result
     except Exception:
+        _LOGGER.debug("followup_budget_unavailable", exc_info=True)
         result["status"] = "failed"
         return result
     invocation_key = 'gap-drilldown' if gap_plan is not None else ("followup" if response_model is CondensedQuestion else "multi-query")
@@ -408,10 +414,16 @@ async def auxiliary_call(query, project, messages, response_model, *, turn_id, v
     try:
         output, metadata = await asyncio.wait_for(asyncio.to_thread(rewrite), timeout=TIMEOUT_SECONDS)
         result.update(output=output, usage=metadata.get("usage", {}), status="completed")
+    except ModelInterrupted as error:
+        if error.interruption == 'stopped':
+            raise
+        _LOGGER.debug('followup_rewrite_failed', exc_info=True)
+        result['status'] = 'failed'
     except TimeoutError:
         abandon_answer_model(invocation_key)
         result["status"] = "timeout"
     except Exception:
+        _LOGGER.debug("followup_rewrite_failed", exc_info=True)
         result["status"] = "failed"
     if attempted["started"]:
         observation = answer_observation(invocation_key)

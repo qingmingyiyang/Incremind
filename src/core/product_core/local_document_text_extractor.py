@@ -6,12 +6,19 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from zipfile import BadZipFile
 
 from .source_content_read import SourceContentReadError
 
 
 class LocalDocumentTextExtractorError(SourceContentReadError):
     """Raised when a local document text extractor cannot extract authorized content."""
+
+
+class LocalDocumentInputError(LocalDocumentTextExtractorError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 BUILTIN_DOCUMENT_TEXT_COMMAND = "builtin:document-text"
@@ -49,7 +56,9 @@ class BuiltinDocumentTextExtractor:
             raise LocalDocumentTextExtractorError("built-in document extraction failed") from error
         clean_text = text.strip()
         if not clean_text:
-            raise LocalDocumentTextExtractorError("local document text extractor returned no text")
+            raise LocalDocumentInputError(
+                "document_text_empty", "local document text extractor returned no text"
+            )
         return clean_text
 
 
@@ -112,30 +121,60 @@ def document_text_extractors_for_allowed_documents(
 
 def _extract_docx_text(path: Path) -> str:
     from docx import Document
+    from docx.opc.exceptions import PackageNotFoundError
+    from docx.text.paragraph import Paragraph
+    from lxml.etree import XMLSyntaxError
 
-    document = Document(str(path))
-    blocks = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
-    for table in document.tables:
+    def table_rows(table):
         for row in table.rows:
-            cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+            cells: list[str] = []
+            for cell in row.cells:
+                parts: list[str] = []
+                # 段落保留格内空白，嵌套表格沿原行列分隔方式展开。
+                for block in cell.iter_inner_content():
+                    if isinstance(block, Paragraph):
+                        parts.append(block.text)
+                    else:
+                        parts.extend(table_rows(block))
+                if text := "\n".join(parts).strip():
+                    cells.append(text)
             if cells:
-                blocks.append("\t".join(cells))
+                yield "\t".join(cells)
+
+    try:
+        # 文件先由操作系统打开，权限错误与文档格式错误分别传播。
+        with path.open("rb") as source:
+            document = Document(source)
+        blocks: list[str] = []
+        for block in document.iter_inner_content():
+            if isinstance(block, Paragraph):
+                if text := block.text.strip():
+                    blocks.append(text)
+            else:
+                blocks.extend(table_rows(block))
+    except (BadZipFile, PackageNotFoundError, XMLSyntaxError) as error:
+        raise LocalDocumentInputError("document_invalid", "invalid DOCX document") from error
     return "\n".join(blocks)
 
 
 def _extract_pdf_text(path: Path) -> str:
     from pypdf import PdfReader
+    from pypdf.errors import FileNotDecryptedError, ParseError, PdfReadError
 
-    reader = PdfReader(str(path))
-    if reader.is_encrypted:
-        try:
+    try:
+        reader = PdfReader(str(path))
+        if reader.is_encrypted:
             if reader.decrypt("") == 0:
-                raise LocalDocumentTextExtractorError("encrypted PDF requires a password")
-        except LocalDocumentTextExtractorError:
-            raise
-        except Exception as error:
-            raise LocalDocumentTextExtractorError("encrypted PDF requires a password") from error
-    return "\n".join(text for page in reader.pages if (text := (page.extract_text() or "").strip()))
+                raise LocalDocumentInputError(
+                    "document_password_required", "encrypted PDF requires a password"
+                )
+        return "\n".join(text for page in reader.pages if (text := (page.extract_text() or "").strip()))
+    except FileNotDecryptedError as error:
+        raise LocalDocumentInputError(
+            "document_password_required", "encrypted PDF requires a password"
+        ) from error
+    except (PdfReadError, ParseError) as error:
+        raise LocalDocumentInputError("document_invalid", "invalid PDF document") from error
 
 
 def _command_for_document(command: Sequence[str], document_path: Path, media_type: str) -> tuple[str, ...]:

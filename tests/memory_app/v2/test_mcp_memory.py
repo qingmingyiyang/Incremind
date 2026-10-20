@@ -7,8 +7,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
 from tests.memory_app.v2.test_external_context import (
-    env, prepare, TURN, settings, document,
+    prepare, TURN, settings, document,
 )
 
 

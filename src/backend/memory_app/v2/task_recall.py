@@ -53,8 +53,19 @@ class TaskRecall:
         document_versions = {row.object_id:row.revision for row in records.list('documents')}
         preference_versions = {collection:{row.object_id:row.revision for row in records.list(collection)}
                                for collection in ('recognition_recall_preferences', 'v2_document_recall')}
-        plan = self.query.prepare_ask(scope.project_id, question, evidence_limit=limit)
-        consult_bookshelf(self.query, scope.project_id, question, plan)
+        collected = self.query.collect_candidates(scope.project_id, question)
+        qualified, excluded = [], list(collected['excluded_sources'])
+        for candidate in collected['candidates']:
+            if candidate.get('snapshot') is None:
+                # 历史和部分交付仍可阅读；产品外发召回只选择已有原始来源证明的资料。
+                if len(excluded) < 20:
+                    excluded.append({'type': candidate['kind'], 'id': candidate['entry']['id'],
+                        'revision': candidate['entry']['revision'], 'reason': 'source_unavailable'})
+                continue
+            qualified.append(candidate)
+        plan = self.query.prepare_ask(scope.project_id, question, evidence_limit=limit,
+            collected={**collected, 'candidates': qualified, 'excluded_sources': excluded})
+        consult_bookshelf(self.query, scope.project_id, question, plan, require_source_snapshot=True)
         self.query.validate_ask_plan(plan)
         profile = plan['profile']
         # 翻书会追加资料，最终条数仍先为已经入选的画像留足名额。

@@ -15,7 +15,7 @@ from backend.security.secrets import InMemorySecretStore
 from tests.memory_app.test_fast_generation import choose
 from tests.memory_app.v2.kernel_receipts import requests
 from tests.memory_app.v2.test_signal_review_feedback import prepare_confirmed, replace
-from tests.memory_app.v2.test_workbench_ask import env, publish, add_document, ask
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, publish, add_document, ask
 
 
 @pytest.fixture

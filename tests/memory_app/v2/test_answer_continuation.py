@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 from backend.recognition import WorkScope
 from core.search_and_recall.evidence_windows import EvidenceWindow
 from core.storage_provider import SQLiteStructuredRecord
-from tests.memory_app.v2.test_partial_answer import env, interrupted_app
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
+from tests.memory_app.v2.test_partial_answer import interrupted_app
 from tests.memory_app.v2.test_workbench_stream import events
 
 

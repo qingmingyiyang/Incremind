@@ -1,6 +1,53 @@
 """Synthetic model transport that exercises real nested kernel lifecycles."""
 
+import json
+
+
+def evidence_first_payload(messages, *, answer="Synthetic answer", numbers=None):
+    """从本次真实证据目录生成首稿，末稿原样采用首稿的证据。"""
+    for message in reversed(messages):
+        content = message.get("content", "")
+        if not content.startswith("资料：\n{"):
+            continue
+        data, _ = json.JSONDecoder().raw_decode(content[len("资料：\n"):])
+        if "evidence_catalog" not in data:
+            continue
+        if "untrusted_first_fact_plan" in data:
+            return {"statements": [{**fact, "first_fact_uses": [
+                {"fact_index": index, "action": "adopt", "reason": "synthetic review"}]
+                } for index, fact in enumerate(data["untrusted_first_fact_plan"]["facts"], 1)],
+                "unused": {"scope": "all_unreferenced", "reason": "synthetic review"},
+                "uncertain": [], "excluded_facts": []}
+        catalog = data["evidence_catalog"]
+        selected = numbers if numbers is not None else [source["source_number"] for source in catalog["sources"]]
+        evidence = []
+        for number in selected:
+            unit = next((unit for unit in catalog["units"] if unit["source_number"] == number), None)
+            if unit is None:
+                raise ValueError(f"synthetic evidence source missing: {number}")
+            evidence.append({"unit_id": unit["id"], "quote": unit["text"], "role": "support"})
+        return {"facts": [{"kind": "fact", "text": answer, "evidence": evidence, "date_refs": []}],
+                "unreviewed": {"scope": "all_unreferenced", "reason": "synthetic first draft"}}
+    return None
+
+
 class GovernedModel:
+    @property
+    def secrets(self):
+        from backend.security.secrets import InMemorySecretStore
+        if not hasattr(self, "_fixture_secrets"):
+            self._fixture_secrets = InMemorySecretStore()
+        return self._fixture_secrets
+
+    @secrets.setter
+    def secrets(self, value):
+        self._fixture_secrets = value
+
+    def generation_budget_limits(self, *, expected_revision, max_tokens=None):
+        if self.public()["generation"]["revision"] != expected_revision:
+            return None
+        return {"window": 32000, "reserve": 4000}
+
     def public(self):
         return {"generation": {"provider": "openai", "purpose": "generation", "model": "fake",
             "base_url": "http://127.0.0.1:8001/local-model/v1", "configured": True, "has_api_key": False,

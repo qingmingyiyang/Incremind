@@ -13,6 +13,7 @@ LEGACY_ROUTES = ROOT / "src/backend/api/routes/rebuild.py"
 LIBRARY_ROUTES = ROOT / "src/backend/api/routes/library_lifecycle.py"
 ROUTE_INSTALL = ROOT / "src/backend/api/routes/__init__.py"
 STORAGE_RUNTIME = ROOT / "src/backend/api/rebuild_storage_runtime.py"
+SHARED_STORAGE = ROOT / "src/backend/shared/rebuild_storage.py"
 
 LIBRARY_LIFECYCLE_PATHS = {
     "/api/rebuild/library/items/{item_id}",
@@ -57,9 +58,11 @@ def test_library_lifecycle_router_only_adapts_http_to_domain_services() -> None:
 
 
 def test_source_asset_store_composition_has_one_implementation() -> None:
-    storage_text = STORAGE_RUNTIME.read_text(encoding="utf-8")
+    implementation_text = SHARED_STORAGE.read_text(encoding="utf-8")
+    adapter_text = STORAGE_RUNTIME.read_text(encoding="utf-8")
     legacy_text = (ROOT / "src/backend/api/routes/product/repositories.py").read_text(encoding="utf-8")
 
-    assert storage_text.count("SourceAssetRuntimeStore(") == 1
+    assert implementation_text.count("SourceAssetRuntimeStore(") == 1
+    assert "SourceAssetRuntimeStore(" not in adapter_text
     assert "build_rebuild_object_store(runtime_root" in legacy_text
     assert "SourceAssetRuntimeStore(" not in legacy_text

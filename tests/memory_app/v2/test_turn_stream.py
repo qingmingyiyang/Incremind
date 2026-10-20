@@ -4,6 +4,7 @@ import asyncio
 import sqlite3
 from copy import deepcopy
 from contextlib import closing
+from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from time import monotonic, sleep
@@ -13,10 +14,37 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-from tests.memory_app.v2.test_workbench_ask import env, assemble
-from tests.memory_app.v2.test_workbench_stream import native_app, events
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, assemble
+from backend.memory_app.answer_proof import REVIEW_KEY
+from backend.memory_app.structured_generation import AskOutput
+from backend.memory_app.v2.answer_evidence import FocusedReferencedFactsOutput, FocusedReviewedScopeOutput
+from backend.memory_app.v2.policies import override, version
+from tests.memory_app.governed_model_fixture import evidence_first_payload
+from tests.memory_app.v2.test_workbench_stream import native_app as legacy_native_app, events
 from tests.memory_app.v2.test_partial_answer import interrupted_app
 from tests.memory_app.v2.test_workbench_do import env as do_env
+
+
+def native_app(env, *, invalid=False):
+    def payload(request):
+        # 只为本模块启用当前首稿与审核协议，保留旧流式夹具的默认行为。
+        output = evidence_first_payload(request['messages'], answer='流式答案😀\n第二行')
+        assert output is not None, 'expected the current evidence-first model protocol'
+        if invalid:
+            # 首稿可以进入纠错审核，末稿也保留非法引用以验证最终拒绝路径。
+            statements = output.get('facts', output.get('statements'))
+            statements[0]['evidence'][0]['unit_id'] = 999
+        return output
+    return legacy_native_app(env, structured_payload=payload)
+
+
+def assert_legacy_ask_contract(app, identity):
+    # 恢复当前默认策略后，回放与续写仍须服从首次请求冻结的历史合同。
+    assert version('compose') == '@30'
+    store = app.state.ai_turn_store
+    assert store.get_request(identity)['policy_versions']['compose'] == '@13'
+    frozen = store.get_immutable_payload(identity, 'answer-model-input-answer')
+    assert frozen is not None and frozen[1]['response_schema'] == AskOutput.model_json_schema()
 
 
 def stream_events(response):
@@ -85,7 +113,8 @@ def test_primary_ask_retry_status_is_safe_readonly_and_best_effort(env, derived_
                 BEGIN SELECT RAISE(ABORT,'derived_retry_unavailable'); END""")
             tx.commit()
     with TestClient(app) as http, ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(http.post, '/api/v2/workbench/turns',
+        # 普通线程不继承策略 ContextVar，显式带入夹具的检索版本。
+        future = pool.submit(copy_context().run, http.post, '/api/v2/workbench/turns',
             json={'project_id': 'alpha', 'text': 'alpha?'},
             headers={'Accept': 'text/event-stream', 'Idempotency-Key': 'retry-display'})
         try:
@@ -94,6 +123,9 @@ def test_primary_ask_retry_status_is_safe_readonly_and_best_effort(env, derived_
             assert len(heads) == 1
             head = heads[0]
             identity = head.object_id
+            frozen = app.state.ai_turn_store.get_request(identity)
+            assert {key: frozen['policy_versions'][key] for key in ('compose', 'retrieve')} == {
+                'compose': '@30', 'retrieve': '@3'}
             retry_events = [e for e in head.payload['events'] if e.get('state') == 'retrying']
             assert len(retry_events) == (0 if derived_failure else 1)
             kernel = app.state.ai_turn_store.events_after(identity)
@@ -137,13 +169,14 @@ def test_primary_ask_retry_status_is_safe_readonly_and_best_effort(env, derived_
         assert response.status_code == 200, response.text
         parts = stream_events(response)
         final = parts[-1][2]
-        assert final['turn']['receipt']['ask']['answer'] == '流式答案😀\n第二行'
+        assert final['turn']['receipt']['ask']['answer'] == '流式答案😀\n第二行 [1]'
         live_retry = [value for _, event, value in parts if event == 'status' and value['state'] == 'retrying']
         assert len(live_retry) == (0 if derived_failure else 1)
         head = env.records.read('v2_turn_streams', identity)
         assert head.payload['events'][-2]['state'] == 'completed'
         assert env.records.read('v2_turn_frames', identity) is None
-        assert len(wires) == 2 and len(calls) == 1 and closed == [True]
+        assert len(wires) == 3 and len(calls) == 2 and closed == []
+        assert all(request.get('stream') is not True for request in calls)
         if derived_failure:
             assert sum(record.message == 'turn_retry_projection_failed' for record in caplog.records) == 1
         completed = http.get(f'/api/v2/workbench/turns/{identity}/stream?project_id=alpha&after=0')
@@ -176,7 +209,7 @@ def test_main_retry_status_uses_canonical_turn_and_worker_retries_stay_private(d
 
     model._completion_fn = external_provider
     with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(http.post, '/api/v2/workbench/turns',
+        future = pool.submit(copy_context().run, http.post, '/api/v2/workbench/turns',
             json={'project_id': 'alpha', 'intent': 'do', 'text': '请准备一份完整草稿'},
             headers={'Accept': 'text/event-stream', 'Idempotency-Key': 'main-retry-display'})
         try:
@@ -265,15 +298,16 @@ def test_ask_retry_attempts_are_ordered_and_current_privacy_blocks_new_wire(env,
             assert history['turns'] == [] and history['text'] == ''
             assert {name: env.records.list(name) for name in usage_before} == usage_before
         else:
-            assert len(wires) == 3 and len(calls) == 1 and closed == [True]
+            assert len(wires) == 4 and len(calls) == 2 and closed == []
+            assert all(request.get('stream') is not True for request in calls)
             assert [(e['retry']['attempt'], e['retry']['used'], e['retry']['limit']) for e in retry_events] == [
                 (1, 1, 10), (2, 2, 10)]
-            assert [r['status'] for r in terminals] == ['failed_transport', 'failed_transport', 'succeeded']
+            assert [r['status'] for r in terminals] == ['failed_transport', 'failed_transport', 'succeeded', 'succeeded']
             persistent = stream_events(response)
             sequences = [seq for seq, _, _ in persistent]
             assert sequences == sorted(set(sequences))
             assert len([v for _, name, v in persistent if name == 'status' and v['state'] == 'retrying']) == 2
-            assert parts[-1][0] == 'done' and parts[-1][1]['turn']['receipt']['ask']['answer'] == '流式答案😀\n第二行'
+            assert parts[-1][0] == 'done' and parts[-1][1]['turn']['receipt']['ask']['answer'] == '流式答案😀\n第二行 [1]'
             assert head.payload['events'][-2]['state'] == 'completed'
             assert env.records.read('v2_turn_frames', identity) is None
 
@@ -286,6 +320,16 @@ def test_completed_stream_replays_done_after_frames_deleted_without_dispatch(env
         assert original.status_code == 200
         final = events(original)[-1][1]
         identity = final['turn']['id']
+        store = app.state.ai_turn_store
+        assert store.get_request(identity)['policy_versions']['compose'] == '@30'
+        assert store.get_immutable_payload(identity, 'answer-model-input-answer')[1]['response_schema'] == (
+            FocusedReferencedFactsOutput.model_json_schema())
+        assert store.get_immutable_payload(identity, 'answer-model-input-' + REVIEW_KEY)[1]['response_schema'] == (
+            FocusedReviewedScopeOutput.model_json_schema())
+        assert [(kind, data) for kind, data in events(original) if kind == 'delta'] == [
+            ('delta', {'text': '流式答案😀\n第二行 [1]'})]
+        assert final['turn']['receipt']['ask']['model_usage'] == {
+            'input_tokens': 6, 'output_tokens': 4, 'total_tokens': 10}
         before = app.state.ai_turn_store.events_after(identity)
         assert env.records.read('v2_turn_frames', identity) is None
         result = http.get(f'/api/v2/workbench/turns/{identity}/stream?project_id=alpha&after=0')
@@ -296,22 +340,26 @@ def test_completed_stream_replays_done_after_frames_deleted_without_dispatch(env
         assert result.headers['X-Accel-Buffering'] == 'no'
         assert result.headers['Cache-Control'] == 'no-store'
         assert app.state.ai_turn_store.events_after(identity) == before
-    assert len(calls) == 1 and closed == [True]
+    assert len(calls) == 2 and closed == []
+    assert all(request.get('stream') is not True for request in calls)
 
 
 def test_interrupted_frames_replay_reset_and_cursor_on_new_app_without_authority(env):
     app, _, model, calls, closed, complete = interrupted_app(env)
     with TestClient(app) as http:
-        original = http.post('/api/v2/workbench/turns', json={'project_id': 'alpha', 'text': 'alpha?'},
-            headers={'Accept': 'text/event-stream', 'Idempotency-Key': 'interrupted-stream'})
+        with override(compose='@13'):
+            original = http.post('/api/v2/workbench/turns', json={'project_id': 'alpha', 'text': 'alpha?'},
+                headers={'Accept': 'text/event-stream', 'Idempotency-Key': 'interrupted-stream'})
         assert original.status_code == 200
         final = events(original)[-1][1]
         identity = final['turn']['id']
+        assert_legacy_ask_contract(app, identity)
         before = app.state.ai_turn_store.events_after(identity)
         rows_before = {name: env.records.list(name) for name in
             ('v2_turns', 'v2_turn_requests', 'v2_turn_frames', 'v2_turn_streams', 'v2_task_continuations')}
     restarted, _ = assemble(env.root, env.records, env.documents, env.service, model)
     with TestClient(restarted) as http:
+        assert_legacy_ask_contract(restarted, identity)
         response = http.get(f'/api/v2/workbench/turns/{identity}/stream?project_id=alpha&after=0')
         assert response.status_code == 200, response.text
         replay = stream_events(response)
@@ -373,7 +421,7 @@ def test_completed_stream_rejects_scope_cursor_and_corrupt_projection_without_wi
             assert response.status_code == 404, response.text
             assert env.records.read('v2_turn_streams', identity) == corrupted
         assert app.state.ai_turn_store.events_after(identity) == kernel
-    assert len(calls) == 1 and closed == [True]
+    assert len(calls) == 2 and closed == []
 
 
 @pytest.mark.parametrize('phase', ['start', 'terminal'])
@@ -391,7 +439,7 @@ def test_derived_head_write_failure_keeps_real_answer_and_readonly_terminal_with
             headers={'Accept': 'text/event-stream', 'Idempotency-Key': 'derived-write-failure'})
         assert posted.status_code == 200
         final = events(posted)[-1][1]
-        assert final['turn']['receipt']['ask']['answer'] == '流式答案😀\n第二行'
+        assert final['turn']['receipt']['ask']['answer'] == '流式答案😀\n第二行 [1]'
         identity = final['turn']['id']
         kernel = app.state.ai_turn_store.events_after(identity)
         assert kernel[-1]['type'] == 'turn.completed'
@@ -412,7 +460,7 @@ def test_derived_head_write_failure_keeps_real_answer_and_readonly_terminal_with
         assert replay == 'event: done\ndata: ' + json.dumps(final, ensure_ascii=False) + '\n\n'
         assert {name: env.records.list(name) for name in before} == before
         assert app.state.ai_turn_store.events_after(identity) == kernel
-    assert len(calls) == 1 and closed == [True]
+    assert len(calls) == 2 and closed == []
 
 
 def test_failed_ask_stream_finishes_with_safe_error_without_result_or_dispatch(env):
@@ -444,7 +492,12 @@ def test_failed_ask_stream_finishes_with_safe_error_without_result_or_dispatch(e
         with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as connection:
             assert connection.execute('SELECT kind,payload_ref FROM ai_turn_immutable_payloads WHERE turn_id=? ORDER BY kind',
                 (identity,)).fetchall() == immutable
-    assert len(calls) == 1 and closed == [True]
+    assert len(calls) == 2 and closed == []
+    assert all(request.get('stream') is not True for request in calls)
+    draft = app.state.ai_turn_store.get_immutable_payload(identity, 'answer-model-result-answer')[1]
+    reviewed = app.state.ai_turn_store.get_immutable_payload(identity, 'answer-model-result-' + REVIEW_KEY)[1]
+    assert draft['output']['facts'][0]['evidence'][0]['unit_id'] == 999
+    assert reviewed['output']['statements'][0]['evidence'][0]['unit_id'] == 999
 
 
 def test_stream_get_never_creates_or_initializes_missing_or_incomplete_databases(env):
@@ -491,7 +544,7 @@ def test_stream_get_never_creates_or_initializes_missing_or_incomplete_databases
                     for source, target in preserved:
                         target.rename(source)
         assert app.state.ai_turn_store.events_after(identity) == kernel
-    assert len(calls) == 1 and closed == [True]
+    assert len(calls) == 2 and closed == []
 
 
 def test_stream_snapshot_and_cost_projection_use_only_real_readonly_sql_connections(env, monkeypatch):
@@ -531,7 +584,7 @@ def test_stream_snapshot_and_cost_projection_use_only_real_readonly_sql_connecti
         assert verbs and set(verbs) <= {'SELECT', 'PRAGMA', 'BEGIN'}
         assert sum(query_only) >= 2
         assert app.state.ai_turn_store.events_after(identity) == kernel
-    assert len(calls) == 1 and closed == [True]
+    assert len(calls) == 2 and closed == []
 
 
 def test_explicit_ask_continue_opens_committed_segment_and_get_replays_without_dispatch(env):
@@ -563,10 +616,12 @@ def test_explicit_ask_continue_opens_committed_segment_and_get_replays_without_d
 
     model._completion_fn = external_provider
     with TestClient(app) as http:
-        initial = http.post('/api/v2/workbench/turns', json={'project_id': 'alpha', 'text': 'alpha?'},
-            headers={'Accept': 'text/event-stream', 'Idempotency-Key': 'continued-stream-original'})
+        with override(compose='@13'):
+            initial = http.post('/api/v2/workbench/turns', json={'project_id': 'alpha', 'text': 'alpha?'},
+                headers={'Accept': 'text/event-stream', 'Idempotency-Key': 'continued-stream-original'})
         original = events(initial)[-1][1]
         identity = original['turn']['id']
+        assert_legacy_ask_contract(app, identity)
         old_head = env.records.read('v2_turn_streams', identity)
         old_cursor = old_head.payload['terminal']
         assert old_cursor == old_head.payload['sequence']
@@ -575,7 +630,7 @@ def test_explicit_ask_continue_opens_committed_segment_and_get_replays_without_d
         intents = [row for row in kernel_before if row['type'] == 'tool.intent.recorded']
         frozen = app.state.ai_turn_store.get_request(identity)
         with ThreadPoolExecutor(max_workers=1) as executor:
-            continued = executor.submit(http.post, f'/api/v2/workbench/turns/{identity}/continue',
+            continued = executor.submit(copy_context().run, http.post, f'/api/v2/workbench/turns/{identity}/continue',
                 json={'project_id': 'alpha'}, headers={'Idempotency-Key': 'continued-stream-explicit'})
             try:
                 assert arrived.wait(10), 'continuation did not reach the real provider body'
@@ -638,10 +693,12 @@ def test_explicit_ask_continue_opens_committed_segment_and_get_replays_without_d
 def test_rejected_continue_reset_never_labels_new_answer_with_previous_done_cursor(env):
     app, _, _, calls, closed, complete = interrupted_app(env, continuation=True)
     with TestClient(app) as http:
-        initial = http.post('/api/v2/workbench/turns', json={'project_id': 'alpha', 'text': 'alpha?'},
-            headers={'Accept': 'text/event-stream', 'Idempotency-Key': 'reset-denied-original'})
+        with override(compose='@13'):
+            initial = http.post('/api/v2/workbench/turns', json={'project_id': 'alpha', 'text': 'alpha?'},
+                headers={'Accept': 'text/event-stream', 'Idempotency-Key': 'reset-denied-original'})
         original = events(initial)[-1][1]
         identity = original['turn']['id']
+        assert_legacy_ask_contract(app, identity)
         old_head = env.records.read('v2_turn_streams', identity)
         old_cursor = old_head.payload['terminal']
         frozen = app.state.ai_turn_store.get_request(identity)
@@ -938,13 +995,32 @@ def test_corrupt_derived_do_head_preserves_authoritative_final_transaction(do_en
             WHERE collection=? AND object_id=?''', ('v2_turn_streams', identity)).fetchone() == damaged
 
 
-def test_headless_do_started_and_asgi_disconnect_preserve_real_background_execution(do_env):
+def test_headless_do_started_and_asgi_disconnect_preserve_real_background_execution(do_env, monkeypatch):
+    from backend.memory_app.v2.task_do import TaskDo
+
     http, model = do_env
     records = http.app.state.recognition_service.records
     final_text = '断开订阅后仍由真实后台完成汇总。' * 60
     arrived, release, started = Event(), Event(), Event()
     main_closed, sent, received_disconnect = [], [], []
     control = {}
+    advance_gate, advance_events = asyncio.Lock(), []
+    advance_paused = False
+    real_advance = TaskDo.advance
+
+    async def scheduled_advance(service, turn_id):
+        if asyncio.current_task() not in http.app.state.workbench_tasks:
+            return await real_advance(service, turn_id)
+        control['advance_service'] = service
+        # 只控制真实进度写入的调度，保留原方法的全部读写与执行。
+        async with advance_gate:
+            advance_events.append(('started', turn_id))
+            try:
+                return await real_advance(service, turn_id)
+            finally:
+                advance_events.append(('finished', turn_id))
+
+    monkeypatch.setattr(TaskDo, 'advance', scheduled_advance)
     configure_do_provider(model, final_text)
     provider = model._completion_fn
 
@@ -1010,6 +1086,12 @@ def test_headless_do_started_and_asgi_disconnect_preserve_real_background_execut
             'body_bytes': sum(len(value['body']) for value in sent if value['type'] == 'http.response.body'),
             'future_done': subscription.done(), 'main_entered': arrived.is_set(), 'calls': len(model.calls)}
         assert arrived.wait(max(0, deadline - monotonic())), 'real Main did not reach its pre-chunk barrier'
+        # 等当前真实投影完成，暂停下一次投影；GET 与订阅仍可在原事件循环中运行。
+        async def pause_advance():
+            return await asyncio.wait_for(advance_gate.acquire(), timeout=max(0, deadline - monotonic()))
+        advance_paused = http.portal.call(pause_advance)
+        assert advance_paused and advance_events and advance_events[-1][0] == 'finished'
+        paused_advances = list(advance_events)
         assert [value['status'] for value in sent if value['type'] == 'http.response.start'] == [200]
         content = b''.join(value['body'] for value in sent if value['type'] == 'http.response.body').decode()
         blocks = [block for block in content.split('\n\n') if block.startswith('event: ')]
@@ -1024,6 +1106,15 @@ def test_headless_do_started_and_asgi_disconnect_preserve_real_background_execut
         assert product.payload['receipt']['do']['state'] == 'running'
         assert records.read('v2_turn_streams', identity) is None
         assert records.read('v2_turn_frames', identity) is None
+        # 非后台调用仍执行真实写入，GET 若误触发推进也会被后续快照断言捕获。
+        revision_before = records.read('v2_turns', identity).revision
+        calls_before_control = len(model.calls)
+        async def advance_outside_background():
+            await asyncio.wait_for(scheduled_advance(control['advance_service'], identity),
+                timeout=max(0, deadline - monotonic()))
+        http.portal.call(advance_outside_background)
+        assert records.read('v2_turns', identity).revision == revision_before + 1
+        assert len(model.calls) == calls_before_control
         store = http.app.state.ai_turn_store
         runs = http.app.state.agent_runtime_composition.store.list_runs(project_id='project-a')
         before = {run.turn_id: store.events_after(run.turn_id) for run in runs}
@@ -1036,6 +1127,7 @@ def test_headless_do_started_and_asgi_disconnect_preserve_real_background_execut
         assert {name: records.list(name) for name in saved} == saved
         assert {run.turn_id: store.events_after(run.turn_id) for run in runs} == before
         assert len(model.calls) == calls_before == 3
+        assert advance_gate.locked() and advance_events == paused_advances
         http.portal.call(control['disconnect'].set)
         subscription.result(timeout=max(.001, deadline - monotonic()))
         assert subscription.done() and not subscription.cancelled() and received_disconnect
@@ -1043,14 +1135,21 @@ def test_headless_do_started_and_asgi_disconnect_preserve_real_background_execut
         assert records.read('v2_turn_streams', identity) is None
         disconnected_messages = list(sent)
     finally:
-        if not subscription.done() and 'disconnect' in control:
-            http.portal.call(control['disconnect'].set)
-        release.set()
+        try:
+            if not subscription.done() and 'disconnect' in control:
+                http.portal.call(control['disconnect'].set)
+        finally:
+            try:
+                if advance_paused:
+                    http.portal.call(advance_gate.release)
+            finally:
+                release.set()
 
     deadline = monotonic() + 35
     while http.app.state.workbench_tasks and monotonic() < deadline:
         sleep(.05)
     assert not http.app.state.workbench_tasks, 'protected real TaskDo did not finish'
+    assert len(advance_events) > len(paused_advances) and advance_events[-1][0] == 'finished'
     product = records.read('v2_turns', identity)
     receipt = product.payload['receipt']['do']
     assert receipt['state'] == 'done' and receipt['progress'] == {'done': 3, 'total': 3}

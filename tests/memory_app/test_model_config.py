@@ -212,6 +212,34 @@ def test_generation_mode_requires_explicit_local_enable_and_preserves_api_key(co
     assert config.snapshot("generation")["api_key"] == "test-private-value"
 
 
+@pytest.mark.parametrize("mode", [[], {}, None, True, 1, 1.5])
+def test_generation_mode_rejects_non_string_without_mutating_configuration(tmp_path, mode):
+    def forbidden_wire(**_kwargs):
+        raise AssertionError("mode validation must not call a model")
+
+    records = SQLiteStructuredRecordStore(tmp_path / "models.sqlite3")
+    config = ModelConfiguration(records, tmp_path, InMemorySecretStore(), completion_fn=forbidden_wire)
+    config.update("generation", settings())
+    before = config.update_generation_mode(
+        mode="api", local_enabled=False,
+        local_base_url="http://127.0.0.1:8001/local-model/v1", expected_revision=0,
+    )
+    generation = config.snapshot("generation")
+    stored_generation = records.read("recognition_model_config", "generation")
+    stored_mode = records.read("recognition_generation_mode", "default")
+
+    with pytest.raises(ModelConfigurationError, match="^invalid_generation_mode$"):
+        config.update_generation_mode(
+            mode=mode, local_enabled=True,
+            local_base_url="http://127.0.0.1:8002/local-model/v1", expected_revision=1,
+        )
+
+    assert config.generation_mode() == before
+    assert config.snapshot("generation") == generation
+    assert records.read("recognition_model_config", "generation") == stored_generation
+    assert records.read("recognition_generation_mode", "default") == stored_mode
+
+
 def test_generation_mode_rejects_wrong_endpoint_and_stale_revision(config, tmp_path):
     config.update("generation", settings())
     model_file = tmp_path / "data/models/qwen2.5-1.5b-instruct/model.safetensors"

@@ -28,9 +28,15 @@ export const settingsApi = {
   privateSources: () => settingsRequest('settings/private-sources'), receipts: () => settingsRequest('settings/egress-receipts?limit=50'),
   saveProject: (row, changes) => settingsRequest(`projects/${encodeURIComponent(row.id)}`, { ...changes, expected_revision: row.revision }, 'PATCH'),
   createProject: name => settingsRequest('projects', { name }, 'POST'),
-  saveModel: recognitionApi.saveSettings, saveMode: async ({ clearSubscription, ...args }) => {
+  saveModel: args => settingsRequest('settings/model', { purpose: args.purpose, base_url: args.baseUrl,
+    model: args.model, api_key: args.apiKey, allow_remote: args.allowRemote === true,
+    enabled: args.enabled === true, expected_revision: args.expectedRevision,
+    clear_api_key: args.clearApiKey === true }, 'PUT'),
+  saveMode: async ({ clearSubscription, ...args }) => {
     if (clearSubscription) { const status = await subscriptionRequest(); await subscriptionRequest('/selection', { model: null, expected_revision: status.selection.revision }, 'PATCH'); }
-    return recognitionApi.saveGenerationMode(args);
+    return settingsRequest('settings/generation-mode', { mode: args.mode,
+      local_enabled: args.localEnabled === true, local_base_url: args.localBaseUrl,
+      expected_revision: args.expectedRevision }, 'PUT');
   }, testModel: recognitionApi.testSettings,
   savePrices: ({ purpose, rates, expectedRevision, expectedConfigurationRevision }) => settingsRequest('settings/model-prices',
     { purpose, rates, expected_revision: expectedRevision, expected_configuration_revision: expectedConfigurationRevision }, 'PATCH'),

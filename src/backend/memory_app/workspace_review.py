@@ -13,6 +13,7 @@ from core.document_engine import SQLiteDocumentRepository
 from core.document_engine.ports import DocumentDraft
 from . import workspace_generation as generation
 from .workspace_contracts import _COLLECTION, _project, _now
+from .uploaded_media import original_path
 
 
 class WorkspaceReview:
@@ -258,9 +259,10 @@ class WorkspaceReview:
         item = self.items.item_for(item_id, _project(project_id)).payload
         if item["input_kind"] not in {"file", "audio", "image", "video"}:
             raise HTTPException(404, "original_not_found")
-        path = Path(item["original_path"]).resolve()
-        if not path.is_relative_to(self.root.resolve()) or not path.is_file():
-            raise HTTPException(404, "original_not_found")
+        try:
+            path = original_path(self.root.parent, item)
+        except (OSError, ValueError):
+            raise HTTPException(404, "original_not_found") from None
         suffix = path.suffix
         filename = item.get("original_name") or item["title"]
         if not Path(filename).suffix:

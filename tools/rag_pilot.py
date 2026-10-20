@@ -18,7 +18,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock, Thread
 import time
 import sys
-from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
@@ -30,6 +29,7 @@ from tools.rag_judge_validation import (
     schema_instruction, AUDIT_INSTRUCTION, AnswerAudits, answer_clauses,
     validate_audits, combine_audit_decisions,
 )
+from tools import rag_dataset
 
 from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict, Field
@@ -50,7 +50,7 @@ from core.document_engine import SQLiteDocumentRepository
 from core.storage_provider import SQLiteStructuredRecordStore
 from core.storage_provider.connection_scope import connection_scope
 
-DATA_URL = 'https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json'
+DATA_URL = rag_dataset.DATA_URL
 MODES = ('keyword', 'vector', 'rerank')
 INSTRUCTION = 'Answer briefly in English using only the supplied evidence. Cite supporting source numbers. If evidence is insufficient, say so.'
 RERANK_INSTRUCTION = ('Score the relevance of every document to the question on 0 to 1. '
@@ -157,39 +157,45 @@ class Budget:
                 save(self.output / 'wires.json', self.rows)
 
 
-def prepare_data(output, seed):
-    path = output / 'locomo10.json'
-    if not path.exists():
-        with urlopen(DATA_URL, timeout=60) as response:
-            path.write_bytes(response.read(8 * 1024 * 1024))
-    conversation = read(path)[0]
-    manifest_path = output / 'manifest.json'
-    rng = random.Random(seed)
-    chosen = []
-    for category in (1, 2, 3, 4):
-        choices = [index for index, qa in enumerate(conversation['qa']) if qa['category'] == category]
-        chosen.extend(rng.sample(choices, 3))
-    chosen.sort()
-    manifest = {'source': DATA_URL, 'license': 'CC BY-NC 4.0 (upstream LICENSE.txt)',
-                'seed': seed, 'conversation_index': 0, 'sample_id': conversation['sample_id'],
-                'questions': [{'qa_index': index, **conversation['qa'][index]} for index in chosen]}
-    if manifest_path.exists() and read(manifest_path) != manifest:
-        raise ValueError('pilot_manifest_changed')
-    save(manifest_path, manifest)
-    # 只读取 conversation 的 session 原话；不读取 summary、observation、QA 标注。
-    sessions = []
-    for key, value in conversation['conversation'].items():
-        if not re.fullmatch(r'session_\d+', key):
-            continue
-        date = conversation['conversation'].get(key + '_date_time', '')
-        lines = [f'Session date: {date}']
-        for turn in value:
-            caption = turn.get('blip_caption', '')
-            lines.append(f"[{turn['dia_id']}] {turn['speaker']}: {turn['text']}"
-                         + (f' [Image caption: {caption}]' if caption else ''))
-        sessions.append({'id': key.replace('_', '-'), 'title': f"Conversation {conversation['sample_id']} {key} {date}",
-                         'content': '\n'.join(lines)})
-    return manifest, sessions
+def prepare_data(output, seed, *, raw_data=None, conversation_index=None, manifest_path=None):
+    return rag_dataset.prepare_data(output, seed, raw_data=raw_data,
+                                    conversation_index=conversation_index, manifest_path=manifest_path)
+
+
+def prepared_only(output, manifest, sessions):
+    rag_dataset.freeze_json(output / 'sessions.json', sessions)
+    report = {'sample_id': manifest['sample_id'], 'conversation_index': manifest['conversation_index'],
+              'seed': manifest['seed'], 'questions': len(manifest['questions']),
+              'sessions': len(sessions), 'model_calls': 0}
+    rag_dataset.freeze_json(output / 'preparation.json', report)
+    print(json.dumps(report, ensure_ascii=False))
+
+
+def prepared_questions(output, manifest, sessions, raw_data, *, explicit):
+    rag_dataset.freeze_json(output / 'sessions.json', sessions)
+    if not explicit:
+        return manifest['questions']
+    data = rag_dataset.read_json(raw_data)
+    conversation = rag_dataset.validate_manifest(manifest, data)
+    if rag_dataset.session_inputs(conversation) != sessions:
+        raise ValueError('pilot_prepared_input_changed')
+    quality = rag_dataset.evidence_quality(conversation, manifest['questions'])
+    annotations = {str(row['qa_index']): {
+        'status': 'valid' if row['original_literal_recall_eligible'] else
+            'invalid_source_annotation' if row['evidence_present'] else 'missing_source_annotation',
+        'eligible': row['original_literal_recall_eligible'], 'references': row['references']}
+        for row in quality['questions']}
+    rag_dataset.freeze_json(output / 'annotation-quality.json', annotations)
+    return [{**item, '_evidence_annotation': annotations[str(item['qa_index'])]} for item in manifest['questions']]
+
+
+def annotation_summary(rows):
+    annotations = [row['evidence_annotation'] for row in rows if 'evidence_annotation' in row]
+    if not annotations:
+        return {}
+    return {'invalid_source_annotation_questions': sum(row['status'] == 'invalid_source_annotation' for row in annotations),
+            'missing_source_annotation_questions': sum(row['status'] == 'missing_source_annotation' for row in annotations),
+            'unannotated_questions': sum(row['status'] == 'missing_source_annotation' for row in annotations)}
 
 
 def configure(root, assets, generation, budget, mode, *, gateway_factory=SingleWireGateway):
@@ -351,10 +357,14 @@ def run_question(query, item, mode, output, budget):
     if not path.exists() and attempt.exists():
         saved = read(attempt)
         validate_result(saved)
+        if '_evidence_annotation' in item and saved.get('evidence_annotation') != item['_evidence_annotation']:
+            raise ValueError('pilot_saved_annotation_contract_changed')
         return saved
     if path.exists():
         saved = read(path)
         validate_result(saved)
+        if '_evidence_annotation' in item and saved.get('evidence_annotation') != item['_evidence_annotation']:
+            raise ValueError('pilot_saved_annotation_contract_changed')
         return saved
     budget.label = f"{mode}:{item['qa_index']}:answer"
     question = item['question'] + '\n' + INSTRUCTION
@@ -390,13 +400,15 @@ def run_question(query, item, mode, output, budget):
     expected = set(item.get('evidence', []))
     row = {'mode': mode, 'qa_index': item['qa_index'], 'category': item['category'],
            'question': item['question'], 'reference_answer': item['answer'], 'expected_evidence': sorted(expected),
-           'selected_evidence': sorted(evidence), 'evidence_recall': len(evidence & expected) / len(expected) if expected else None,
-           'all_evidence_found': bool(expected) and expected <= evidence,
+           'selected_evidence': sorted(evidence),
+           **rag_dataset.evidence_metrics(evidence, expected, item.get('_evidence_annotation')),
            'retrieval_seconds': round(retrieval_seconds, 3), 'total_seconds': round(time.perf_counter() - start, 3),
            'candidates': candidates, 'rerank_state': rerank_state, 'result': result,
            'query_encodes': [call for call in budget.encodes[encode_start:] if call['role'] == 'query'],
            'vector_score_calls': budget.vector_scores[score_start:],
            'answer_f1': answer_f1(result.get('answer', ''), item['answer'])}
+    if '_evidence_annotation' in item:
+        row['evidence_annotation'] = item['_evidence_annotation']
     if mode in ('rerank', 'project') and rerank_state.get('failed'):
         row['evaluation_status'] = 'rerank_failed_fallback'
         save(output / f"failure-{mode}-{item['qa_index']}.json", row)
@@ -535,10 +547,11 @@ def validation_summary(output, rows, mode):
 
 
 def summarize(output, manifest, budget, baseline=None):
-    summary = {'judge_validation_contract': JUDGE_VALIDATION_CONTRACT, 'questions_planned': 12, 'external_calls': len(budget.rows),
+    annotations = read(output / 'annotation-quality.json')
+    summary = {'judge_validation_contract': JUDGE_VALIDATION_CONTRACT, 'questions_planned': len(manifest['questions']), 'external_calls': len(budget.rows),
                'external_successes': sum(row['status'] == 'succeeded' for row in budget.rows),
                'latency_boundary': 'First answer includes per-group lazy kernel construction; keyword preflight ran with vectors unloaded. These timings are not a stable performance comparison.',
-               'modes': {}, 'evidence_questions_planned': sum(bool(item.get('evidence')) for item in manifest['questions']),
+               'modes': {}, 'evidence_questions_planned': sum(row['eligible'] for row in annotations.values()) if annotations is not None else sum(bool(item.get('evidence')) for item in manifest['questions']),
                'initial_load': read(output / 'initial-load.json') or read(output / 'load.json'),
                'resume_load': read(output / 'load.json'),
                'initial_indexes': {mode: read(output / f'initial-index-{mode}.json') for mode in ('vector', 'rerank')},
@@ -569,7 +582,7 @@ def summarize(output, manifest, budget, baseline=None):
             'fallback': sum(row.get('evaluation_status') == 'rerank_failed_fallback' for row in rows),
             'evidence_questions': len(evidence_rows), 'unannotated_questions': len(rows) - len(evidence_rows),
             'mean_evidence_recall': sum(row['evidence_recall'] for row in evidence_rows) / len(evidence_rows) if evidence_rows else None,
-            'all_evidence_found': sum(row['all_evidence_found'] for row in rows),
+            'all_evidence_found': sum(row['all_evidence_found'] is True for row in rows),
             'mean_answer_f1': sum(row['answer_f1'] for row in rows) / len(rows) if rows else None,
             'mean_retrieval_seconds': sum(row['retrieval_seconds'] for row in rows) / len(rows) if rows else None,
             'first_question_total_seconds': rows[0]['total_seconds'] if rows else None,
@@ -578,6 +591,7 @@ def summarize(output, manifest, budget, baseline=None):
             'semantic_correct': sum(grade['grades'][mode]['correct'] for grade in grades if grade),
             'citation_supported': sum(grade['grades'][mode]['citation_supported'] for grade in grades if grade),
             'judged': sum(grade is not None for grade in grades)}
+        summary['modes'][mode].update(annotation_summary(rows))
         if mode == 'rerank':
             for row in rows:
                 for layer, value in row['rerank_state'].get('layers', {}).items():
@@ -611,6 +625,7 @@ def summarize(output, manifest, budget, baseline=None):
             'mean_evidence_recall': statistics.mean(row['evidence_recall'] for row in labeled) if labeled else None,
             'mean_answer_f1': statistics.mean(row['answer_f1'] for row in rows) if rows else None,
             'semantic_correct': sum(grade['grades'][mode]['correct'] for grade in grades if grade)}
+        summary['rerank_success_subset']['modes'][mode].update(annotation_summary(rows))
     summary['rank_changes_count'] = sum(row['changed'] for row in summary['rank_changes'])
     if baseline:
         old = read(baseline / 'summary.json')
@@ -628,7 +643,7 @@ def summarize(output, manifest, budget, baseline=None):
                 new_judge = read(output / f'judge-{identity}.json')
                 deltas.append({'mode': mode, 'qa_index': identity,
                     'evidence_recall_before': before['evidence_recall'], 'evidence_recall_after': after['evidence_recall'],
-                    'evidence_recall_delta': after['evidence_recall'] - before['evidence_recall'] if before['evidence_recall'] is not None else None,
+                    'evidence_recall_delta': after['evidence_recall'] - before['evidence_recall'] if before['evidence_recall'] is not None and after['evidence_recall'] is not None else None,
                     'answer_f1_delta': after['answer_f1'] - before['answer_f1'],
                     'correct_before': old_grade['correct'],
                     'correct_after': new_judge['grades'][mode]['correct'] if new_judge else None,
@@ -637,6 +652,7 @@ def summarize(output, manifest, budget, baseline=None):
         summary['baseline_comparison'] = {'path': str(baseline), 'per_question': deltas,
             'validated_comparison': 'not_available: original semantic scores only; no comparable independent validation',
             'modes': {mode: {name: summary['modes'][mode][name] - old['modes'][mode][name]
+                            if summary['modes'][mode][name] is not None and old['modes'][mode][name] is not None else None
                             for name in ('mean_evidence_recall', 'mean_answer_f1', 'semantic_correct', 'fallback')}
                       for mode in MODES}}
     save(output / 'summary.json', summary)
@@ -646,16 +662,22 @@ def summarize(output, manifest, budget, baseline=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--config-root', type=Path, required=True)
-    parser.add_argument('--config-db', type=Path, required=True)
-    parser.add_argument('--models-root', type=Path, required=True)
+    parser.add_argument('--config-root', type=Path)
+    parser.add_argument('--config-db', type=Path)
+    parser.add_argument('--models-root', type=Path)
     parser.add_argument('--seed', type=int, default=20261010)
     parser.add_argument('--questions', type=int, default=12, choices=range(1, 13))
     parser.add_argument('--max-calls', type=int, default=100, choices=range(1, 101))
     parser.add_argument('--keyword-only', action='store_true', help='只预检关键词真实内核回答，不加载向量')
     parser.add_argument('--policy', action='append', default=[], help='试验策略 INTERFACE=VERSION，可重复')
     parser.add_argument('--baseline', type=Path, help='只读原试点目录，复用冻结12题并输出逐题差异')
+    parser.add_argument('--raw-data', type=Path, help='只读权威原始 JSON，不复制到运行目录')
+    parser.add_argument('--conversation-index', type=int)
+    parser.add_argument('--manifest', type=Path, help='读取已冻结题目；seed 必须与清单一致')
+    parser.add_argument('--prepare-only', action='store_true', help='仅准备资料，不读取模型配置或执行问答')
     args = parser.parse_args()
+    if not args.prepare_only and any(getattr(args, name) is None for name in ('config_root', 'config_db', 'models_root')):
+        parser.error('--config-root, --config-db and --models-root are required for model execution')
     args.selections = parse_overrides(args.policy)
     with override(**args.selections):
         run(args)
@@ -663,13 +685,13 @@ def main():
 
 def run(args):
     output = args.output.resolve()
-    if output == args.config_root.resolve() or args.config_root.resolve() in output.parents:
+    if args.config_root and (output == args.config_root.resolve() or args.config_root.resolve() in output.parents):
         raise ValueError('pilot_output_must_not_be_in_formal_root')
     baseline = args.baseline.resolve() if args.baseline else None
     if baseline and (baseline == output or baseline in output.parents or output in baseline.parents):
         raise ValueError('pilot_baseline_must_be_read_only')
     output.mkdir(parents=True, exist_ok=True)
-    if baseline:
+    if baseline and args.raw_data is None:
         for name in ('locomo10.json', 'manifest.json', 'LICENSE.locomo.txt', 'README.locomo.md'):
             source, target = baseline / name, output / name
             if not source.exists():
@@ -679,8 +701,15 @@ def run(args):
             elif target.read_bytes() != source.read_bytes():
                 raise ValueError('pilot_baseline_file_changed:' + name)
     os.environ.update(LITELLM_LOCAL_MODEL_COST_MAP='True', LITELLM_LOG='ERROR')
-    manifest, sessions = prepare_data(output, args.seed)
-    phase(output, 'manifest_fixed', sessions=len(sessions), questions=12)
+    manifest, sessions = prepare_data(output, args.seed, raw_data=args.raw_data,
+        conversation_index=args.conversation_index, manifest_path=args.manifest)
+    if baseline and read(baseline / 'manifest.json') != manifest:
+        raise ValueError('pilot_baseline_manifest_changed')
+    questions = prepared_questions(output, manifest, sessions, args.raw_data or output / 'locomo10.json',
+        explicit=args.raw_data is not None or args.manifest is not None or args.conversation_index is not None)
+    if args.prepare_only:
+        return prepared_only(output, manifest, sessions)
+    phase(output, 'manifest_fixed', sessions=len(sessions), questions=len(manifest['questions']))
     generation = read_generation(args.config_root.resolve(), args.config_db)
     if 'deepseek' not in generation['base_url'] or not generation['enabled'] or not generation['allow_remote']:
         raise ValueError('pilot_requires_authorized_deepseek_configuration')
@@ -692,7 +721,8 @@ def run(args):
                      'policy_overrides': args.selections, 'policy_versions': policies,
                      'generation': {key: generation[key] for key in ('provider', 'base_url', 'model')},
                      'vector_policy': vector_policy(), 'instruction': INSTRUCTION,
-                     'answer_max_tokens': 768, 'temperature': 0, 'corpus': 'first_complete_conversation_L0_sessions',
+                     'answer_max_tokens': 768, 'temperature': 0,
+                     'corpus': 'first_complete_conversation_L0_sessions' if manifest['conversation_index'] == 0 else 'selected_complete_conversation_L0_sessions',
                      'retrieval_question': 'original_question_only', 'history': 'empty',
                      'rerank': 'real_deepseek_semantic_score_bridge_plus_production_rank_fusion',
                      'rerank_instruction': RERANK_INSTRUCTION, 'rerank_schema': RerankScores.model_json_schema(),
@@ -705,6 +735,9 @@ def run(args):
                          'audit_schema': AnswerAudits.model_json_schema(),
                          'max_tokens': {'atoms': 1800, 'checks': 5000, 'audit': 6500}},
                      'baseline': str(baseline) if baseline else None}
+    if args.raw_data is not None or args.manifest is not None or args.conversation_index is not None:
+        configuration['dataset'] = {'conversation_index': manifest['conversation_index'],
+                                    'sample_id': manifest['sample_id'], 'manifest': manifest}
     previous = read(output / 'run-config.json')
     if previous is not None and previous != configuration:
         raise ValueError('pilot_configuration_changed')
@@ -717,7 +750,7 @@ def run(args):
         query, models, owner = configure(output / 'keyword', args.models_root, generation, budget, 'keyword')
         try:
             seed_sources(query, sessions)
-            for item in manifest['questions'][:args.questions]:
+            for item in questions[:args.questions]:
                 phase(output, 'keyword_preflight', qa_index=item['qa_index'])
                 run_question(query, item, 'keyword', output, budget)
             phase(output, 'keyword_completed', external_calls=len(budget.rows))
@@ -777,7 +810,7 @@ def run(args):
             model.update('rerank', {'provider': 'openai', 'base_url': f'http://127.0.0.1:{endpoint.server.server_port}',
                   'model': 'deepseek-semantic-pilot', 'api_key': 'pilot-loopback', 'enabled': True,
                   'allow_remote': True, 'expected_revision': old.revision if old else 0})
-            for item in manifest['questions'][:args.questions]:
+            for item in questions[:args.questions]:
                 rows = {}
                 for mode in MODES:
                     phase(output, 'answering', mode=mode, qa_index=item['qa_index'])

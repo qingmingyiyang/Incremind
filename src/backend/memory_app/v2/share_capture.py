@@ -11,16 +11,16 @@ from core.storage_provider.connection_scope import with_connection_scope
 from ..workspace_contracts import _now, _project
 from ..workspace_media_url import media_platform
 from .turn_execution import _REQUEST_KEY, REQUESTS
-from .intent import parse_scope_tag
+from .intent import format_scope_tag, parse_scope_tag, scope_tag_match
 
 CAPTURES = 'v2_share_captures'
 IMAGES = {'.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.webp'}
-FILES = IMAGES | {'.txt', '.md', '.pdf', '.docx', '.mp3', '.wav', '.m4a', '.ogg', '.flac', '.webm', '.mp4', '.mov', '.mkv', '.avi', '.m4v'}
+FILES = IMAGES | {'.txt', '.md', '.csv', '.pdf', '.docx', '.mp3', '.wav', '.m4a', '.ogg', '.flac', '.webm', '.mp4', '.mov', '.mkv', '.avi', '.m4v'}
 
 
 def share_url(text, *, shared=False):
     """保留签名查询参数，清理分享文案与句末标点。"""
-    for match in re.finditer(r'https?://[^\s<>\x00-\x1f\u3000-\uffff]+', text):
+    for match in re.finditer(r'https?://[^\s<>\x00-\x1f，。；：！？、（）［］｛｝【】《》〈〉「」『』“”‘’]+', text):
         candidate = match.group().rstrip(".,;!?)]}\"'")
         try:
             parsed = urlsplit(candidate)
@@ -71,18 +71,19 @@ def install_share_capture(router, *, records, workspace, executions, instance, p
                     credentials = True
                 if credentials:
                     raise HTTPException(400, 'share_credentials_rejected')
-            url = share_url(text, shared=True)
-            tag, scene, _ = parse_scope_tag(text)
+            scope = scope_tag_match(text)
+            tag, scene, cleaned = parse_scope_tag(text)
+            url = share_url(cleaned if scope and scope[4] else text, shared=True)
             if tag:
                 project = project_for_tag(tag)
-            text = (('#' + tag + ('/' + scene if scene else '') + ' ' if tag else '') + url) if url else text
+            text = ((format_scope_tag(tag, scene) + '\n' if tag else '') + url) if url else text
             files = form.getlist('files')
             for file in files:
                 if (not isinstance(file, UploadFile) or Path(file.filename or '').suffix.lower() not in FILES
                         or re.fullmatch(r'(?i)(cookies?(?:[-_.]export)?\.(?:txt|json)|credentials?\.json|authorization\.txt|\.env(?:\..*)?)', Path(file.filename or '').name)):
                     raise HTTPException(415, 'unsupported_share_file')
                 # 文本附件也不能绕过凭据限制。
-                if Path(file.filename).suffix.lower() in {'.txt', '.md'}:
+                if Path(file.filename).suffix.lower() in {'.txt', '.md', '.csv'}:
                     sample_bytes = await file.read(12 * 1024 * 1024 + 1)
                     if len(sample_bytes) > 12 * 1024 * 1024:
                         raise HTTPException(413, 'file_size_invalid')

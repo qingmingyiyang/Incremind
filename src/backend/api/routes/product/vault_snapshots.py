@@ -28,7 +28,6 @@ from core.storage_provider import (
     JsonObjectStore,
     VaultBackupRestoreError,
     VaultOperationalRecoveryError,
-    create_vault_backup,
     prepare_vault_recovery,
     verify_vault_backup,
 )
@@ -38,7 +37,8 @@ from core.storage_provider.vault_backup_restore import fingerprint_vault_restore
 from . import http as product_http
 from . import recovery_points as product_recovery_points
 from . import repositories as product_repositories
-from core.storage_provider.vault_backup_restore import verification_metadata
+from core.storage_provider.vault_backup_restore import verification_metadata, is_runtime_backup
+from backend.memory_app.backup import backup_runtime
 
 router = APIRouter(tags=["rebuild-product-core"])
 
@@ -48,6 +48,8 @@ def _snapshot_record_for_restore(
 ) -> Mapping[str, object] | None:
     external = product_recovery_points._recovery_point_record(snapshots_root / snapshot_id)
     if external is not None:
+        if is_runtime_backup(snapshots_root / snapshot_id):
+            raise MemorySnapshotError("runtime backup requires restore to a new runtime root")
         return external
     stored = store.read("memory_snapshots", snapshot_id)
     if isinstance(stored, Mapping) and stored.get("restorable") is True:
@@ -118,23 +120,22 @@ def list_memory_snapshots(request: Request, container: ApiContainerDep) -> JSONR
 
 @router.post("/api/rebuild/memory-snapshots")
 async def create_memory_snapshot(request: Request, container: ApiContainerDep) -> JSONResponse:
-    """Create an immutable full-Vault recovery point plus its product projection."""
+    """创建完整运行根快照，沿用现有备份列表与产品投影。"""
     store, settings = product_repositories._object_store(container.root_dir)
     body = await product_http._json_body(request) or {}
     label = str(body.get("label", "") or "").strip()
     notes = str(body.get("notes", "") or "").strip()
     snapshot_id = f"snap-{time.time_ns():x}"
-    active_root, snapshots_root, operations_root = product_recovery_points._vault_recovery_roots(container.root_dir)
+    _active_root, snapshots_root, _operations_root = product_recovery_points._vault_recovery_roots(container.root_dir)
     use_case = CreateMemorySnapshot(
         store,
         namespace_id=settings.namespace_id,
     )
     try:
-        backup = await run_in_threadpool(create_vault_backup,
-            source_root=active_root,
-            backups_root=snapshots_root,
+        backup = await run_in_threadpool(backup_runtime,
+            source=container.root_dir,
+            backups=snapshots_root,
             snapshot_id=snapshot_id,
-            sqlite_online=True, exclude_logs=True, restore_verify=True,
         )
         result = use_case.execute(
             label=label,

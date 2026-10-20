@@ -8,24 +8,30 @@ export function InboxProjectSuggestion({ group, rows, scope, onChanged, onProjec
   const gate=useRequestScope(scope), pending=useRef(false);
   const [choosing,setChoosing]=useState(false), [name,setName]=useState(group.name), [busy,setBusy]=useState(false);
   const [progress,setProgress]=useState(null), [error,setError]=useState('');
-  const retained=useRef({project:null,completed:new Set()});
+  const retained=useRef({project:null,members:null,completed:new Set()});
   async function archive() {
     if(pending.current) return;
     const request=gate.issue('archive',gate.scope);
     if(!request) return;
     pending.current=true;setBusy(true);setError('');
     try {
+      if(!retained.current.members){
+        const members=group.ids.map(id=>rows.find(row=>row.id===id));
+        if(members.some(row=>!row || row.kind!=='candidate' || row.state!=='pending'
+          || !Number.isSafeInteger(row.revision) || row.revision<1)) throw new Error('内容已变化 · 刷新');
+        // 重试保留同批真实修订，已提交但未收到响应的条目沿原身份回读。
+        retained.current.members=members.map(row=>({id:row.id,revision:row.revision}));
+      }
       if(!retained.current.project){
         const project=await workbenchApi.createProject(name.trim());
         if(!gate.isCurrent(request)) return;
         retained.current.project=project;
         onProjectCreated?.(project);
       }
-      for(const id of group.ids){
+      for(const row of retained.current.members){
+        const id=row.id;
         if(retained.current.completed.has(id))continue;
         if(!gate.isCurrent(request))return;
-        const row=rows.find(item=>item.id===id);
-        if(!row)throw new Error('内容已变化 · 刷新');
         await libraryApi.fileInbox(retained.current.project.id,row,null);
         if(!gate.isCurrent(request))return;
         retained.current.completed.add(id);setProgress(retained.current.completed.size);

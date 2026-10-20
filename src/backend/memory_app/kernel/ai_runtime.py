@@ -1387,6 +1387,16 @@ def build_ai_runtime(container: object, *, application: object | None = None) ->
         max_steps=profile_registry.get("main.orchestrator").max_steps,
     )
     runtime.task_continuations = task_planner.continuations if task_planner is not None else None
+    from .task_continuations import ProductStops
+    product_service = getattr(application_state, 'recognition_service', None)
+    runtime.product_stops = None
+    if product_service is not None:
+        runtime.product_stops = ProductStops(product_service.records, session_store, task_planner)
+        runtime.product_stops.runtime = runtime
+        agent_organization_runtime.product_stop_requested = runtime.product_stops.requested
+        agent_organization_runtime.product_stop_dispatching = runtime.product_stops.dispatching
+        if runtime.task_continuations is not None:
+            runtime.task_continuations.stops = runtime.product_stops
     runtime.agent_data_tools = data_tools
     # Compatibility adapters must project the same immutable composition
     # snapshot used by the capability.  A configured gateway without existing

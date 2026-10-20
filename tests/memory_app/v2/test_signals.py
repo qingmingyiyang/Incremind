@@ -229,7 +229,7 @@ def test_daily_registration_runs_original_owner(env):
     assert env.owner.settings()['count'] == 1
 
 
-from tests.memory_app.v2.test_workbench_ask import env as workbench_env, ask
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as workbench_env, ask
 
 
 def test_real_workbench_answer_signal_without_lazy_project_registration(workbench_env):

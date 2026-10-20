@@ -999,7 +999,8 @@ class LiteLLMCompletionGateway:
                         timeout=remaining, max_tokens=max_tokens, max_wire_attempts=1,
                         wire_attempt_sink=wire_attempt_sink, retry_control=retry_control)
                     validate_current()
-                    text = getattr(result, field)
+                    # 私有结构化消费仅校验完整 schema，公开文字流仍严格读取指定字段。
+                    text = getattr(result, field) if field is not None else None
                     if isinstance(text, str) and text:
                         retry_control.body_started()
                         on_delta(text)

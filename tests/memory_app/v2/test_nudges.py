@@ -23,7 +23,7 @@ from backend.memory_app.v2.projects import assign_scene
 from backend.memory_app.v2.reminders import ReminderService
 from backend.memory_app.v2.signals import SignalService
 from backend.recognition import RecognitionConflict, WorkScope
-from tests.memory_app.v2.test_workbench_ask import add_document, env, publish
+from tests.memory_app.v2.test_workbench_ask import add_document, legacy_retrieve_env as env, publish
 
 
 UTC = timezone.utc

@@ -6,7 +6,7 @@ from backend.memory_app.relations import RelationProposalService
 from backend.memory_app.v2.links import InsightLinks, link_id
 from backend.memory_app.v2.usage import UsageService
 from backend.memory_app.recall_preferences import preference, set_preference
-from tests.memory_app.v2.test_workbench_ask import env as _env_fixture, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as _env_fixture, publish
 
 env = _env_fixture
 

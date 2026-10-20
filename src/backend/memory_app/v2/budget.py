@@ -7,18 +7,13 @@ from backend.shared.llm.message_metadata import (
 )
 from core.search_and_recall.evidence_windows import EvidenceWindow, select_evidence_windows
 from .policies import get, version
+from .policies.compose import ASK_INSTRUCTION as _INSTRUCTION
 from .answer_evidence import answer_response_model
 
 WINDOW_TOKENS = 1200
 # Scan up to three windows at the estimator's three bytes per token;
 # the exact token and coordinate checks below enforce the actual limit.
 WINDOW_SCAN_CHARS = WINDOW_TOKENS * 3 * 3
-
-_INSTRUCTION = (
-    "只根据用户提供的资料回答。返回 JSON 对象：answer 为简洁中文答案，citations 为实际使用的资料编号整数数组。"
-    "没有依据时明确说不知道，不编造来源。不要输出 Markdown 围栏。"
-)
-
 
 def ask_instruction(chosen):
     return get('compose')(_ask_instruction, chosen, operation='instruction')

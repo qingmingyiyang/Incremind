@@ -16,8 +16,17 @@ from .task_division_authority import frozen_division_binding
 from .task_draft_capability import final_draft_decision
 from .policy_runtime import retry_policy_for
 from .task_continuations import TaskContinuations, TaskModelInterrupted
+from ..v2.policies import get as get_policy
 from ..model_config import ModelConfigurationError, ModelResponseDecodeError, _preserve_turn_control_error
 from backend.shared.llm.model_transport import ModelContinuationFailed, ModelInterrupted, is_provider_closed_witness
+
+
+def _planner_context_input(request, text):
+    selected = request.get('policy_versions', {}).get('context_preparation')
+    # 旧请求缺少此键，保留其原规划消息；只有新请求冻结的版本参与投影。
+    if selected is None or selected == '@1':
+        return text
+    return get_policy('context_preparation', version=selected)('planner_input', text)
 
 
 class _TaskDecision(BaseModel):
@@ -195,7 +204,7 @@ class ProductTaskPlanner:
                 raise ValueError('outcome wire authority is unavailable')
             execution_control = execution_control.with_validator(
                 lambda records, _: self.outcome.validate(records, profile_request))
-        def validate():
+        def validate(*, check_control=True):
             owner.guard(request)
             if owner.data_tools:
                 owner.data_tools.validate_context(profile_request)
@@ -203,7 +212,7 @@ class ProductTaskPlanner:
                 owner.guard(profile_request)
             if owner.profile_reader:
                 owner.profile_reader(profile_request)
-            if execution_control is not None:
+            if check_control and execution_control is not None:
                 execution_control.checkpoint()
         decision = final_draft_decision(request, events, payloads,
             binding=frozen_division_binding(self.composition, request, self.store), drafts=self.drafts)
@@ -271,6 +280,12 @@ class ProductTaskPlanner:
                 if continuation is not None and resume_source is None:
                     messages = retry_policy_for(profile_request)({'kind': 'continue_task_messages',
                         'messages': continuation['messages'], 'partial': continuation['partial']})
+                if continuation is None:
+                    text = _planner_context_input(request, model_request.input)
+                    if text != model_request.input:
+                        if owner.data_tools:
+                            text = owner.data_tools.model_input(request, text)
+                        messages[-1] = {**messages[-1], 'content': text}
                 frames, interrupted = None, False
                 controlled_refusal = False
                 resumed_text = {'full': '', 'sent': 0}
@@ -307,15 +322,19 @@ class ProductTaskPlanner:
                             messages, routing_snapshot=route.generation_binding(),
                             execution_control=execution_control, metadata_sink=metadata_sink,
                             wire_attempt_sink=execution_control, max_tokens=2000, validate_current=validate, purpose='primary',
-                            retry_policy=recipe, **options)
+                            retry_policy=recipe,
+                            stop_requested=lambda: bool(owner.continuations and owner.continuations.stops
+                                and owner.continuations.stops.checkpoint(request['turn_id'])), **options)
                     except ModelInterrupted as error:
-                        validate()
+                        stopped = error.interruption == 'stopped'
+                        validate(check_control=not stopped)
                         interrupted = (is_provider_closed_witness(error.close_witness)
-                            and recipe({'kind': 'pure_text_prefix', 'raw': prefix['raw']}) is True)
+                            and (stopped or recipe({'kind': 'pure_text_prefix', 'raw': prefix['raw']}) is True))
                         if continuation is not None and resume_source is None:
                             error.partial = continuation['partial'] + error.partial
                         raise TaskModelInterrupted(error, owner=owner, request=request, control=execution_control,
-                            messages=messages, route=route.generation_binding(), validate=validate,
+                            messages=messages, route=route.generation_binding(),
+                            validate=lambda: validate(check_control=not stopped),
                             raw_prefix=prefix['raw']) from None
                     except ModelResponseDecodeError as error:
                         if continuation is not None:

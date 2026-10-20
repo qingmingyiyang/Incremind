@@ -11,7 +11,7 @@ import { OutcomeVersions } from './OutcomeVersions';
 export function WorkbenchOutcomePanel({ projectId, documentId, document, loading, error, onClose, task = {}, qualified = false, previous, onRetryPrevious, onContinue }) {
   const gate = useRequestScope(`${projectId}:${documentId}`), scope = gate.scope;
   const [menu, setMenu] = useState(false), [versions, setVersions] = useState(false), [comparison, setComparison] = useState(null);
-  const headings = useRef(new Map());
+  const headings = useRef(new Map()), moreButton = useRef(null);
   async function compare(path, retry = false) {
     const key = JSON.stringify(path);
     if (!retry && comparison?.scope === scope && comparison.key === key) { gate.invalidate('previous'); setComparison(null); return; }
@@ -38,9 +38,9 @@ export function WorkbenchOutcomePanel({ projectId, documentId, document, loading
       after: current && <section aria-label={`上一版 ${path.join(' / ')}`} style={{ color: 'var(--muted)' }}>{current.loading ? <StatusDot state="processing"/> : current.error
         ? <button type="button" onClick={() => compare(path, true)}>读取未完成 · 重试</button> : <MarkdownBody>{current.body}</MarkdownBody>}</section> };
   };
-  const actions = !loading && !error && document && <><button type="button" className="ui-filter" aria-label="成果更多" onClick={() => setMenu(value => !value)}><Icon name="more"/></button>{menu && <div>
+  const actions = !loading && !error && document && <><button ref={moreButton} type="button" className="ui-filter" aria-label="成果更多" onClick={() => setMenu(value => !value)}><Icon name="more"/></button>{menu && <div>
     {qualified && <button type="button" className="ui-filter" onClick={() => { setMenu(false); onContinue?.(document.title || task.title); }}>接着写</button>}
-    <button type="button" className="ui-filter" onClick={() => { setMenu(false); setVersions(value => !value); }}>版本列表</button>
+    <button type="button" className="ui-filter" onClick={() => { setMenu(false); setVersions(value => !value); moreButton.current?.focus(); }}>版本列表</button>
   </div>}</>;
   return <FocusPanel title="成果" onClose={onClose} actions={actions}>{loading ? <StatusDot state="processing"/> : error ? <p role="alert">成果未打开</p> : document && <>
     <OutcomeChanges changes={task.changes} onSelect={path => headings.current.get(JSON.stringify(path))?.scrollIntoView?.({ block: 'center' })}/>

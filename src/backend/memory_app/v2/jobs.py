@@ -67,11 +67,13 @@ def _document_target(records, project, identity, namespace):
     return {"type": "document", "id": identity}
 
 
-def _do_view(records, scope, turn, now, namespace):
+def _do_view(records, scope, turn, now, namespace, *, observer=None):
     target = _turn_target(records, scope.project_id, turn)
     receipt = turn.payload.get("receipt", {}).get("do")
     if target is None or not isinstance(receipt, dict):
         return None
+    if observer is not None and not receipt.get('executor'):
+        receipt = observer(turn)
     task_id = receipt.get("task_id")
     finished_at = _timestamp(turn.payload)
     if task_id is not None:
@@ -220,6 +222,10 @@ def install_job_routes(application, *, records, service, document_namespace="rec
                 if (instance is not None and turn.payload.get("instance") != instance
                         and turn.payload.get("receipt", {}).get("remember", {}).get("state") == "processing"):
                     state = {**state, "state": "failed", "error": "interrupted"}
+                observer = getattr(application.state, 'workbench_remember_observer', None)
+                if observer is not None:
+                    remembered = observer(turn)
+                    state = {**state, 'state': remembered['state'], 'error': remembered.get('error')}
                 if state.get("state") in {"processing", "failed"}:
                     view = view or {"id": row.object_id, "kind": "intake", "title": row.payload.get("title", row.object_id),
                         "progress": {"done": 4 if row.payload.get("status") == "confirmed" else 1, "total": 4},
@@ -255,7 +261,8 @@ def install_job_routes(application, *, records, service, document_namespace="rec
             target = _turn_target(records, project_id, turn)
             if isinstance(task_id, str) and task_id and target is not None:
                 task_targets[task_id] = target
-            view = _do_view(records, scope, turn, now, document_namespace)
+            view = _do_view(records, scope, turn, now, document_namespace,
+                            observer=getattr(application.state, 'workbench_task_observer', None))
             if view is not None:
                 items.append(view)
                 task_id = turn.payload["receipt"]["do"].get("task_id")

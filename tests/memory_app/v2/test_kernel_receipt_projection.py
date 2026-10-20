@@ -5,7 +5,7 @@ from pathlib import Path
 from core.ai_kernel import SQLiteAITurnStore, SynchronousAIRuntime, ScopedCapabilityRegistry
 from core.ai_kernel.turn_kinds import freeze_turn_request
 from core.storage_provider import SQLiteStructuredRecordStore
-from tests.memory_app.v2.test_workbench_ask import env, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, publish
 
 
 KEY = 'sk-test-DO-NOT-LEAK'

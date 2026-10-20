@@ -104,6 +104,51 @@ def source_documents(reader, scope, experience_ids, recognition_ids=()):
     return documents
 
 
+def _scene_assignment(reader, scope, row, kind, *, aliases=None, document_ids=None, trail=(), memo=None):
+    memo = {} if memo is None else memo
+    key = (kind, row.object_id)
+    if key in memo:
+        return memo[key]
+    assignment = scene_of(reader, kind, row.object_id)
+    if assignment is None and kind == 'recognition':
+        if aliases is None:
+            aliases = sorted(item.object_id for item in reader.list('recognition_candidates')
+                if _in_scope(item, scope) and item.payload.get('state') == 'published'
+                and item.payload.get('recognition_id') == row.object_id)
+        for alias in aliases:
+            assignment = scene_of(reader, 'candidate', alias)
+            if assignment is not None:
+                break
+    if assignment is None:
+        if document_ids is None:
+            document_ids = source_documents(reader, scope, row.payload.get('source_experience_ids', []),
+                row.payload.get('source_recognition_ids', []))
+        for document_id in sorted(document_ids):
+            assignment = scene_of(reader, 'document', document_id)
+            if assignment is not None:
+                break
+    # 已有归属包含显式空场景，先保留原自身、别名和文档的读取顺序。
+    if assignment is None and kind == 'recognition' and row.payload.get('parent_ids'):
+        if row.object_id in trail:
+            raise ValueError('insight_scene_cycle')
+        inherited = []
+        for identity in row.payload['parent_ids']:
+            parent = reader.read('recognitions', identity)
+            if not _in_scope(parent, scope):
+                break
+            # 拆分、合并会退休父认识；共享祖先在本次读取中只解析一次。
+            value = _scene_assignment(reader, scope, parent, 'recognition',
+                trail=(*trail, row.object_id), memo=memo)
+            if value is None or value.get('project_id') != scope.project_id:
+                break
+            inherited.append(value)
+        else:
+            if all(value['scene'] == inherited[0]['scene'] for value in inherited):
+                assignment = inherited[0]
+    memo[key] = assignment
+    return assignment
+
+
 def insight_view(reader, scope, insight_id, *, service=None):
     """Build the architecture's Insight DTO; inactive history is not displayed.
 
@@ -144,17 +189,7 @@ def insight_view(reader, scope, insight_id, *, service=None):
     experiences = payload.get("source_experience_ids", [])
     sources = payload.get("source_recognition_ids", [])
     document_ids = source_documents(reader, scope, experiences, sources)
-    assignment = scene_of(reader, "recognition" if kind == "recognition" else "candidate", row.object_id)
-    if assignment is None:
-        for alias in aliases:
-            assignment = scene_of(reader, "candidate", alias)
-            if assignment is not None:
-                break
-    if assignment is None:
-        for document_id in sorted(document_ids):
-            assignment = scene_of(reader, "document", document_id)
-            if assignment is not None:
-                break
+    assignment = _scene_assignment(reader, scope, row, kind, aliases=aliases, document_ids=document_ids)
     related = {}
     for collection in ("recognition_relations", "recognition_relation_proposals"):
         for relation in reader.list(collection):

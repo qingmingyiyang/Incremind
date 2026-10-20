@@ -215,8 +215,6 @@ class SignalService:
                     return None
                 if payload['kind'] == 'view' and old['object']['id'] == payload['object']['id'] and at.date() == old_at.date():
                     return None
-                if payload['kind'] == 'stop' and old['turn_id'] == payload['turn_id']:
-                    return None
             row = tx.put(EVENTS, prepared.client_id, payload, expected_revision=0)
             tx.commit()
             return row

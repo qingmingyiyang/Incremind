@@ -1,6 +1,7 @@
 """工作台在每层选取前重排已授权片段，复用模型适配器和辅助回执。"""
 from copy import deepcopy
 from dataclasses import replace
+import logging
 import math
 import json
 from urllib.parse import urlsplit
@@ -18,6 +19,9 @@ from .policies.scope import scene_priority
 from .policies.types import ScopeInput
 from .privacy import egress_allowed, is_private_project, privacy_revision
 from .projects import scene_of
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _bounded_candidate(row, question, limit):
@@ -164,6 +168,7 @@ def layer_reranker(query, project, question, *, scene=None, token_budget=4000, s
             return None
         frozen_privacy = privacy_revision(query.records)
     except Exception:
+        _LOGGER.debug("rerank_unavailable", exc_info=True)
         state['failed'] = True
         return None
     authority = SourceEgressService(query.records)

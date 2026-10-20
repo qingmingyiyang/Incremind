@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Row, Switch } from '../../shared/ui';
 import { formatLocalShortDate } from '../../shared/lib/time';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
@@ -24,13 +24,13 @@ export function SettingsUsers({ projectId }) {
     if (busy) return;
     const token = gate.issue('write', scope); if (!token) return;
     setBusy(true); setError('');
-    try { await operation(token); }
+    try { return await operation(token); }
     catch (reason) { if (gate.isCurrent(token)) setError({ user_delete_busy: '任务仍在运行 · 停止后重试', user_delete_shared_owner: '仍拥有共享项目 · 转让后重试', user_delete_related_data: '仍有关联资料 · 处理后重试', user_delete_incomplete: '删除未完成 · 重试删除', user_delete_requires_disabled: '账号仍启用 · 先停用', user_delete_protected: '账号受保护 · 刷新', user_deletion_in_progress: '删除未完成 · 重试删除', user_delete_path_invalid: '空间目录异常 · 检查后重试' }[reason.code] || (reason.status === 409 ? '用户已变化 · 刷新' : '操作未完成 · 重试')); }
     finally { if (gate.isCurrent(token)) setBusy(false); }
   }
   const update = (user, changes) => run(async token => {
     const result = await usersApi.update(user, changes);
-    if (gate.isCurrent(token)) { setValue(old => ({ ...old, items: old.items.map(row => row.user_id === user.user_id ? { ...row, ...result } : row) })); if (result.disabled_at) setQr(null); }
+    if (gate.isCurrent(token)) { setValue(old => ({ ...old, items: old.items.map(row => row.user_id === user.user_id ? { ...row, ...result } : row) })); if (result.disabled_at) setQr(null); return result; }
   });
   const remove = user => run(async token => {
     try {
@@ -66,7 +66,7 @@ export function SettingsUsers({ projectId }) {
               onClick={() => { setOpen(open === user.user_id ? null : user.user_id); setQr(null); }}>管理</button></div>}/>
         {open === user.user_id && <div className="settings-expand">
           <Row title="停用" readOnly trailing={<Switch label={`停用${user.name}`} title="停用账号，保留空间资料和访问记录" checked={Boolean(user.disabled_at)} disabled={busy || user.deletion_pending || user.user_id === value.caller.user_id || user.role === 'admin'} onChange={disabled => update(user, { disabled })}/>}/>
-          <QuotaForm key={`${user.user_id}:${user.revision}`} user={user} disabled={busy || user.deletion_pending} onSave={changes => update(user, changes)}/>
+          <QuotaForm key={`${scope}:${user.user_id}`} user={user} disabled={busy || user.deletion_pending} onSave={changes => update(user, changes)}/>
           <div className="settings-device-pair"><button type="button" aria-label={`给${user.name}添加设备`} disabled={busy || Boolean(user.disabled_at)} onClick={()=>run(async token=>{
             setQr(null); const issued=await usersApi.pair(user);
             if (gate.isCurrent(token)) setQr({...issued,user_id:user.user_id});
@@ -93,9 +93,20 @@ export function SettingsUsers({ projectId }) {
 
 function QuotaForm({ user, disabled, onSave }) {
   const [storage, setStorage] = useState(user.storage_limit_mb ?? ''), [minutes, setMinutes] = useState(user.job_minutes_per_day ?? '');
-  return <form onSubmit={event => { event.preventDefault(); onSave({ storage_limit_mb: storage === '' ? null : Number(storage), job_minutes_per_day: minutes === '' ? null : Number(minutes) }); }}>
-    <label>空间 MB<input aria-label={`${user.name}空间上限`} type="number" min="0" step="1" placeholder="—" value={storage} disabled={disabled} onChange={event => setStorage(event.target.value)}/></label>
-    <label>分钟 / 天<input aria-label={`${user.name}后台时长上限`} type="number" min="0" step="1" placeholder="—" value={minutes} disabled={disabled} onChange={event => setMinutes(event.target.value)}/></label>
+  const edited = useRef({ storage: 0, minutes: 0 });
+  useEffect(() => { if (!edited.current.storage) setStorage(user.storage_limit_mb ?? ''); }, [user.storage_limit_mb, user.revision]);
+  useEffect(() => { if (!edited.current.minutes) setMinutes(user.job_minutes_per_day ?? ''); }, [user.job_minutes_per_day, user.revision]);
+  return <form onSubmit={async event => {
+    event.preventDefault();
+    const edit = { ...edited.current };
+    const saved = await onSave({ storage_limit_mb: storage === '' ? null : Number(storage), job_minutes_per_day: minutes === '' ? null : Number(minutes) });
+    if (!saved) return;
+    // 仅接收本次保存成功且期间未继续编辑的字段。
+    if (edited.current.storage === edit.storage) { edited.current.storage = 0; setStorage(saved.storage_limit_mb ?? ''); }
+    if (edited.current.minutes === edit.minutes) { edited.current.minutes = 0; setMinutes(saved.job_minutes_per_day ?? ''); }
+  }}>
+    <label>空间 MB<input aria-label={`${user.name}空间上限`} type="number" min="0" step="1" placeholder="—" value={storage} disabled={disabled} onChange={event => { edited.current.storage += 1; setStorage(event.target.value); }}/></label>
+    <label>分钟 / 天<input aria-label={`${user.name}后台时长上限`} type="number" min="0" step="1" placeholder="—" value={minutes} disabled={disabled} onChange={event => { edited.current.minutes += 1; setMinutes(event.target.value); }}/></label>
     <button type="submit" disabled={disabled}>保存</button>
   </form>;
 }

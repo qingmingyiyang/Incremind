@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -8,7 +10,23 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from tests import _path_setup  # noqa: F401
+from backend.api import static_assets as legacy_static_assets
 from backend.api.static_assets import _resolve_dist_path, mount_frontend_dist
+from backend.shared import static_assets as shared_static_assets
+
+
+@pytest.mark.parametrize(
+    "export_name",
+    (
+        "FRONTEND_ASSET_MEDIA_TYPES",
+        "NoCacheStaticFiles",
+        "_resolve_dist_path",
+        "mount_frontend_dist",
+    ),
+)
+def test_legacy_static_asset_exports_use_shared_implementation(export_name: str) -> None:
+    assert getattr(legacy_static_assets, export_name) is getattr(shared_static_assets, export_name)
+    assert export_name in legacy_static_assets.__all__
 
 
 @pytest.fixture
@@ -118,6 +136,41 @@ def test_frontend_path_rejects_symlink_escape(
     assert response.status_code == 404
     assert "OUTSIDE_CANARY" not in response.text
     assert str(root_dir) not in response.text
+
+
+def test_frontend_path_rejects_directory_link_escape(
+    frontend_site: tuple[TestClient, Path, Path, Path],
+    tmp_path: Path,
+) -> None:
+    client, root_dir, dist_dir, _ = frontend_site
+    link_path = dist_dir / "escape"
+    outside_dir = dist_dir.parent / "dist-private"
+    assert dist_dir.resolve().is_relative_to(tmp_path.resolve())
+    assert outside_dir.resolve().is_relative_to(tmp_path.resolve())
+    if os.name == "nt":
+        # Windows 目录联接不需要符号链接特权，仍由真实路径解析拦截。
+        subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(link_path), str(outside_dir)],
+            capture_output=True,
+            check=True,
+        )
+    else:
+        link_path.symlink_to(outside_dir, target_is_directory=True)
+
+    try:
+        response = client.get("/escape/secret.txt")
+
+        assert response.status_code == 404
+        assert "SIBLING_CANARY" not in response.text
+        assert str(root_dir) not in response.text
+        assert _resolve_dist_path(dist_dir, "escape/secret.txt") is None
+    finally:
+        # 只移除本测试创建的链接，不递归删除或跟随目标。
+        assert link_path.absolute().parent == dist_dir.absolute()
+        if os.name == "nt":
+            link_path.rmdir()
+        else:
+            link_path.unlink()
 
 
 def test_assets_mount_cannot_escape_its_directory(

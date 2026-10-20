@@ -5,7 +5,7 @@
 .workbench.is-empty{justify-content:center;padding-bottom:12vh}
 .workbench h1{font-family:var(--serif);font-size:52px;font-weight:700;line-height:1.4;margin:0 0 4px}
 .workbench-history{display:flex;gap:12px;align-items:center}
-.workbench-history select{max-width:320px;width:100%;background:transparent;border:0;border-bottom:1px solid var(--line);color:var(--muted);padding:8px;font-size:13px}
+.workbench-history select{min-width:0;max-width:320px;width:100%;flex:1;background:transparent;border:0;border-bottom:1px solid var(--line);color:var(--muted);padding:8px;font-size:13px}
 .workbench-history button,.workbench-receipt-title button{background:transparent;border:0;color:var(--red);padding:8px;cursor:pointer}
 .workbench-thread{display:flex;flex-direction:column;gap:28px;padding-bottom:200px;min-width:0}
 .workbench-thread article{min-width:0;scroll-margin:80px}
@@ -19,6 +19,7 @@
 .workbench-composer{position:sticky;bottom:24px;margin-top:auto;background:var(--paper);z-index:1}
 .workbench.is-empty .workbench-composer{position:static;margin-top:0}
 .workbench-error{font-size:13px;color:var(--red);margin:8px 0}
+.workbench-project-action{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}
 .workbench-ask-layers{margin-top:12px}
 @media(min-width:1024px){.workbench-layout>.ui-focus-panel{position:sticky;top:0;height:calc(100dvh - 56px);align-self:flex-start}.desktop-titlebar+.ui-shell .workbench-layout>.ui-focus-panel{height:calc(100dvh - 96px)}}
 @media(max-width:759px){.workbench{padding:24px 16px}.workbench h1{font-size:36px}.workbench-thread{padding-bottom:160px}.workbench-history select{max-width:240px}}
@@ -54,3 +55,5 @@
 .workbench-parts{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:8px 0 4px;font-family:var(--mono);font-size:12px;color:var(--muted)}
 .workbench-parts>span{display:inline-flex;align-items:center;gap:4px;min-width:0}
 .workbench-parts .ui-conversation-menu{margin-left:auto}
+.workbench-stop,.workbench-receipt-title .workbench-stop{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;margin-left:auto;padding:0;border:0;background:transparent;color:var(--muted);cursor:pointer}
+.workbench-stop:hover:not(:disabled){color:var(--ink)}.workbench-stop:disabled{opacity:.5;cursor:default}

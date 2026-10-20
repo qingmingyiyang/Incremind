@@ -4,6 +4,8 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from backend.api.app import create_app
 from tests.architecture.route_introspection import registered_route_paths
 
@@ -12,9 +14,6 @@ ROOT = Path(__file__).resolve().parents[2]
 LEGACY_ROUTES = ROOT / "src/backend/api/routes/rebuild.py"
 OVERVIEW_ROUTES = ROOT / "src/backend/api/routes/library_overview.py"
 COMPANION_ROUTES = ROOT / "src/backend/api/routes/companion_memory_state.py"
-OVERVIEW_RUNTIME = ROOT / "src/backend/api/library_overview_runtime.py"
-JOB_RUNTIME = ROOT / "src/backend/api/job_runtime.py"
-MOOD_DOMAIN = ROOT / "src/core/companion_core/memory_mood.py"
 ROUTE_INSTALL = ROOT / "src/backend/api/routes/__init__.py"
 
 EXTRACTED_PATHS = {
@@ -26,11 +25,16 @@ EXTRACTED_PATHS = {
 
 def _imported_modules(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    return {
-        node.module or ""
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-    }
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            imported.add(module)
+            # from 父包 import 子模块同样形成依赖，别名不能隐藏真实路径。
+            imported.update(f"{module}.{alias.name}" for alias in node.names)
+    return imported
 
 
 def test_overview_and_companion_routes_have_one_production_owner(tmp_path: Path) -> None:
@@ -52,12 +56,67 @@ def test_overview_and_companion_routes_have_one_production_owner(tmp_path: Path)
 
 
 def test_overview_job_and_mood_runtime_are_platform_and_model_independent() -> None:
-    for path in (OVERVIEW_RUNTIME, JOB_RUNTIME, MOOD_DOMAIN):
+    for relative in (
+        "src/backend/api/library_overview_runtime.py",
+        "src/backend/shared/job_runtime.py",
+        "src/backend/api/job_runtime.py",
+        "src/core/companion_core/memory_mood.py",
+    ):
+        path = ROOT / relative
         imported_modules = _imported_modules(path)
-        assert all(not module.startswith("fastapi") for module in imported_modules)
-        assert all("model" not in module for module in imported_modules)
-        assert all("ai_kernel" not in module for module in imported_modules)
-        assert all("routes" not in module for module in imported_modules)
+        assert all(not module.startswith("fastapi") for module in imported_modules), f"{relative}: fastapi dependency"
+        assert all("model" not in module for module in imported_modules), f"{relative}: model dependency"
+        assert all("ai_kernel" not in module for module in imported_modules), f"{relative}: ai_kernel dependency"
+        assert all("routes" not in module for module in imported_modules), f"{relative}: routes dependency"
+
+
+@pytest.fixture
+def isolated_runtime_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    # 镜像固定的真实文件，仅替换仓库根，保证控制用例检验生产门禁实际选择的路径。
+    for relative in (
+        "src/backend/api/library_overview_runtime.py",
+        "src/backend/shared/job_runtime.py",
+        "src/backend/api/job_runtime.py",
+        "src/core/companion_core/memory_mood.py",
+    ):
+        copied = tmp_path / relative
+        copied.parent.mkdir(parents=True, exist_ok=True)
+        copied.write_text((ROOT / relative).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    return tmp_path
+
+
+def test_independence_gate_accepts_existing_runtime_dependencies(isolated_runtime_root: Path) -> None:
+    test_overview_job_and_mood_runtime_are_platform_and_model_independent()
+
+
+@pytest.mark.parametrize(
+    "relative",
+    ("src/backend/shared/job_runtime.py", "src/backend/api/job_runtime.py"),
+    ids=("shared-owner", "api-adapter"),
+)
+@pytest.mark.parametrize(
+    ("statement", "forbidden"),
+    (
+        pytest.param("from fastapi import FastAPI", "fastapi", id="fastapi-from"),
+        pytest.param("import fastapi as web", "fastapi", id="fastapi-import"),
+        pytest.param("from backend.memory_app import model_config", "model", id="model-from"),
+        pytest.param("import backend.memory_app.model_config as config", "model", id="model-import"),
+        pytest.param("from core import ai_kernel", "ai_kernel", id="ai-kernel-from"),
+        pytest.param("import core.ai_kernel as kernel", "ai_kernel", id="ai-kernel-import"),
+        pytest.param("from backend.api import routes", "routes", id="routes-from"),
+        pytest.param("import backend.api.routes as handlers", "routes", id="routes-import"),
+    ),
+)
+def test_independence_gate_rejects_job_runtime_dependency_regressions(
+    isolated_runtime_root: Path, relative: str, statement: str, forbidden: str,
+) -> None:
+    test_overview_job_and_mood_runtime_are_platform_and_model_independent()
+    copied = isolated_runtime_root / relative
+    copied.write_text(copied.read_text(encoding="utf-8") + f"\n{statement}\n", encoding="utf-8")
+
+    with pytest.raises(AssertionError, match=forbidden):
+        test_overview_job_and_mood_runtime_are_platform_and_model_independent()
 
 
 def test_companion_memory_state_projects_counts_without_library_content() -> None:

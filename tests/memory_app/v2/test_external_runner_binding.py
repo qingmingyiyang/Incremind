@@ -12,7 +12,8 @@ from backend.memory_app.v2.privacy import set_private_project
 from core.ai_kernel.turn_kinds import freeze_turn_request
 from core.ai_tooling import tool_contract_identity
 from core.ai_tooling.contracts import is_external_task_execution_contract
-from tests.memory_app.v2.test_external_context import env, prepare, TURN, DAY
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
+from tests.memory_app.v2.test_external_context import prepare, TURN, DAY
 from tests.memory_app.v2.test_external_host import setup_host
 
 

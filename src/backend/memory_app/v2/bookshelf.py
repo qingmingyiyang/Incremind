@@ -315,7 +315,7 @@ def _content(query, spine, question, *, rank_reference=None):
     return candidate
 
 
-def consult_bookshelf(query, project, question, plan, *, scene=None):
+def consult_bookshelf(query, project, question, plan, *, scene=None, require_source_snapshot=False):
     version = privacy_revision(query.records)
     spines = _spines(query, project, scene)
     proxies = [
@@ -377,8 +377,15 @@ def consult_bookshelf(query, project, question, plan, *, scene=None):
                 candidate = _content(query, spine, question, rank_reference=plan.get('rank_reference'))
             except (RecognitionError, ValueError):
                 candidate = None
-            if candidate is None:
-                skipped += 1
+            if candidate is None or require_source_snapshot and candidate.get('snapshot') is None:
+                if candidate is None:
+                    skipped += 1
+                else:
+                    # 严格读取方沿原来源资格跳过资料，保留普通翻书的既有行为。
+                    excluded = {'type': candidate['kind'], 'id': candidate['entry']['id'],
+                        'revision': candidate['entry']['revision'], 'reason': 'source_unavailable'}
+                    if len(plan['excluded_sources']) < 20 and excluded not in plan['excluded_sources']:
+                        plan['excluded_sources'].append(excluded)
                 continue
             if plan.get('time_scope'):
                 eligible = query.filter_time_candidates([candidate], plan['time_scope'], plan['time_documents'])

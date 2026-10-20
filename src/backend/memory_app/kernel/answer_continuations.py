@@ -10,6 +10,31 @@ from core.storage_provider import SQLiteStructuredRecord
 
 COLLECTION = 'v2_answer_continuations'
 PLAN_KIND = 'answer-continuation-plan-v1'
+PREPARATION_KIND = 'answer-stop-preparation-v1'
+
+
+def save_preparation(query, identity, parameters, *, request, store, runtime):
+    lease = runtime._run_lease_context.get()
+    frozen = store.get_request(identity)
+    if (lease is None or lease.turn_id != identity or request['turn_id'] != identity
+            or frozen['scope']['project_id'] != parameters['project']
+            or frozen['input']['text'] != parameters['cleaned'] or store.assert_active_run_lease(lease) is None):
+        raise ValueError('answer_preparation_lease_unavailable')
+    binding = {'turn_id': identity, 'project_id': parameters['project'], 'question': parameters['cleaned'],
+        'request': frozen, 'lease': {'owner_id': lease.owner_id, 'generation': lease.generation},
+        'parameters': encode(parameters)}
+    saved = store.get_immutable_payload(identity, PREPARATION_KIND)
+    if saved is not None:
+        if any(saved[1][key] != binding[key] for key in ('turn_id', 'project_id', 'question', 'request', 'parameters')):
+            raise ValueError('answer_preparation_changed')
+        return
+    ref = store.get_or_create_immutable_payload(identity, PREPARATION_KIND, binding)
+    with query.records.begin() as tx:
+        if tx.read(COLLECTION, identity) is not None:
+            raise ValueError('answer_preparation_already_exists')
+        tx.put(COLLECTION, identity, {'project_id': binding['project_id'], 'question': binding['question'],
+            'state': 'prepared', 'plan_ref': ref}, expected_revision=0)
+        tx.commit()
 
 
 def encode(value):
@@ -97,20 +122,34 @@ def save_plan(query, identity, plan, history, *, request, store, runtime):
         raise ValueError('answer_continuation_lease_changed')
     with query.records.begin() as tx:
         old = tx.read(COLLECTION, identity)
-        if old is not None:
+        preparation = store.get_immutable_payload(identity, PREPARATION_KIND)
+        if old is not None and (preparation is None or old.payload['plan_ref'] != preparation[0]
+                or old.payload['state'] not in {'prepared', 'continuing'}):
             raise ValueError('answer_continuation_already_exists')
-        tx.put(COLLECTION, identity, {'project_id': plan['project_id'], 'question': plan['question'],
-            'state': 'prepared', 'plan_ref': ref}, expected_revision=0)
+        tx.put(COLLECTION, identity, {**(old.payload if old else {}), 'project_id': plan['project_id'],
+            'question': plan['question'], 'state': 'prepared', 'plan_ref': ref},
+            expected_revision=old.revision if old else 0)
         tx.commit()
+
+
+def plan_reference(query, identity, reference):
+    store = query.answer_turns.application.state.ai_turn_store
+    for kind in (PLAN_KIND, PREPARATION_KIND):
+        saved = store.get_immutable_payload(identity, kind)
+        if saved is not None and reference == saved[0]:
+            return saved
+    raise ValueError('invalid_answer_continuation_plan_reference')
 
 
 def plan_binding(query, row):
     store = query.answer_turns.application.state.ai_turn_store
-    saved = store.get_immutable_payload(row.object_id, PLAN_KIND)
-    if saved is None or row.payload.get('plan_ref') != saved[0] or 'capsule' in row.payload:
+    saved = plan_reference(query, row.object_id, row.payload.get('plan_ref'))
+    if 'capsule' in row.payload:
         raise ValueError('invalid_answer_continuation_plan_reference')
     binding = saved[1]
-    if (type(binding) is not dict or set(binding) != {'turn_id', 'project_id', 'question', 'request', 'lease', 'capsule'}
+    if (type(binding) is not dict or set(binding) not in (
+            {'turn_id', 'project_id', 'question', 'request', 'lease', 'capsule'},
+            {'turn_id', 'project_id', 'question', 'request', 'lease', 'parameters'})
             or binding['turn_id'] != row.object_id or binding['project_id'] != row.payload['project_id']
             or binding['question'] != row.payload['question'] or binding['request'] != store.get_request(row.object_id)
             or type(binding['lease']) is not dict or set(binding['lease']) != {'owner_id', 'generation'}

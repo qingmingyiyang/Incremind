@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from backend.memory_app.kernel.receipt_projection import kernel_call_groups
 from tests.memory_app.test_model_costs import RATES, save_prices
 from tests.memory_app.v2.test_workbench_stream import events, native_app
-from tests.memory_app.v2.test_workbench_ask import env as workbench_env
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as workbench_env
 
 
 @pytest.mark.parametrize('usage,duplicate_final,expected', [

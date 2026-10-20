@@ -2,9 +2,16 @@ import json
 
 from backend.memory_app.v2.followup import read_history
 from backend.memory_app.v2.budget import text_tokens
-from tests.memory_app.v2.test_workbench_ask import env as _env_fixture, publish, ask
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as _env_fixture, publish, ask
 
 env = _env_fixture
+
+
+def model_history(query, project, thread, question):
+    # 采用当前模型的输入预算与结构化提示开销，保留权限测试需要的真实历史。
+    _, budget, overhead = query.ask_budget()
+    return read_history(query.records, project, thread, question, budget=budget,
+                        prompt_overhead=overhead, query=query)
 
 
 def test_followup_condenses_before_retrieval_but_answers_original_with_history(env):
@@ -30,7 +37,7 @@ def test_followup_condenses_before_retrieval_but_answers_original_with_history(e
     assert [c["id"] for c in receipt["citations"]] == [insight.id]
     assert "它有哪些原则？" in env.model.messages[-1]["content"]
     assert "Synthetic answer" in env.model.messages[-1]["content"]
-    assert receipt["model_usage"] == {"total_tokens": 14}
+    assert receipt["model_usage"] == {"total_tokens": 21}
     part = next(p for p in receipt["context"]["parts"] if p["key"] == "history")
     assert part["count"] == 1 and 0 < part["tokens"] <= 800
 
@@ -66,7 +73,7 @@ def test_history_last_three_same_thread_and_project_and_strips_markers(env):
         )
         tx.commit()
     history = read_history(env.records, "alpha", "thread-a", "current", budget=6000)
-    assert len(history["turns"]) <= 3
+    assert 0 < len(history["turns"]) <= 3
     assert "foreign" not in history["text"] and "question 0" not in history["text"]
     assert "[1]" not in history["text"] and "【2】" not in history["text"]
     assert all(text_tokens(turn["answer"]) <= 300 for turn in history["turns"])
@@ -147,7 +154,7 @@ def test_manual_forget_drops_history_of_all_sent_sources(env):
     receipt = response.json()["turn"]["receipt"]["ask"]
     assert receipt["trace"][0]["history_turn_ids"] == []
     assert receipt["trace"][0]["condensed_question"] is None
-    assert env.model.calls == calls + 1
+    assert env.model.calls == calls + 2
     assert receipt["citations"][0]["id"] == first_insight.id
 
 
@@ -203,10 +210,10 @@ def test_real_wire_receipt_is_body_free_linked_to_turn_and_usage_is_aggregated(e
     wire = kernel_wire_receipt(env, ids[0])
     assert wire["turn_id"] == saved["turn"]["id"] and wire["status"] == "succeeded"
     assert "alpha" not in json.dumps(wire) and "question" not in json.dumps(wire)
-    assert receipt["model_usage"]["total_tokens"] == 16
+    assert receipt["model_usage"]["total_tokens"] == 23
     from backend.memory_app.kernel.receipt_projection import question_receipt
     projected = question_receipt(env.root, saved['turn']['id'], 'alpha', {})
-    assert projected['model_usage'] == receipt['model_usage'] == {'total_tokens': 16}
+    assert projected['model_usage'] == receipt['model_usage'] == {'total_tokens': 23}
 
 
 def test_shared_ancestors_are_memoized_and_deduplicated(env, monkeypatch):
@@ -265,7 +272,7 @@ def test_invalid_structured_reply_keeps_actual_wire_usage(env):
     receipt = response.json()["turn"]["receipt"]["ask"]
     assert receipt["trace"][0]["condense_status"] == "failed"
     assert receipt["trace"][0]["condensed_question"] is None
-    assert receipt["model_usage"]["total_tokens"] == 16
+    assert receipt["model_usage"]["total_tokens"] == 23
 
 
 def test_timeout_late_wire_usage_never_rewrites_finished_turn(env, monkeypatch):
@@ -335,7 +342,7 @@ def test_source_document_manual_forget_removes_recognition_history(env):
             "v2_document_recall", doc, {"project_id": "alpha", "state": "forgotten", "by": "user"}, expected_revision=0
         )
         tx.commit()
-    history = read_history(env.records, "alpha", first["thread_id"], "它呢？", query=env.domains.query)
+    history = model_history(env.domains.query, "alpha", first["thread_id"], "它呢？")
     assert history["text"] == "" and history["turns"] == []
 
 
@@ -374,7 +381,7 @@ def test_archive_after_history_read_blocks_guard(env):
     publish(env, doc=doc)
     first = ask(env).json()
     query = env.domains.query
-    history = read_history(env.records, "alpha", first["thread_id"], "它呢？", query=query)
+    history = model_history(query, "alpha", first["thread_id"], "它呢？")
     assert history["text"]
     with env.records.begin() as tx:
         row = tx.read("documents", doc)
@@ -431,24 +438,56 @@ def test_followup_idempotent_replay_does_not_condense_or_charge_again(env):
     calls = env.model.calls
     replay = env.http.post("/api/v2/workbench/turns", json=body, headers=headers)
     assert replay.status_code == 200 and replay.json() == response.json()
-    assert env.model.calls == calls == 3
+    assert env.model.calls == calls == 5
 
 
 def test_exhausted_history_reserve_has_no_condense_call(env):
+    import asyncio
+    from backend.memory_app.v2.followup import condense
+    from core.ai_kernel.sqlite_store import SQLiteAITurnStore
+
     publish(env)
     first = ask(env).json()
-    env.model.generation_budget_limits = lambda **kwargs: {"window": 1000, "reserve": 1000}
+    assert model_history(env.domains.query, "alpha", first["thread_id"], "它呢？")["text"]
+    # 输入空间可容纳当前结构化协议，但历史份额扣除提示开销后已经耗尽。
+    env.model.generation_budget_limits = lambda **kwargs: {"window": 32000, "reserve": 25000}
+    history = model_history(env.domains.query, "alpha", first["thread_id"], "它呢？")
+    assert history["text"] == "" and history["turns"] == []
     calls = env.model.calls
+    result = asyncio.run(condense(env.domains.query, "alpha", "它呢？", history, turn_id="empty-history"))
+    assert result == {"question": None, "usage": {}, "receipt_ids": [], "status": "skipped", "usage_complete": True}
+    assert env.model.calls == calls
     response = ask(env, text="它呢？", thread_id=first["thread_id"])
     assert response.status_code == 200, response.text
-    receipt = response.json()["turn"]["receipt"]["ask"]
+    turn = response.json()["turn"]
+    receipt = turn["receipt"]["ask"]
     assert receipt["trace"][0]["condense_status"] == "skipped"
-    assert receipt["trace"][0]["history_turn_ids"] == [] and env.model.calls == calls
+    assert receipt["trace"][0]["condense_receipt_ids"] == []
+    assert receipt["trace"][0]["history_turn_ids"] == []
+    assert receipt["trace"][0]["condensed_question"] is None
+    assert receipt["no_match"] is True
+    # 缩写没有派发；唯一外发属于无匹配后的检索改写。
+    assert env.model.calls == calls + 1
+    rewrite_ids = receipt["trace"][0]["rewrite_receipt_ids"]
+    assert len(rewrite_ids) == 1
+    assert receipt["model_usage"] == {"total_tokens": 7}
+    kernel = SQLiteAITurnStore(env.root / ".rebuild-data" / "ai-turns.sqlite3")
+    events = kernel.events_after(turn["id"])
+    dispatched = [event for event in events if event["type"] == "model.attempt.dispatched"]
+    terminal = [event for event in events if event["type"] == "model.attempt.terminal"]
+    assert len(dispatched) == len(terminal) == 1
+    assert terminal[0]["data"]["receipt_ref"] == rewrite_ids[0]
+    assert dispatched[0]["data"]["payload_ref"] in terminal[0]["data"]["evidence_refs"]
+    frozen = kernel.get_immutable_payload(turn["id"], "answer-model-input-multi-query")
+    assert frozen[1]["response_schema"]["title"] == "QueryVariants"
+    assert kernel.get_immutable_payload(turn["id"], "answer-model-input-followup") is None
+    assert kernel.get_immutable_payload(turn["id"], "answer-model-result-followup") is None
 
 
 def test_condensation_preserves_original_detail_minimum_layer(env):
     from tests.memory_app.v2.test_workbench_ask import add_document
-    doc, _ = add_document(env, original="alpha beta gamma", body="alpha beta gamma")
+    doc, _ = add_document(env, original="alpha beta gamma is the original statement.",
+                          body="alpha beta gamma is the reviewed statement.")
     publish(env, doc=doc)
     first = ask(env).json()
     original = env.model.complete
@@ -460,7 +499,7 @@ def test_condensation_preserves_original_detail_minimum_layer(env):
     response = ask(env, text="它的原文怎么说？", thread_id=first["thread_id"])
     assert response.status_code == 200, response.text
     receipt = response.json()["turn"]["receipt"]["ask"]
-    assert any(step["layer"] in {"note", "source"} and step["selected"] > 0 for step in receipt["trace"])
+    assert any(step["layer"] in {"note", "source"} and step["selected"] > 0 for step in receipt["trace"]), receipt
 
 
 def test_three_history_turns_validate_shared_source_once_per_guard(env, monkeypatch):
@@ -478,7 +517,7 @@ def test_three_history_turns_validate_shared_source_once_per_guard(env, monkeypa
             tx.put("v2_turns", "shared-" + str(index), payload, expected_revision=0)
         tx.commit()
     query = env.domains.query
-    history = read_history(env.records, "alpha", first["thread_id"], "current", query=query)
+    history = model_history(query, "alpha", first["thread_id"], "current")
     assert len(history["turns"]) == 3
     plans, snapshots = [], []
     original_plan = query.validate_ask_plan
@@ -512,7 +551,7 @@ def test_conflicting_frozen_history_dependencies_reject_in_either_order(env):
     publish(env)
     first = ask(env).json()
     query = env.domains.query
-    history = read_history(env.records, "alpha", first["thread_id"], "current", query=query)
+    history = model_history(query, "alpha", first["thread_id"], "current")
     target = query.ask_target()
     validate_history(query, "alpha", history, target)
     original = history["dependencies"][0]
@@ -549,7 +588,7 @@ def test_shared_history_guard_rereads_manual_forget_and_source_revision(env):
             tx.put("v2_turns", "shared-" + str(index), payload, expected_revision=0)
         tx.commit()
     query = env.domains.query
-    history = read_history(env.records, "alpha", first["thread_id"], "current", query=query)
+    history = model_history(query, "alpha", first["thread_id"], "current")
     assert len(history["turns"]) == 3
     target = query.ask_target()
     validate_history(query, "alpha", history, target)
@@ -559,7 +598,7 @@ def test_shared_history_guard_rereads_manual_forget_and_source_revision(env):
         validate_history(query, "alpha", history, target)
     set_preference(env.records, WorkScope("local-user", "alpha"), insight.id,
         recognition_revision=1, preference_revision=1, state="normal")
-    history = read_history(env.records, "alpha", first["thread_id"], "current", query=query)
+    history = model_history(query, "alpha", first["thread_id"], "current")
     validate_history(query, "alpha", history, target)
     with env.records.begin() as tx:
         source = tx.read("recognition_experiences", experience)
@@ -581,7 +620,7 @@ def test_document_history_guard_rechecks_source_snapshot_without_document_change
     experience, _ = ensure_document_experience(env.documents, env.service, "alpha", document)
     first = ask(env).json()
     query = env.domains.query
-    history = read_history(env.records, "alpha", first["thread_id"], "current", query=query)
+    history = model_history(query, "alpha", first["thread_id"], "current")
     assert history["text"]
     assert all(candidate["kind"] == "document"
         for dependency in history["dependencies"] for candidate in dependency["chosen"])
@@ -605,7 +644,7 @@ def test_history_guard_reads_target_once_and_rejects_later_target_change(env, mo
     publish(env)
     first = ask(env).json()
     query = env.domains.query
-    history = read_history(env.records, "alpha", first["thread_id"], "current", query=query)
+    history = model_history(query, "alpha", first["thread_id"], "current")
     target = query.ask_target()
     original = env.model.public
     reads = []

@@ -104,7 +104,7 @@ def test_report_off_clear_and_body_free(copy_root):
     assert signal_report(copy_root)=={}
 
 
-from tests.memory_app.v2.test_workbench_ask import env as ask_env
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as ask_env
 
 
 def test_real_answer_input_and_readonly_query_preserve_input(ask_env):

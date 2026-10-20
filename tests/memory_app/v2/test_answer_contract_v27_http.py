@@ -4,7 +4,7 @@ import pytest
 
 from core.ai_kernel.sqlite_store import SQLiteAITurnStore
 from backend.memory_app.answer_proof import REVIEW_KEY, read_answer_input, select_answer_input
-from tests.memory_app.v2.test_workbench_ask import env as _env_fixture
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as _env_fixture
 
 env = _env_fixture
 

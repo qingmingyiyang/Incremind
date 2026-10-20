@@ -119,6 +119,42 @@ class MemoryTurn:
         # Legacy adapters lack wire receipts. A rejected returned value is known;
         # a remote transport exception provides no such evidence.
         original_route = self.store.get_immutable_payload(self.turn_id, "memory-model-route-v1")
+        if (not any(event['type'].startswith('model.attempt.') for event in events)
+                and self.store.get_immutable_payload(self.turn_id, _OUTPUT) is None):
+            from .aux_routing import CHOICE_KIND
+            choice = self.store.get_immutable_payload(self.turn_id, CHOICE_KIND)
+            binding = choice[1] if choice is not None else {}
+            configuration = binding.get('parent', {}).get('configuration', {})
+            routed = [event for event in events if event['type'] == 'model.routed']
+            failed = [event for event in events if event['type'] == 'model.failed']
+            requested = [event for event in events if event['type'] == 'model.requested']
+            base_url = configuration.get('base_url')
+            remote = urlsplit(base_url) if isinstance(base_url, str) else None
+            if (choice is not None and 'model' in binding and binding['model'] is None
+                    and configuration.get('purpose') == 'generation'
+                    and isinstance(configuration.get('model'), str) and configuration['model']
+                    and type(configuration.get('revision')) is int and configuration['revision'] > 0
+                    and configuration.get('configured') is False and configuration.get('has_api_key') is False
+                    and not configuration.get('subscription_binding')
+                    and configuration.get('provider') == 'openai' and configuration.get('allow_remote') is True
+                    and remote is not None and remote.scheme == 'https' and remote.hostname
+                    and remote.hostname not in {'localhost', '127.0.0.1', '::1'}
+                    and original_route is not None and len(requested) == len(routed) == len(failed) == 1
+                    and original_route[1] == {key: configuration.get(key)
+                        for key in ('provider', 'model', 'base_url', 'revision', 'allow_remote')}
+                    and routed[0]['data'].get('payload_ref') == original_route[0]
+                    and original_route[0] in failed[0]['data'].get('evidence_refs', ())):
+                request_id = requested[0]['correlation'].get('model_request_id')
+                receipt_ref = failed[0]['data'].get('receipt_ref')
+                if (isinstance(request_id, str) and request_id and receipt_ref
+                        and routed[0]['correlation'].get('model_request_id') == request_id
+                        and failed[0]['correlation'].get('model_request_id') == request_id):
+                    receipt = self.store.get(receipt_ref)
+                    # 物理预留与派发事件同事务提交；完整配置失败证明才能开启后继提炼。
+                    if (isinstance(receipt, dict) and receipt.get('turn_id') == self.turn_id
+                            and receipt.get('model_request_id') == request_id and receipt.get('status') == 'failed'
+                            and receipt.get('input_recorded') is False and receipt.get('output_recorded') is False):
+                        return True
         original_local = original_route is not None and urlsplit(
             str(original_route[1].get("base_url", ""))).hostname in {"localhost", "127.0.0.1", "::1"}
         return bool(self.store.get_immutable_payload(self.turn_id, _REJECTED)) or (

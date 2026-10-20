@@ -7,7 +7,7 @@ from core.storage_provider import SQLiteUnitOfWorkConflict
 from core.search_and_recall.evidence_windows import query_terms
 from ..workspace_contracts import _json, _project
 from .insights import resolve_insight, insight_view
-from .projects import assign_scene
+from .projects import assign_scene, scene_of
 from .transaction_records import TransactionRecords
 from ..source_egress import SourceEgressService, recognition_service
 
@@ -50,9 +50,31 @@ def install_inbox_routes(router, *, records, service, read):
                             or hint.payload.get('scope_hint') != target.object_id or target.object_id == source_project):
                         raise HTTPException(400, 'invalid_insight_destination')
                 filed = tx.read('v2_inbox_filings', original.object_id)
+                candidate = tx.read('recognition_candidates', original.object_id)
+                destination = WorkScope('local-user', target.object_id)
+                if (not confirm and filed is not None
+                        and filed.payload.get('source_project_id') == source_project
+                        and filed.payload.get('source_revision') == revision
+                        and filed.payload.get('target_project_id') == target.object_id):
+                    # 只回读同次已完成归档，人工恢复或后续修改仍走原冲突处理。
+                    retired = ((candidate is not None and candidate.payload.get('state') == 'rejected'
+                                and candidate.revision == revision + 1)
+                               or (candidate is None and original.payload.get('state') == 'active'
+                                   and original.revision == revision
+                                   and preference(tx, scope, original.object_id)['recall_state'] == 'forgotten'))
+                    saved = tx.read('recognition_candidates', filed.payload['candidate_id'])
+                    if (retired and saved is not None and saved.payload.get('state') == 'pending'
+                            and saved.payload.get('scope') == {'user_id': 'local-user', 'project_id': target.object_id}):
+                        assignment = scene_of(tx, 'candidate', saved.object_id)
+                        same_scene = ((assignment is None and scene is None)
+                                      or (assignment is not None and assignment.get('project_id') == target.object_id
+                                          and assignment.get('scene') == scene))
+                        if same_scene:
+                            view = insight_view(tx, destination, saved.object_id, service=service)
+                            if view is not None:
+                                return view
                 if original.revision != revision or (filed and filed.payload['source_revision'] == revision):
                     raise HTTPException(409, 'insight_revision_conflict')
-                candidate = tx.read('recognition_candidates', original.object_id)
                 if candidate is not None:
                     if candidate.payload['state'] != 'pending':
                         raise HTTPException(409, 'insight_not_pending')
@@ -61,7 +83,6 @@ def install_inbox_routes(router, *, records, service, read):
                 enlisted = TransactionRecords(tx)
                 writer = recognition_service(enlisted, cache_invalidation=service.cache_invalidation,
                     product_draft_validator=service.product_draft_validator)
-                destination = WorkScope('local-user', target.object_id)
                 from .insights import source_experiences
                 source_rows = source_experiences(tx, scope, original.payload.get('source_experience_ids', []),
                     original.payload.get('source_recognition_ids', []),

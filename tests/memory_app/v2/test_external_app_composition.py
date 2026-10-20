@@ -12,7 +12,8 @@ from backend.memory_app.kernel.ai_runtime import get_or_build_ai_runtime
 from backend.memory_app.v2.external_host import ExecutorRegistration, HostAdmission
 from backend.memory_app.v2.external_runner import ExternalRunnerError
 from backend.shared.deployment import DeploymentLayout
-from tests.memory_app.v2.test_external_context import env, prepare, TURN, DAY
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
+from tests.memory_app.v2.test_external_context import prepare, TURN, DAY
 from tests.memory_app.v2.test_workbench_ask import assemble, Model
 from backend.recognition import RecognitionService
 from core.document_engine import SQLiteDocumentRepository

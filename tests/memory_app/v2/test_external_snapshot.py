@@ -6,7 +6,8 @@ import pytest
 from backend.memory_app.v2.policies import ACTIVE
 from backend.memory_app.v2.privacy import set_private_project
 from core.effect_log import EffectState
-from tests.memory_app.v2.test_external_context import env, settings
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env
+from tests.memory_app.v2.test_external_context import settings
 from tests.memory_app.v2.test_mcp_recall import method
 
 

@@ -90,7 +90,8 @@ def install_v2_routes(application, *, runtime_root, records, models, documents, 
     install_context_feedback_routes(application, records=records)
     install_subscription_routes(application, models=models)
     install_settings_routes(application, runtime_root=runtime_root, records=records, models=models,
-                           documents=documents, workspace=workspace)
+                           documents=documents, workspace=workspace,
+                           mutation_lock=getattr(application.state, 'recognition_mutation_lock', None))
     from .asr_lexicon import install_asr_lexicon_routes
     install_asr_lexicon_routes(application, runtime_root=runtime_root, records=records)
     from .agent_data_tools import AgentDataTools

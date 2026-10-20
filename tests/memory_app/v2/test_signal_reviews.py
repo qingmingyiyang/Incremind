@@ -111,7 +111,7 @@ def test_current_turn_revision_changes_reject_without_decision(env):
     put(env.records,'v2_turns','ask-a',{**row.payload,'user_text':'changed question'})
     assert decide(env,[action(item)]).status_code==409
     assert not env.records.list('v2_signal_decisions')
-from tests.memory_app.v2.test_workbench_ask import env as ask_env, publish, add_document, ask
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as ask_env, publish, add_document, ask
 
 
 def real_owner(ask_env):

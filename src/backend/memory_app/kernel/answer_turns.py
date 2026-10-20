@@ -112,15 +112,27 @@ class ProductAnswerCapability:
             handles = _AnswerHandles()
             token = ACTIVE_ANSWER.set((request, self.store, self.service.query, handles))
             try:
-                result = asyncio.run(execution["operation"]())
-                execution_control_from(request).checkpoint()
+                from backend.shared.llm.model_transport import ModelInterrupted
+                try:
+                    result = asyncio.run(execution["operation"]())
+                except ModelInterrupted as interrupted:
+                    if interrupted.interruption != 'stopped':
+                        raise
+                    result = {'receipt': {'ask': {'answer': None, 'partial': '', 'interruption': 'stopped',
+                        'citations': [], 'layers': dict.fromkeys(('insight', 'summary', 'note', 'source', 'persona'), 0),
+                        'trace': [], 'egress_receipt_id': None, 'no_match': False, 'context': None,
+                        'model_usage': {}, 'excluded_sources': []}}, 'chosen': []}
                 answer = result.get('receipt', {}).get('ask', result)
+                if answer.get('interruption') != 'stopped':
+                    execution_control_from(request).checkpoint()
                 if 'interruption' in answer:
                     self.service.preserve_interruption(request, execution, result, handles)
                     raise AnswerInterrupted(result)
                 ref = self.store.get_or_create_immutable_payload(identity, RESULT_KIND, result)
             except BaseException as error:
                 execution["error"] = error
+                if not isinstance(error, AnswerInterrupted):
+                    execution_control_from(request).checkpoint()
                 raise ValueError("product answer execution failed") from None
             finally:
                 ACTIVE_ANSWER.reset(token)
@@ -139,12 +151,92 @@ class ProductAnswerTurns:
         with self.lock:
             return get_or_build_ai_runtime(SimpleNamespace(app=self.application), SimpleNamespace(root_dir=self.root))
 
+    def boundary_tools(self, identity):
+        from core.effect_log import EffectState
+        store = self.application.state.ai_turn_store
+        events = tuple(store.events_after(identity))
+        result = []
+        for event in events:
+            if event['type'] != 'tool.intent.recorded':
+                continue
+            invocation = event['correlation']['tool_call_id']
+            intent = store.get(event['data']['payload_ref'])
+            outcomes = [value for value in events if value['type'] == 'tool.outcome.recorded'
+                and value['correlation']['tool_call_id'] == invocation]
+            if len(outcomes) != 1:
+                return None
+            outcome = store.get(outcomes[0]['data']['payload_ref'])
+            effect = store.effect_runner.log.get(invocation)
+            if (effect is None or effect.turn_id != identity or effect.intent_ref != event['data']['payload_ref']
+                    or intent['turn_id'] != identity or outcome['turn_id'] != identity
+                    or outcome['invocation_id'] != invocation or outcome['capability_id'] != intent['capability_id']
+                    or intent['capability_id'] != 'workbench.answer.execute'
+                    or outcome['effect_certainty'] != 'confirmed_none'
+                    or (outcome['status'], effect.state) not in {('completed', EffectState.SETTLED_OK),
+                        ('failed', EffectState.SETTLED_ERR), ('cancelled', EffectState.SETTLED_ERR)}):
+                return None
+            result.append({'invocation_id': invocation, 'intent_ref': event['data']['payload_ref'],
+                'outcome_ref': outcomes[0]['data']['payload_ref'], 'effect_state': effect.state.value})
+        return result
+
+    def pause_boundary(self, identity):
+        from .answer_continuations import COLLECTION, plan_binding
+        runtime, store = self.application.state.ai_runtime, self.application.state.ai_turn_store
+        owner, lease = runtime.product_stops, runtime._run_lease_context.get()
+        if not owner.requested(identity) or lease is None or lease.turn_id != identity or store.assert_active_run_lease(lease) is None:
+            return None
+        row = self.query.records.read(COLLECTION, identity)
+        if row is None:
+            return None
+        original = plan_binding(self.query, row)
+        attempts, tools = owner.settled_attempts(identity), self.boundary_tools(identity)
+        if attempts is None or not tools:
+            return None
+        owner.ensure_cancel_event(identity)
+        old = row.payload.get('result', {}).get('receipt', {}).get('ask', {})
+        partial = old.get('partial', '')
+        from ..v2.turn_frames import FRAMES, STREAMS, frame_text
+        stream, frames = self.query.records.read(STREAMS, identity), self.query.records.read(FRAMES, identity)
+        if (stream is not None and frames is not None and stream.payload.get('binding') == {
+                'kernel_turn_id': identity, 'request': original['request']}
+                and frames.payload.get('project_id') == original['project_id']):
+            text = frame_text(frames.payload)
+            if text is not None:
+                partial = retry_policy_for(original['request'])({'kind': 'partial_output', 'text': text,
+                    'wall_elapsed': 0, 'monotonic_elapsed': 0})['partial']
+        result = {'receipt': {'ask': {**old, 'answer': None, 'partial': partial, 'interruption': 'stopped',
+            'citations': [], 'layers': old.get('layers', {}), 'trace': old.get('trace', []),
+            'egress_receipt_id': old.get('egress_receipt_id'), 'no_match': False,
+            'context': old.get('context'), 'model_usage': old.get('model_usage', {}),
+            'excluded_sources': old.get('excluded_sources', [])}}, 'chosen': row.payload.get('result', {}).get('chosen', [])}
+        stop = owner.current(identity)
+        kind = 'product-answer-stop-boundary-' + str(stop.payload['generation'])
+        event = runtime._new_event(identity, 'turn.cancel.requested', 'waiting_approval',
+            'user stopped answer at settled boundary', actor='user')
+        capsule = {'turn_id': identity, 'project_id': original['project_id'], 'request': original['request'],
+            'plan_ref': row.payload['plan_ref'], 'lease': {'owner_id': lease.owner_id, 'generation': lease.generation},
+            'settled_attempts': attempts, 'tools': tools, 'result': result, 'kind': kind}
+        committed = store.append_event_with_immutable_payload(event, expected_sequence=len(tuple(store.events_after(identity))),
+            immutable_kind=kind, immutable_payload=capsule, run_lease=lease)
+        with self.query.records.begin() as tx:
+            current = tx.read(COLLECTION, identity)
+            if current != row:
+                raise ValueError('answer_boundary_changed')
+            tx.put(COLLECTION, identity, {**row.payload, 'state': 'paused', 'result': result,
+                'invocation_id': tools[-1]['invocation_id'], 'boundary_ref': committed.immutable_payload_ref,
+                'boundary_event_id': committed.event['event_id']}, expected_revision=row.revision)
+            tx.commit()
+        owner.pause(identity, committed.event, committed.immutable_payload_ref)
+        return committed.event
+
     def preserve_interruption(self, request, execution, result, handles):
         from backend.shared.llm.model_transport import is_provider_closed_witness
         from .answer_continuations import COLLECTION, plan_binding
         from .receipt_projection import closed_model_attempt_binding
-        invocation = execution.get('invocation_key', 'answer')
-        call = handles.get(invocation)
+        calls = [(key, value) for key, value in handles.items()
+            if getattr(value, 'interruption', None) == 'stopped']
+        invocation, call = calls[-1] if calls else (execution.get('invocation_key', 'answer'),
+            handles.get(execution.get('invocation_key', 'answer')))
         if call is None or not is_provider_closed_witness(getattr(call, 'close_witness', None)):
             return
         lease = call.runtime._run_lease_context.get()
@@ -155,7 +247,8 @@ class ProductAnswerTurns:
         if self.application.state.ai_turn_store.assert_active_run_lease(lease) is None:
             return
         attempts = closed_model_attempt_binding(self.root, request['turn_id'], frozen['scope']['project_id'],
-            question=frozen['input']['text'], model_request_id=call.model_request_id, lease=owner)
+            question=frozen['input']['text'], model_request_id=call.model_request_id, lease=owner,
+            stopped=getattr(call, 'interruption', None) == 'stopped')
         if attempts is None:
             return
         prepared = self.query.records.read(COLLECTION, request['turn_id'])
@@ -167,6 +260,35 @@ class ProductAnswerTurns:
             'model_request_id': call.model_request_id, 'lease': owner, 'attempts': attempts,
             'plan_ref': prepared.payload['plan_ref'], 'result': result}
         store = self.application.state.ai_turn_store
+        auxiliary_refs = []
+        # 已结束的辅助失败沿原分类保留，只有真实传输关闭证明可参与整轮暂停。
+        for stage, auxiliary in handles.items():
+            if (auxiliary is call or auxiliary.terminal != 'failed'
+                    or not getattr(auxiliary, 'auxiliary_binding', None)
+                    or not is_provider_closed_witness(getattr(auxiliary, 'close_witness', None))
+                    or getattr(auxiliary, 'interruption', None) is not None):
+                continue
+            failures = [event for event in store.events_after(request['turn_id'])
+                if event['type'] == 'model.failed' and event['correlation']['model_request_id'] == auxiliary.model_request_id
+                and event['correlation']['tool_call_id'] == request['tool_call_id'] and event['data']['receipt_ref']]
+            auxiliary_attempts = closed_model_attempt_binding(self.root, request['turn_id'], binding['project_id'],
+                question=binding['question'], model_request_id=auxiliary.model_request_id, lease=owner)
+            if len(failures) != 1 or auxiliary_attempts is None:
+                continue
+            kind, auxiliary_binding = auxiliary.auxiliary_binding
+            proof = {'turn_id': request['turn_id'], 'project_id': binding['project_id'], 'question': binding['question'],
+                'invocation_id': request['tool_call_id'], 'stage': stage, 'model_request_id': auxiliary.model_request_id,
+                'lease': owner, 'attempts': auxiliary_attempts, 'binding_kind': kind, 'binding_ref': auxiliary_binding,
+                'failure_ref': failures[0]['data']['receipt_ref']}
+            reference = store.get_or_create_immutable_payload(request['turn_id'],
+                'product-answer-aux-closed-' + auxiliary.model_request_id, proof)
+            if self.closed_auxiliary(request['turn_id'], reference) != proof:
+                return
+            auxiliary_refs.append(reference)
+        if auxiliary_refs:
+            binding['auxiliary_close_refs'] = auxiliary_refs
+        if getattr(call, 'interruption', None) == 'stopped':
+            binding.update(stage=invocation, internal_partial=getattr(call, 'internal_partial', ''))
         ref = store.get_or_create_immutable_payload(request['turn_id'],
             'product-answer-closed-' + call.model_request_id, binding)
         if store.assert_active_run_lease(lease) is None:
@@ -177,11 +299,46 @@ class ProductAnswerTurns:
                     or row.payload.get('question') != binding['question']
                     or row.payload.get('state') not in {'prepared', 'continuing'}):
                 return
-            tx.put(COLLECTION, row.object_id, {**row.payload, 'state': 'paused', 'result': result,
+            previous = {key: value for key, value in row.payload.items() if key not in {'boundary_ref', 'boundary_event_id'}}
+            tx.put(COLLECTION, row.object_id, {**previous, 'state': 'paused', 'result': result,
                 'invocation_id': binding['invocation_id'],
                 'close_refs': [*row.payload.get('close_refs', []), ref]}, expected_revision=row.revision)
             tx.commit()
         execution['paused_invocation'] = binding['invocation_id']
+
+    def closed_auxiliary(self, identity, reference):
+        from .receipt_projection import closed_model_attempt_binding
+        store = self.application.state.ai_turn_store
+        try:
+            value = store.get(reference)
+            frozen = store.get_request(identity)
+            if (type(value) is not dict or set(value) != {'turn_id', 'project_id', 'question', 'invocation_id',
+                    'stage', 'model_request_id', 'lease', 'attempts', 'binding_kind', 'binding_ref', 'failure_ref'}
+                    or value['turn_id'] != identity or value['project_id'] != frozen['scope']['project_id']
+                    or value['question'] != frozen['input']['text'] or frozen['desired_outcome'] != 'project.answer'
+                    or store.get_immutable_payload(identity, 'product-answer-aux-closed-' + value['model_request_id']) != (reference, value)):
+                return None
+            base = 'answer-gap-binding-' + value['stage'] + '-v1'
+            if value['binding_kind'] != base and not value['binding_kind'].startswith(base + '-'):
+                return None
+            binding = store.get_immutable_payload(identity, value['binding_kind'])
+            inputs = store.get_immutable_payload(identity, 'answer-gap-input-' + value['stage'] + '-v1')
+            if (binding is None or binding[0] != value['binding_ref'] or inputs is None
+                    or binding[1]['turn_id'] != identity or binding[1]['invocation_key'] != value['stage']
+                    or binding[1]['purpose'] != 'aux' or binding[1]['model_request_id'] != value['model_request_id']
+                    or binding[1]['input_ref'] != inputs[0] or inputs[1]['purpose'] != 'aux'):
+                return None
+            failures = [event for event in store.events_after(identity) if event['type'] == 'model.failed'
+                and event['correlation']['model_request_id'] == value['model_request_id']
+                and event['correlation']['tool_call_id'] == value['invocation_id']
+                and event['data']['receipt_ref'] == value['failure_ref'] and event['data']['model_call_purpose'] == 'aux']
+            current = closed_model_attempt_binding(self.root, identity, value['project_id'], question=value['question'],
+                model_request_id=value['model_request_id'], lease=value['lease'])
+            if len(failures) != 1 or current is None or current != value['attempts']:
+                return None
+            return value
+        except (ValueError, TypeError, KeyError):
+            return None
 
     def store_request(self, identity):
         return self.application.state.ai_turn_store.get_request(identity)
@@ -199,16 +356,23 @@ class ProductAnswerTurns:
         if execution is None or execution.get('continuation') != row:
             raise ValueError('answer_continuation_requires_explicit_executor')
         execution['validate_current'](row)
+        if execution.get('stop_generation') is not None:
+            self.application.state.ai_runtime.product_stops.require_generation(row.object_id, execution['stop_generation'])
         with self.query.records.begin() as tx:
             current = tx.read(COLLECTION, row.object_id)
             if current != row:
                 raise ValueError('answer_continuation_revision_changed')
+            if execution.get('stop_generation') is not None:
+                from .task_continuations import STOPS
+                stop = tx.read(STOPS, row.object_id)
+                if stop is None or stop.payload['generation'] != execution['stop_generation']:
+                    raise ValueError('product_stop_changed')
             tx.put(COLLECTION, row.object_id, {**row.payload, 'state': 'continuing',
                 'action_id': action['action_id']}, expected_revision=row.revision)
             tx.commit()
 
     def paused(self, identity, *, require_bundle=True):
-        from .answer_continuations import COLLECTION, plan_binding
+        from .answer_continuations import COLLECTION, plan_binding, plan_reference
         from .receipt_projection import closed_model_attempt_binding
         store = self.application.state.ai_turn_store
         frozen = store.get_request(identity)
@@ -218,6 +382,22 @@ class ProductAnswerTurns:
                 or row.payload.get('question') != frozen['input']['text']
                 or frozen.get('desired_outcome') != 'project.answer'):
             return None
+        if row.payload.get('boundary_ref'):
+            capsule = store.get(row.payload['boundary_ref'])
+            owner = self.application.state.ai_runtime.product_stops
+            event = next((value for value in store.events_after(identity)
+                if value['event_id'] == row.payload['boundary_event_id']), None)
+            plan = plan_binding(self.query, row)
+            if (capsule['request'] != frozen or capsule['project_id'] != frozen['scope']['project_id']
+                    or capsule['plan_ref'] != row.payload['plan_ref'] or capsule['request'] != plan['request']
+                    or capsule['result'] != row.payload['result'] or event is None
+                    or event['type'] != 'turn.cancel.requested' or event['data']['status'] != 'waiting_approval'
+                    or event['data']['evidence_refs'] != [row.payload['boundary_ref']]
+                    or store.get_immutable_payload(identity, capsule['kind']) != (row.payload['boundary_ref'], capsule)
+                    or self.boundary_tools(identity) != capsule['tools']
+                    or owner.settled_attempts(identity) != capsule['settled_attempts']):
+                return None
+            return row
         refs = row.payload.get('close_refs')
         if not isinstance(refs, list) or not refs:
             return None
@@ -226,23 +406,28 @@ class ProductAnswerTurns:
         except (ValueError, TypeError, KeyError):
             return None
         events = tuple(store.events_after(identity))
-        requests = set()
+        requests, auxiliary_requests = set(), set()
         for ref in refs:
             try:
                 if not isinstance(ref, str):
                     return None
                 value = store.get(ref)
+                stopped = value.get('result', {}).get('receipt', {}).get('ask', value.get('result', {})).get('interruption') == 'stopped'
                 if (type(value) is not dict or set(value) != {'turn_id', 'project_id', 'question', 'invocation_id',
-                        'model_request_id', 'lease', 'attempts', 'plan_ref', 'result'}
+                        'model_request_id', 'lease', 'attempts', 'plan_ref', 'result'} | ({'stage', 'internal_partial'} if stopped else set())
+                        | ({'auxiliary_close_refs'} if 'auxiliary_close_refs' in value else set())
                         or value['turn_id'] != identity or value['project_id'] != row.payload['project_id']
-                        or value['question'] != row.payload['question'] or value['plan_ref'] != row.payload['plan_ref']
+                        or value['question'] != row.payload['question']
                         or value['model_request_id'] in requests):
+                    return None
+                reference = plan_reference(self.query, identity, value['plan_ref'])[1]
+                if reference['request'] != frozen or reference['project_id'] != value['project_id']:
                     return None
                 immutable = store.get_immutable_payload(identity, 'product-answer-closed-' + value['model_request_id'])
                 if immutable is None or immutable != (ref, value):
                     return None
                 current = closed_model_attempt_binding(self.root, identity, value['project_id'], question=value['question'],
-                    model_request_id=value['model_request_id'], lease=value['lease'])
+                    model_request_id=value['model_request_id'], lease=value['lease'], stopped=stopped)
                 if current is None or current != value['attempts']:
                     return None
                 if require_bundle:
@@ -256,8 +441,17 @@ class ProductAnswerTurns:
                             or outcome['capability_id'] != 'workbench.answer.execute' or outcome['status'] != 'failed'
                             or outcome['effect_certainty'] != 'confirmed_none'):
                         return None
-                if not requests and value['lease'] != original['lease']:
+                if not requests and value['lease'] != reference['lease']:
                     return None
+                auxiliary_refs = value.get('auxiliary_close_refs', [])
+                if type(auxiliary_refs) is not list:
+                    return None
+                for auxiliary_ref in auxiliary_refs:
+                    auxiliary = self.closed_auxiliary(identity, auxiliary_ref)
+                    if (auxiliary is None or auxiliary['lease'] != value['lease']
+                            or auxiliary['invocation_id'] != value['invocation_id']):
+                        return None
+                    auxiliary_requests.add(auxiliary['model_request_id'])
                 requests.add(value['model_request_id'])
             except (ValueError, TypeError, KeyError):
                 return None
@@ -266,10 +460,11 @@ class ProductAnswerTurns:
             return None
         dispatched = {event['data']['payload_ref'] for event in events if event['type'] == 'model.attempt.dispatched'}
         terminals = [store.get(event['data']['receipt_ref']) for event in events if event['type'] == 'model.attempt.terminal']
-        if len(dispatched) != len(terminals) or any(value['status'] == 'consumer_cancelled' for value in terminals):
+        if len(dispatched) != len(terminals) or any(value['status'] == 'consumer_cancelled'
+                and value['model_request_id'] not in requests for value in terminals):
             return None
         completed = {event['correlation']['model_request_id'] for event in events if event['type'] == 'model.completed'}
-        if any(value['status'] != 'succeeded' and value['model_request_id'] not in requests | completed for value in terminals):
+        if any(value['status'] != 'succeeded' and value['model_request_id'] not in requests | completed | auxiliary_requests for value in terminals):
             return None
         return row
 
@@ -314,13 +509,19 @@ class ProductAnswerTurns:
             'idempotency_key': key, 'created_at': _now()})
         invocation = 'answer-continue-' + action['action_id']
         execution = {'operation': lambda: operation(row, invocation), 'invocation_key': invocation,
-            'continuation': row, 'validate_current': validate_current}
+            'continuation': row, 'validate_current': validate_current, 'action': action,
+            'stop_generation': (runtime.product_stops.continuation_generation(identity)
+                if row.payload['result'].get('receipt', {}).get('ask', row.payload['result']).get('interruption') == 'stopped'
+                else None)}
         with self.lock:
             if identity in self.active:
                 raise HTTPException(409, 'turn_in_progress')
             self.active[identity] = execution
         try:
             await asyncio.to_thread(runner.apply_action_and_wait, action)
+            stopped = self.paused(identity)
+            if stopped is not None and runtime.receipt_for(identity).status == 'waiting_approval':
+                return stopped.payload['result']
             if isinstance(execution.get('error'), AnswerInterrupted):
                 return execution['error'].result
             if 'error' in execution:
@@ -374,7 +575,8 @@ class ProductAnswerTurns:
             self.active[turn_id] = execution
         try:
             await asyncio.to_thread(runner.accept_and_submit, request)
-            deadline = monotonic() + 250
+            from .answer_contract import answer_lifecycle
+            deadline = monotonic() + answer_lifecycle(request)['wait_timeout_seconds']
             receipt = None
             while monotonic() < deadline:
                 receipt = await asyncio.to_thread(runner.wait_for_terminal, turn_id, timeout_seconds=.05)
@@ -382,6 +584,9 @@ class ProductAnswerTurns:
                     break
                 if self.paused(turn_id) is not None and runtime.receipt_for(turn_id).status == 'waiting_approval':
                     break
+            stopped = self.paused(turn_id)
+            if stopped is not None and runtime.receipt_for(turn_id).status == 'waiting_approval':
+                return stopped.payload['result']
             if "error" in execution:
                 if isinstance(execution['error'], AnswerInterrupted):
                     return execution['error'].result
@@ -423,6 +628,9 @@ def generate_answer(models, messages, *, response_model, max_tokens, validate_cu
         return response_model.model_validate(payload["output"]), payload["metadata"]
     store.get_or_create_immutable_payload(request["turn_id"], "answer-model-input-" + invocation_key,
         {"messages": messages, "purpose": purpose, "response_schema": response_model.model_json_schema()})
+    execution = query.answer_turns.active[request['turn_id']]
+    call_key = (invocation_key + '-' + execution['invocation_key']
+        if execution.get('continuation') is not None else invocation_key)
     from ..turn_routing import RecognitionRoutingSnapshot, SNAPSHOT_KIND, _revision
     frozen = store.get_immutable_payload(request["turn_id"], SNAPSHOT_KIND)
     if frozen is None:
@@ -441,7 +649,7 @@ def generate_answer(models, messages, *, response_model, max_tokens, validate_cu
         from .provider_store_binding import auxiliary_provider_store_activation
         activation = auxiliary_provider_store_activation(main_models, models, query.records,
             store, store.get_request(request['turn_id']), frozen[1], route)
-    inner = begin_nested_model_call(request, invocation_key=invocation_key, purpose=purpose)
+    inner = begin_nested_model_call(request, invocation_key=call_key, purpose=purpose)
     handle = _AnswerCall(inner, inner.runtime, request["turn_id"])
     handles[invocation_key] = handle
     try:
@@ -449,6 +657,7 @@ def generate_answer(models, messages, *, response_model, max_tokens, validate_cu
             execution_control=execution_control_from(request), metadata_sink=handle, wire_attempt_sink=handle,
             response_model=response_model, max_tokens=max_tokens, validate_current=validate_wire,
             on_delta=on_delta, purpose=purpose, timeout_seconds=timeout_seconds, retry_policy=retry_policy_for(),
+            stop_requested=lambda: handle.runtime.product_stops.checkpoint(request['turn_id']),
             **({'provider_store_activation': activation} if activation is not None else {}),
             **({'on_retry': on_retry} if on_retry is not None else {}))
         validate_wire()
@@ -464,6 +673,8 @@ def generate_answer(models, messages, *, response_model, max_tokens, validate_cu
         from backend.shared.llm.model_transport import ModelInterrupted
         if isinstance(error, ModelInterrupted):
             handle.close_witness = error.close_witness
+            handle.interruption = error.interruption
+            handle.internal_partial = getattr(error, 'internal_partial', '')
         if handle.terminal is not None:
             handle.discard()
         handle.finalize(error_code="ai.answer_model_failed")
@@ -540,18 +751,31 @@ def _generate_gap_answer(models, messages, *, response_model, max_tokens, valida
             if not any(event['type'] == 'model.requested' and event['data'].get('model_call_purpose') == 'aux'
                     for event in events):
                 raise ValueError('gap_invocation_call_unavailable')
-            if result is None or not any(event['type'] == 'model.completed' for event in events):
+            if result is not None:
+                receipts = result[1]['metadata'].get('kernel_receipt_refs', [])
+                if not any(event['type'] == 'model.completed' and event['data']['receipt_ref'] in receipts
+                        for event in store.events_after(turn_id)):
+                    raise ValueError('gap_invocation_result_unbound')
+                return response_model.model_validate(result[1]['output']), result[1]['metadata']
+            execution = query.answer_turns.active[turn_id]
+            row = execution.get('continuation')
+            if row is None or not any(store.get(ref).get('stage') == invocation
+                    and store.get(ref)['model_request_id'] == fact['model_request_id']
+                    for ref in row.payload['close_refs']):
                 raise ValueError('gap_invocation_interrupted')
-            return response_model.model_validate(result[1]['output']), result[1]['metadata']
+            binding_kind += '-' + execution['invocation_key']
         input_ref = store.get_or_create_immutable_payload(turn_id, input_kind, payload)
-        inner = begin_nested_model_call(request, invocation_key=invocation, purpose='aux')
+        execution = query.answer_turns.active[turn_id]
+        call_key = invocation + '-' + execution['invocation_key'] if execution.get('continuation') is not None else invocation
+        inner = begin_nested_model_call(request, invocation_key=call_key, purpose='aux')
         handle = _AnswerCall(inner, inner.runtime, turn_id)
         handles[invocation] = handle
         try:
-            store.get_or_create_immutable_payload(turn_id, binding_kind,
+            binding_ref = store.get_or_create_immutable_payload(turn_id, binding_kind,
                 {'version': 1, 'turn_id': turn_id, 'invocation_key': invocation, 'purpose': 'aux',
                  'model_request_id': handle.model_request_id, 'input_ref': input_ref,
                  'route_ref': route['payload_ref'], 'route_revision': route['revision']})
+            handle.auxiliary_binding = binding_kind, binding_ref
         except BaseException:
             handle.finalize(error_code='ai.answer_gap_binding_failed')
             raise
@@ -559,7 +783,8 @@ def _generate_gap_answer(models, messages, *, response_model, max_tokens, valida
         output, metadata = selected.complete_governed(messages, routing_snapshot=route,
             execution_control=execution_control_from(request), metadata_sink=handle, wire_attempt_sink=handle,
             response_model=response_model, max_tokens=max_tokens, validate_current=validate_wire,
-            on_delta=on_delta, purpose='aux', timeout_seconds=timeout_seconds)
+            on_delta=on_delta, purpose='aux', timeout_seconds=timeout_seconds, retry_policy=retry_policy_for(),
+            stop_requested=lambda: handle.runtime.product_stops.checkpoint(turn_id))
         validate_wire()
         with handle.lock:
             if handle.terminal == 'failed':
@@ -569,7 +794,14 @@ def _generate_gap_answer(models, messages, *, response_model, max_tokens, valida
             store.get_or_create_immutable_payload(turn_id, result_kind,
                 {'output': output.model_dump(), 'metadata': metadata})
             return output, metadata
-    except BaseException:
+    except BaseException as error:
+        from backend.shared.llm.model_transport import ModelInterrupted
+        if isinstance(error, ModelInterrupted):
+            handle.close_witness = error.close_witness
+            handle.interruption = error.interruption
+            handle.internal_partial = getattr(error, 'internal_partial', '')
+        elif getattr(error, 'close_witness', None) is not None:
+            handle.close_witness = error.close_witness
         if handle.terminal is not None:
             handle.discard()
         handle.finalize(error_code='ai.answer_model_failed')
@@ -593,9 +825,17 @@ def answer_observation(invocation_key):
     request, store, _, handles = active
     handle = handles.get(invocation_key)
     if handle is None:
-        return {"receipt_ids": [], "observations": [], "complete": False}
+        saved = store.get_immutable_payload(request['turn_id'], 'answer-model-result-' + invocation_key)
+        refs = saved[1]['metadata'].get('kernel_receipt_refs', []) if saved is not None else []
+        completed = [event for event in store.events_after(request['turn_id'])
+            if event['type'] == 'model.completed' and event['data']['receipt_ref'] in refs]
+        if len(completed) != 1:
+            return {'receipt_ids': [], 'observations': [], 'complete': False}
+        identity = completed[0]['correlation']['model_request_id']
+    else:
+        identity = handle.model_request_id
     events = [event for event in store.events_after(request["turn_id"])
-              if event.get("correlation", {}).get("model_request_id") == handle.model_request_id]
+              if event.get("correlation", {}).get("model_request_id") == identity]
     dispatched = [event for event in events if event["type"] == "model.attempt.dispatched"]
     terminals = [event for event in events if event["type"] == "model.attempt.terminal"]
     refs = [event["data"]["receipt_ref"] for event in terminals]

@@ -10,32 +10,15 @@ from ..kernel.turn_requests import freeze_turn_request
 from ..source_egress import SourceEgressService
 from ..transaction_records import TransactionRecords
 from ..workspace_audio import _audio_original_identity
+from ..uploaded_media import group_entries, original_path
 from .privacy import egress_allowed, privacy_revision, resolve_turn_material
 
 _BINDINGS = 'v2_image_read_bindings'
 
 
-def group_entries(records, item):
-    """Read the sole upload owner's ordered attachment names and paths."""
-    group = records.read('v2_image_groups', item['id'])
-    if group is None:
-        return [{'path': item['original_path'], 'name': item.get('original_name') or item.get('title') or Path(item['original_path']).name}]
-    payload = group.payload
-    entries = payload.get('images')
-    if (payload.get('project_id') != item['project_id'] or payload.get('item_id') != item['id']
-            or not isinstance(entries, list) or not entries
-            or any(not isinstance(entry, Mapping) or set(entry) != {'path', 'name'}
-                or not all(isinstance(entry[key], str) and entry[key] for key in ('path', 'name'))
-                or Path(entry['name']).name != entry['name'] for entry in entries)
-            or entries[0]['path'] != item['original_path']):
-        raise RecognitionConflict('image_material_binding_invalid')
-    return entries
-
-
 def uploaded_images(records, runtime_root, project_id, materials):
     """The owning item's upload and group sidecar are the only image authority."""
     images = []
-    root = (Path(runtime_root) / 'workspace').resolve(strict=True)
     for material in materials:
         if material['type'] != 'original_item' or material['project_id'] != project_id:
             raise RecognitionConflict('image_material_scope_conflicted')
@@ -45,11 +28,9 @@ def uploaded_images(records, runtime_root, project_id, materials):
             raise RecognitionConflict('image_material_binding_invalid')
         for ordinal, entry in enumerate(group_entries(records, item), 1):
             try:
-                path = Path(entry['path']).resolve(strict=True)
+                path = original_path(runtime_root, item, recorded_path=entry['path'], ordinal=ordinal)
             except (OSError, ValueError):
                 raise RecognitionConflict('image_original_changed') from None
-            if not path.is_relative_to(root) or not path.is_file():
-                raise RecognitionConflict('image_original_changed')
             images.append({'item_id': item['id'], 'ordinal': ordinal,
                 'identity': _audio_original_identity(path)})
     if not images:

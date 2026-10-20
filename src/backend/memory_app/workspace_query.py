@@ -1658,7 +1658,7 @@ class WorkspaceQuery:
                 plan["chosen"] = []  # Idempotent replay needs only the bounded public result.
             return result
         except ModelInterrupted as interrupted:
-            if review_required:
+            if review_required and interrupted.interruption != 'stopped':
                 try:
                     self.validate_ask_plan(plan)
                     error = HTTPException(502, 'answer_generation_failed')
@@ -1681,7 +1681,8 @@ class WorkspaceQuery:
                 self.mark_ask_receipt(preview_id, 'failed', usage=usage)
                 with self.ask_preview_lock:
                     plan['state'] = 'failed'
-                return {'answer': None, 'partial': (continuation['partial'] if continuation else '') + ('' if evidence_first else interrupted.partial),
+                return {'answer': None, 'partial': (continuation['partial'] if continuation else '') + (interrupted.partial
+                        if interrupted.interruption == 'stopped' or not evidence_first else ''),
                     'interruption': interrupted.interruption, 'sources': [],
                     'model_used': True, 'model_usage': usage, 'excluded_sources': plan['excluded_sources'],
                     'context': _ask_context(chosen, source_texts, messages, None,
@@ -1699,6 +1700,7 @@ class WorkspaceQuery:
                     code = "ask_model_target_changed"
             error = HTTPException(409, code) if code in {"ask_model_target_changed", "remote_disabled", "private_project_remote_blocked"} else HTTPException(502, "answer_generation_failed")
         except Exception:
+            logging.getLogger(__name__).exception("ask_preview_failed")
             error = HTTPException(502, "answer_generation_failed")
         try:
             if review_required and review_started and review_usage is None:

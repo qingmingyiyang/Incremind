@@ -1,7 +1,7 @@
 """验证每日待补复查使用原本机服务，不调度模型。"""
 import pytest
 from backend.memory_app.workspace_query import WorkspaceQuery
-from tests.memory_app.v2.test_workbench_ask import env, ask, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, ask, publish
 from tests.memory_app.v2.test_gaps import listed
 from backend.memory_app.v2 import policies
 from backend.memory_app.v2.privacy import set_private_project

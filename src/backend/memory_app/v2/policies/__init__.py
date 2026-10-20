@@ -8,11 +8,11 @@ ACTIVE = {
     'rerank': '@2',
     'vector': '@1',
     'ladder': '@15',
-    'retry': '@1',
+    'retry': '@2',
     'image_read': '@1',
     'organize': '@1',
     'material_analysis': '@1',
-    'context_preparation': '@1',
+    'context_preparation': '@3',
     'place': '@2',
     'extract': '@5',
     'route': '@1',
@@ -140,6 +140,8 @@ register('material_analysis', '@2')(material_analysis_fallback.v2)
 register('material_analysis', '@3')(material_analysis_nullable.v3)
 register('material_analysis', '@4')(material_analysis_dialogue.v4)
 register('context_preparation', '@1')(context_preparation.v1)
+register('context_preparation', '@2')(context_preparation.v2)
+register('context_preparation', '@3')(context_preparation.v3)
 register('rank', '@2')(rank.v2)
 register('rank', '@3')(rank.v3)
 register('handoff', '@2')(handoff.v2)
@@ -151,6 +153,7 @@ register('extract', '@6')(extract_material.v6)
 register('trigger', '@2')(trigger.v2)
 register('consolidate', '@2')(consolidate.v2)
 register('retry', '@1')(retry.decide)
+register('retry', '@2')(retry.v2)
 
 from . import reask
 register('reask', '@1')(reask.v1)

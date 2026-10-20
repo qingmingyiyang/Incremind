@@ -3,7 +3,7 @@ import json
 import pytest
 from backend.recognition import RecognitionError
 from backend.memory_app.v2.part_context import _json_value
-from tests.memory_app.v2.test_workbench_ask import env, add_document, publish
+from tests.memory_app.v2.test_workbench_ask import legacy_retrieve_env as env, add_document, publish
 
 
 @pytest.mark.parametrize('change', ['move', 'add', 'remove'])
