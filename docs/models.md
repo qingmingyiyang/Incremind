@@ -59,3 +59,23 @@ LiteLLM 包装丢失字段时，只从相同 HTTP 状态的原始官方 SDK 异�
 - [Mistral 超时](https://github.com/earendil-works/pi/commit/6b07b4e57269ebc4b3fe2b7cd3caba2d95e26cc0)：本项目没有该原生适配；受管传输已区分等待响应头、读取空闲和总时限，保留总预算及取消保护。
 - [登录应用名称](https://github.com/earendil-works/pi/commit/9ad083102aa9afd483dbb5e0da53e69f2902c6a6)：已有 `agent_name_hint=ChriptmasAgent`，不增加登录参数。
 - [Decisions 能力边界](https://github.com/earendil-works/pi/commit/ce8972a0e99cab79f2620a594a1c17baef436c67)：现有订阅只读取官方 OAuth 模型目录并调用 Responses，没有混入分类模型目录或 Decisions；本次不新增模型接口或订阅提供方。
+
+### 2026-10-19 兼容性核对
+
+本次核对从 `0f4b146` 到 [482c138](https://github.com/earendil-works/pi/commit/482c1381a00d8d00bc81697e4a980c593db6803e) 的 36 条 `packages/ai` 提交，覆盖 v1.2.0、v1.3.0 及其后的未发布修复。适配继续使用本项目网关和领域服务。
+
+- [临时网关故障](https://github.com/earendil-works/pi/commit/698a2d23b86a5045dd54554354a5e0cb7e466795)和[服务暂不可用](https://github.com/earendil-works/pi/commit/550f1f3ecd75bf756ab3c379ca9503e808a6c6d1)：从结构化错误的代码、类型、消息和详情识别上游请求失败、上游读取中断、HTTP/2 中断及暂不可用。只有既有策略批准后才能重新尝试；认证、额度、拒绝和不支持错误优先，正文或工具输出开始后禁止重新派发。后台恢复继续沿原响应身份和 GET 预算执行。
+- [完整工具参数校验](https://github.com/earendil-works/pi/commit/87f9a36419e8164bba77397d15c54ff39fac5e8a)：保留参数分片的全部字符，使用标准 JSON 解析器校验完整对象，拒绝截断、额外文本、非法常量以及多个工具混合形成的内容。工具参数在真实完成标记及最终校验后交付；普通正文继续流式交付，原有 prompt 与 fenced JSON 兼容规则保持。
+- 运输完成与内容有效分别记录。完整运输后的参数拒绝保留实际报告的用量和原请求回执，应用结果继续报告校验失败；没有提供方终态的工具流不能取得完成资格。工具来源的 schema 拒绝直接结束当前结果，普通正文保留现有校验流程。公开错误只携带固定解码分类，不包含原始参数或提供方诊断。
+
+其他上游变化按实际调用方式核对：
+
+| 上游变化 | 本项目当前处理 |
+|---|---|
+| 纯空白工具结果使用占位内容 | 内部工具事实以普通消息传递，没有原生 `toolResult` 到 `function_call_output` 的转换入口，保持现有协议。 |
+| 同一片段的推理与正文顺序 | 网关只把正文交给回答消费方；推理字段用于内部阶段观察。 |
+| 切换模型时删除旧推理块 | 现有问答重新构造消息，没有跨模型的签名或加密推理块重放。 |
+| GPT-6 推理强度切换保持缓存 | 上游明确排除 ChatGPT OAuth；本项目订阅仍使用请求级 `reasoning.effort`。 |
+| OpenRouter 账号目录与价格、其他 provider 修复 | 现有模型配置没有导入这些目录或 pi-ai 的原生适配；自动费率继续限于已核验的 DeepSeek，未知费用保持未知。 |
+
+订阅登录、模型选择、外发和私密判断继续复用既有服务与回执。

@@ -103,12 +103,14 @@ class ResponsesProviderError(ResponsesError):
 _ERROR_CATEGORIES = {
     "subscription_sharing_usage_limit_exceeded": "usage_limit", "insufficient_quota": "usage_limit",
     "subscription_sharing_user_not_eligible": "authorization", "subscription_sharing_invalid_user": "authorization",
+    "authentication_error": "authorization", "invalid_api_key": "authorization", "permission_denied": "authorization",
     "chatpass_v2_scope_not_authorized": "authorization", "chatpass_v2_invalid_authorization_context": "authorization",
     "subscription_sharing_unsupported_capability": "unsupported", "subscription_sharing_route_not_supported": "unsupported",
     "invalid_request_error": "unsupported", "invalid_request": "unsupported",
     "unsupported_parameter": "unsupported", "unsupported_value": "unsupported", "unsupported_model": "unsupported",
     "subscription_sharing_usage_unavailable": "transient", "subscription_sharing_user_unavailable": "transient",
     "server_error": "transient", "server_busy": "capacity", "rate_limit_exceeded": "rate_limit",
+    "upstream_stream_read_error": "transient", "upstream_request_failed": "transient",
     "quota_exceeded": "usage_limit", "billing_hard_limit_reached": "usage_limit", "usage_limit_reached": "usage_limit",
     "GoUsageLimitError": "usage_limit", "FreeUsageLimitError": "usage_limit",
     "content_filter": "refusal", "content_policy_violation": "refusal", "safety": "refusal", "refusal": "refusal",
@@ -145,6 +147,11 @@ def _provider_error(status_code, body, *, output_started=False, message="subscri
         elif any(isinstance(text, str) and any(phrase in text.lower() for phrase in (
                 "model is at capacity", "servers are currently busy", "server_busy")) for text in texts):
             category = "capacity"
+        elif any(isinstance(text, str) and re.search(
+                r"service.?(?:is.?)?(?:temporarily.?)?unavailable|provider.?returned.?(?:an.?)?error|"
+                r"unable to forward upstream|upstream.?request.?failed|upstream_stream_read_error|"
+                r"stream was interrupted|http/?2 stream failed", text, re.IGNORECASE) for text in texts):
+            category = "transient"
         elif status_code == 429:
             category = "rate_limit"
         elif 500 <= status_code <= 599:

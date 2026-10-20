@@ -635,10 +635,10 @@ class LiteLLMCompletionGateway:
             return response, usage, cache_observation
 
         response, usage, cache_observation = terminal.invoke(handle_wire)
-        content = _extract_completion_content(response)
+        content = _extract_completion_content(response, completed_wire=True, usage=usage)
         if content.strip():
             return (
-                content.strip(),
+                _strip_completion_content(content),
                 usage,
                 cache_observation,
             )
@@ -684,9 +684,10 @@ class LiteLLMCompletionGateway:
             usage=_extract_normalized_usage(response),
             cache_observation=_extract_prompt_cache_observation(response),
         )
-        content = _extract_completion_content(response)
+        content = _extract_completion_content(response, completed_wire=True,
+            usage=_extract_normalized_usage(response))
         if content.strip():
-            return content.strip()
+            return _strip_completion_content(content)
         raise RuntimeError("模型返回缺少 message.content。")
 
     def stream_text(
@@ -729,19 +730,20 @@ class LiteLLMCompletionGateway:
                 raise RuntimeError("此模型不支持思考强度。") from error
             raise
         final_provider_metadata: Any | None = None
+        tool_arguments = _ToolArgumentBuffer()
         try:
             for chunk in stream:
                 if _lookup(chunk, "usage") is not None:
                     final_provider_metadata = chunk
-                delta = _extract_stream_delta(chunk)
+                delta = _extract_stream_delta(chunk, tool_arguments=tool_arguments)
                 if delta:
                     yield delta
+            tool_arguments.require_terminal()
         except BaseException as error:
             if _is_consumer_cancellation(error):
                 terminal.cancelled(error)
             else:
                 terminal.failed(error, error_code="provider_stream_failed")
-            _close_sync_stream(stream)
             raise
         else:
             terminal.succeeded(
@@ -750,6 +752,12 @@ class LiteLLMCompletionGateway:
                     final_provider_metadata
                 ),
             )
+            content = tool_arguments.finish(completed_wire=True,
+                usage=_extract_normalized_usage(final_provider_metadata))
+            if content is not None:
+                yield content
+        finally:
+            _close_sync_stream(stream)
 
     def stream_text_with_metadata(
         self,
@@ -804,12 +812,13 @@ class LiteLLMCompletionGateway:
             raise error
         final_provider_metadata: Any | None = None
         final_usage: dict[str, int] = {}
+        tool_arguments = _ToolArgumentBuffer()
         close_attempted = False
         try:
             for chunk in stream:
                 if _retry_state is not None:
                     _retry_state.observe(chunk)
-                delta = _extract_stream_delta(chunk)
+                delta = _extract_stream_delta(chunk, tool_arguments=tool_arguments)
                 if _lookup(chunk, "usage") is not None:
                     final_provider_metadata = chunk
                     final_usage = _extract_usage(chunk)
@@ -817,6 +826,7 @@ class LiteLLMCompletionGateway:
                     yield ChatCompletionStreamChunk(delta=delta)
             if _retry_state is not None and not _retry_state.terminal_seen:
                 raise ConnectionError('provider stream ended before its terminal event')
+            tool_arguments.require_terminal()
             if final_usage:
                 yield ChatCompletionStreamChunk(usage=final_usage,
                     cache_observation=_extract_prompt_cache_observation(final_provider_metadata))
@@ -840,6 +850,10 @@ class LiteLLMCompletionGateway:
                     final_provider_metadata
                 ),
             )
+            content = tool_arguments.finish(completed_wire=True,
+                usage=_extract_normalized_usage(final_provider_metadata))
+            if content is not None:
+                yield ChatCompletionStreamChunk(delta=content)
 
         finally:
             if not close_attempted:
@@ -895,19 +909,20 @@ class LiteLLMCompletionGateway:
                 raise RuntimeError("此模型不支持思考强度。") from error
             raise
         final_provider_metadata: Any | None = None
+        tool_arguments = _ToolArgumentBuffer()
         try:
             async for chunk in stream:
                 if _lookup(chunk, "usage") is not None:
                     final_provider_metadata = chunk
-                delta = _extract_stream_delta(chunk)
+                delta = _extract_stream_delta(chunk, tool_arguments=tool_arguments)
                 if delta:
                     yield delta
+            tool_arguments.require_terminal()
         except BaseException as error:
             if _is_consumer_cancellation(error):
                 terminal.cancelled(error)
             else:
                 terminal.failed(error, error_code="provider_stream_failed")
-            await _close_async_stream(stream)
             raise
         else:
             terminal.succeeded(
@@ -916,6 +931,12 @@ class LiteLLMCompletionGateway:
                     final_provider_metadata
                 ),
             )
+            content = tool_arguments.finish(completed_wire=True,
+                usage=_extract_normalized_usage(final_provider_metadata))
+            if content is not None:
+                yield content
+        finally:
+            await _close_async_stream(stream)
 
     def _authorize_egress(self, request: Mapping[str, object]) -> EgressLease:
         if self._egress_guard is None:
@@ -1024,6 +1045,14 @@ class LiteLLMCompletionGateway:
                     usage = _retry_state.recorded_usage(usage)
                 return decoder.raw, usage
             except BaseException as error:
+                if type(error) is StructuredResponseDecodeError and error.completed_wire:
+                    usage = dict(error.usage)
+                    if wire is not None:
+                        wire.succeeded(usage=error.usage, cache_observation=cache_observation)
+                    if _retry_state is not None:
+                        usage = _retry_state.recorded_usage(usage)
+                    # Handler 正常返回后，真实模型 Effect 才能提交完成状态。
+                    return error, usage
                 if wire is not None:
                     if _is_consumer_cancellation(error):
                         if _retry_state is not None and _retry_state.attempt_usage:
@@ -1047,6 +1076,9 @@ class LiteLLMCompletionGateway:
         # The durable Handler encloses consumption, while deltas reach the
         # caller immediately. Schema rejection follows the actual wire receipt.
         raw, usage = wire.invoke_wire(consume) if wire is not None else consume()
+        if type(raw) is StructuredResponseDecodeError:
+            raise StructuredResponseDecodeError(raw.code, 'model_response_decoding_failed',
+                completed_wire=True, usage=usage) from None
         try:
             return validate_json_response(raw_text=raw, response_model=response_model), usage
         except (StructuredResponseDecodeError, ValidationError) as error:
@@ -1124,12 +1156,16 @@ class LiteLLMCompletionGateway:
                     f"{'; '.join(mode_errors)}"
                 )
             try:
-                validated = validate_json_response(
+                validated = _validate_completed_content(
                     raw_text=last_raw_text,
                     response_model=response_model,
+                    usage=usage,
+                    completed_wire=True,
                 )
                 return validated, usage, cache_observation  # type: ignore[return-value]
             except Exception as error:
+                if isinstance(last_raw_text, _ToolArgumentText):
+                    raise
                 validation_error = describe_validation_error(error)
                 if attempt_index == retries:
                     raise RuntimeError(
@@ -1189,12 +1225,15 @@ class LiteLLMCompletionGateway:
                     f"{'; '.join(mode_errors)}"
                 )
             try:
-                validated = validate_json_response(
+                validated = _validate_completed_content(
                     raw_text=last_raw_text,
                     response_model=response_model,
+                    completed_wire=True,
                 )
                 return validated  # type: ignore[return-value]
             except Exception as error:
+                if isinstance(last_raw_text, _ToolArgumentText):
+                    raise
                 validation_error = describe_validation_error(error)
                 if attempt_index == retries:
                     raise RuntimeError(
@@ -1546,14 +1585,20 @@ def clear_structured_mode_cache() -> None:
         _STRUCTURED_MODE_CACHE.clear()
 
 
-def _extract_completion_content(response: Any) -> str:
+def _extract_completion_content(response: Any, *, completed_wire=False, usage=None) -> str:
     choices = _lookup(response, "choices")
     if not isinstance(choices, Sequence) or not choices:
         return ""
     message = _lookup(choices[0], "message")
-    tool_call_content = _extract_tool_call_arguments(_lookup(message, "tool_calls"))
-    if tool_call_content:
-        return tool_call_content
+    tool_calls = _lookup(message, "tool_calls")
+    if tool_calls:
+        arguments = _ToolArgumentBuffer()
+        arguments.observe(response)
+        arguments.content_seen = bool(_lookup(message, 'content'))
+        arguments.invalid = arguments.invalid or not arguments.terminal
+        arguments.add(tool_calls)
+        raw = arguments.finish(completed_wire=completed_wire, usage=usage)
+        return _ToolArgumentText(raw, usage) if completed_wire else raw
     content = _lookup(message, "content")
     if isinstance(content, str):
         return content
@@ -1563,11 +1608,18 @@ def _extract_completion_content(response: Any) -> str:
     return ""
 
 
-def _extract_stream_delta(chunk: Any) -> str:
+def _extract_stream_delta(chunk: Any, *, tool_arguments=None) -> str:
     choices = _lookup(chunk, "choices")
     if not isinstance(choices, Sequence) or not choices:
         return ""
     delta = _lookup(choices[0], "delta")
+    if tool_arguments is not None:
+        tool_arguments.observe(chunk)
+        tool_arguments.content_seen = tool_arguments.content_seen or bool(_lookup(delta, 'content'))
+        tool_calls = _lookup(delta, "tool_calls")
+        if tool_calls:
+            tool_arguments.add(tool_calls)
+            return ""
     tool_call_content = _extract_tool_call_arguments(_lookup(delta, "tool_calls"))
     if tool_call_content:
         return tool_call_content
@@ -1689,6 +1741,106 @@ def _extract_tool_call_arguments(tool_calls: Any) -> str:
     for tool_call in tool_calls:
         function_block = _lookup(tool_call, "function")
         arguments = _lookup(function_block, "arguments")
-        if isinstance(arguments, str) and arguments.strip():
-            parts.append(arguments.strip())
+        if isinstance(arguments, str):
+            parts.append(arguments)
     return "".join(parts)
+
+
+class _ToolArgumentText(str):
+    def __new__(cls, value, usage):
+        result = super().__new__(cls, value)
+        result.usage = dict(usage or {})
+        return result
+
+
+def _strip_completion_content(value):
+    stripped = value.strip()
+    return _ToolArgumentText(stripped, value.usage) if isinstance(value, _ToolArgumentText) else stripped
+
+
+def _validate_completed_content(*, raw_text, response_model, usage=None, completed_wire=False):
+    try:
+        return validate_json_response(raw_text=raw_text, response_model=response_model)
+    except (StructuredResponseDecodeError, ValidationError) as error:
+        if not isinstance(raw_text, _ToolArgumentText):
+            raise
+        code = error.code if type(error) is StructuredResponseDecodeError else 'schema_invalid'
+        raise StructuredResponseDecodeError(code, 'model_response_decoding_failed',
+            completed_wire=completed_wire,
+            usage=dict(raw_text.usage if usage is None else usage) if completed_wire else None) from None
+
+
+class _ToolArgumentBuffer:
+    def __init__(self):
+        self.seen, self.invalid, self.terminal, self.content_seen = False, False, False, False
+        self.index, self.identity, self.name, self.parts = None, None, None, []
+
+    def observe(self, chunk):
+        choices = _lookup(chunk, 'choices')
+        if choices:
+            reason = _lookup(choices[0], 'finish_reason')
+            delta = _lookup(choices[0], 'delta')
+            if self.terminal and (reason is not None or _lookup(delta, 'tool_calls') or _lookup(delta, 'content')):
+                self.invalid = True
+            if reason is not None:
+                self.terminal = True
+                self.invalid = self.invalid or reason not in {'stop', 'tool_calls', 'function_call'}
+
+    def add(self, tool_calls):
+        self.seen = True
+        if not isinstance(tool_calls, Sequence) or isinstance(tool_calls, (str, bytes)) or len(tool_calls) != 1:
+            self.invalid = True
+            return
+        call = tool_calls[0]
+        kind = _lookup(call, 'type')
+        if kind is not None and kind != 'function':
+            self.invalid = True
+        index = _lookup(call, 'index')
+        index = 0 if index is None else index
+        if type(index) is not int or index < 0 or self.index is not None and self.index != index:
+            self.invalid = True
+        self.index = index
+        identity = _lookup(call, 'id')
+        if identity is not None:
+            if not isinstance(identity, str) or not identity or self.identity is not None and identity != self.identity:
+                self.invalid = True
+            self.identity = identity
+        function = _lookup(call, 'function')
+        name = _lookup(function, 'name')
+        if name is not None:
+            if not isinstance(name, str) or not name or self.name is not None and name != self.name:
+                self.invalid = True
+            self.name = name
+        arguments = _lookup(function, 'arguments')
+        if arguments is not None:
+            if isinstance(arguments, str):
+                self.parts.append(arguments)
+            else:
+                self.invalid = True
+
+    def require_terminal(self):
+        if self.seen and not self.terminal:
+            raise ConnectionError('provider tool stream ended before its terminal event')
+
+    def finish(self, *, completed_wire=False, usage=None):
+        if not self.seen:
+            return None
+        raw = ''.join(self.parts)
+        code = 'json_invalid' if self.invalid or self.content_seen else 'json_empty' if not raw.strip() else None
+        if code is None:
+            try:
+                value = json.loads(raw, parse_constant=_reject_tool_json_constant)
+            except (ValueError, RecursionError):
+                code = 'json_invalid'
+            else:
+                if not isinstance(value, dict):
+                    code = 'json_object_required'
+        if code is not None:
+            # 完整响应的语义拒绝保留真实用量，不能重新分类为运输失败。
+            raise StructuredResponseDecodeError(code, 'model_response_decoding_failed',
+                completed_wire=completed_wire, usage=dict(usage or {}) if completed_wire else None)
+        return raw
+
+
+def _reject_tool_json_constant(value):
+    raise ValueError('tool_arguments_invalid_json_constant')
