@@ -1,5 +1,9 @@
 # 统一组件与公共能力索引
 
+- D157 离线知识巡检（2026-10-21）：`v2.knowledge_inspection.KnowledgeInspection(database_path).inspect_copy(project, work_root=..., source_root=..., scene=...)` 只读已初始化且停止写入的业务库，拒绝非空 WAL/journal；仅复制现有 sources JSON 与必要业务投影到新隔离目录，在副本复用认识、SourceEgress、关系、明确日历时效、概览及既有 gap 投影。原库记录/修订和相关文件前后复验，副本可能初始化，不是在线只读入口；不调用 `Gaps.current/refresh`，不注册 HTTP 或自动维护。诊断只含对象、修订、原因和已有跳转，缺生效认识关联仅为 coverage，不自动裁决或发布。坏端点、损坏 gap 字段与缺失 scene 分别隔离；显式空场景仍沿原规则。真实隔离 SQLite 与独立反例复验通过；真实生成概览、真实 ASK gap 正向及完整内核成果来源仍待条件，不以负例代签。
+
+- D157 内部目录候选（2026-10-21）：`v2.scope_directory.ScopeDirectory(records, documents).build(project, scene)` / `validate(candidate)` 供已授权隔离仓库显式调用，复用 `ScopeOverviews._snapshot` 的合格摘要/来源和冻结的 scope 策略，只按既有项目层及场景归属形成可重建视图。`candidate_version=1` 仅为内部视图标识；未增加默认策略或接入默认问答。成员只含文稿修订、真实摘要坐标、来源根身份及既有资料库跳转，不含标题、正文或新引文；目录不授予引用或外发资格。绑定仅保留合格入选成员及原全局隐私修订，新增、编辑、移动、私密或遗忘后重建复验；原来源 owner 可能初始化辅助文件，非在线只读入口。真实结构覆盖及失效矩阵经独审重跑，语义主题、在线 RAG 和模型收益未验。
+
 - 评测数据准备（2026-10-21）：`tools/rag_dataset.py` 共用原开发清单形状，负责确定会话、按类别抽题、原话投影、证据编号资格和冻结核对。`rag_pilot.prepare_data` 保留原两参数调用与默认 12 题，两个原 runner 复用 `prepared_questions`，在配置、索引、缓存答案前核 baseline 与完整原话；显式新数据路径保留无效标注并输出空 Recall，`--prepare-only` 只准备。原始资料只读且不复制，gold 留在评测侧，工具和数据协议见 `docs/evaluation.md`。
 
 - 评测聚合与图示（2026-10-21）：`tools/rag_report.py` 只读原逐题结果、用量、冻结配置与独立事实裁决，生成 `docs/images/evaluation-summary.json` 和共享 SVG。`--summary` 从公开聚合重建，`--check` 只核既有产物；保护输入字节与修改时间，先核所有输出冲突，标准库 XML 校验八项指标及比例。README 两种语言和测评文档复用同一产物，新增模型调用 0。
