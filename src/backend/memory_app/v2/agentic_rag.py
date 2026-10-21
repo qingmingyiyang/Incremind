@@ -101,6 +101,16 @@ def _merge_observed(rows):
     return result
 
 
+def _remember_observed(plan, pool, row):
+    """9同源阅读积累真实窗口；旧策略仍按最后一次阅读覆盖。"""
+    identity = candidate_id(row)
+    old = pool.get(identity)
+    if old is not None and getattr(_policy(plan), 'explicit_answer_evidence', False):
+        row = _merge_observed([old, row])[0]
+    pool[identity] = row
+    return row
+
+
 def _descriptors(candidates):
     result = {}
     for row in candidates:
@@ -440,7 +450,7 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                     old = pool.get(candidate_id(row))
                     if old is not None and old['entry']['revision'] != row['entry']['revision']:
                         raise RecognitionConflict('rag_material_changed')
-                    pool[candidate_id(row)] = row
+                    _remember_observed(plan, pool, row)
                 plan['_rag']['observed'] = list(pool.values())
                 plan['_rag']['catalog'] = _catalog(rows, limits['results'])
                 # 搜索即给真实窗口，下一轮模型读得到本轮事实；read还可单独选目录阅读。
@@ -485,7 +495,7 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                         depth = _policy(plan)(None, decision['depth'], plan['_rag']['depths'], operation='agentic_depth')
                         rows = await settled_call(query.rag_read, plan, candidate, depth)
                         for row in rows:
-                            pool[candidate_id(row)] = row
+                            _remember_observed(plan, pool, row)
                             if not any(candidate_id(old) == candidate_id(row) and old['windows'] == row['windows'] for old in plan['chosen']):
                                 plan['chosen'].append(row)
                         plan['_rag']['observed'] = list(pool.values())
