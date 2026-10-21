@@ -293,11 +293,20 @@ class WorkspaceQuery:
         validate_frozen_inputs(self.records, models, request, query=self)
 
     def ask_target(self) -> dict:
-        public = getattr(self.models, "public", None)
-        settings = public() if callable(public) else {}
-        generation = settings.get("generation", {}) if isinstance(settings, dict) else {}
+        narrow = getattr(self.models, 'public_for_purpose', None)
+        lock = getattr(self.models, '_lock', None)
+        mode_reader = getattr(self.models, 'generation_mode', None)
+        if callable(narrow) and lock is not None and callable(mode_reader):
+            # 与旧完整投影相同的一把锁内冻结用途及模式，不跨调用保留授权。
+            with lock:
+                generation = narrow('generation')
+                mode = mode_reader()
+        else:
+            public = getattr(self.models, "public", None)
+            settings = public() if callable(public) else {}
+            generation = settings.get("generation", {}) if isinstance(settings, dict) else {}
+            mode = settings.get("generation_mode", {}) if isinstance(settings, dict) else {}
         generation = generation if isinstance(generation, dict) else {}
-        mode = settings.get("generation_mode", {}) if isinstance(settings, dict) else {}
         mode = mode if isinstance(mode, dict) else {}
         base_url = str(generation.get("base_url") or "")
         try:
@@ -1338,6 +1347,7 @@ class WorkspaceQuery:
                     if candidate["kind"] not in {"recognition", "search"} and not candidate.get('inspiration')]
         current_entries = {(entry["kind"], entry["id"]): entry for entry in self.query_entries(project_id, selected=selected)}
         authority = SourceEgressService(self.records)
+        generation_allowed = {}
         for candidate in plan["chosen"]:
             if candidate['kind'] == 'search':
                 if not callable(plan.get('search_guard')):
@@ -1352,9 +1362,13 @@ class WorkspaceQuery:
                 continue
             if not local_only and is_private_project(self.records, own_scope.project_id):
                 raise RecognitionError("source excluded from recall during question")
-            if (not local_only and plan["target"]["execution_location"] == "remote"
-                    and not egress_allowed(self.records, self.models, own_scope.project_id, "generation")):
-                raise ModelConfigurationError("remote_disabled")
+            if not local_only and plan["target"]["execution_location"] == "remote":
+                # 仅本次来源复验按项目复用；me独立检查，下一chunk重新读取。
+                if own_scope.project_id not in generation_allowed:
+                    generation_allowed[own_scope.project_id] = egress_allowed(
+                        self.records, self.models, own_scope.project_id, "generation")
+                if not generation_allowed[own_scope.project_id]:
+                    raise ModelConfigurationError("remote_disabled")
             if candidate["kind"] != "recognition":
                 current_snapshot = self.original_snapshot(own_scope,frozen,authority)
                 if current_snapshot != candidate["snapshot"]:

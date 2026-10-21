@@ -48,8 +48,12 @@ def egress_allowed(records, models, project_id, purpose) -> bool:
         raise RecognitionError("model egress purpose is invalid")
     if is_private_project(records, project_id):
         return False
-    configuration = models.public()
-    model = configuration.get(purpose) if isinstance(configuration, Mapping) else None
+    narrow = getattr(models, 'public_for_purpose', None)
+    if purpose == 'generation' and callable(narrow):
+        model = narrow(purpose)
+    else:
+        configuration = models.public()
+        model = configuration.get(purpose) if isinstance(configuration, Mapping) else None
     if not isinstance(model, Mapping):
         return False
     return model.get("enabled" if purpose == "asr" else "allow_remote") is True

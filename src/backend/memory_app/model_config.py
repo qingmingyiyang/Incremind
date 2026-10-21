@@ -280,6 +280,13 @@ class ModelConfiguration:
                 "generation_mode": self.generation_mode(),
             }
 
+    def public_for_purpose(self, purpose: str) -> dict:
+        if purpose not in PURPOSES:
+            raise ModelConfigurationError('unknown model purpose')
+        with self._lock:
+            # 委托实际实例，辅助模型仍须核验冻结的 fast 绑定。
+            return self._public_one(purpose)
+
     def _generation_authority_binding(self):
         public = self._public_one('generation')
         configuration = {key: public.get(key) for key in _GOVERNED_CONFIGURATION_FIELDS}
@@ -1107,7 +1114,7 @@ class ModelConfiguration:
 
     def generation_budget_limits(self, *, expected_revision, max_tokens=None):
         """Project current gateway limits only when the frozen packet matches."""
-        cfg = self.public()["generation"]
+        cfg = self.public_for_purpose("generation")
         if not cfg.get("configured") or cfg["revision"] != expected_revision:
             return None
         gateway = self._generation_gateway(cfg)
