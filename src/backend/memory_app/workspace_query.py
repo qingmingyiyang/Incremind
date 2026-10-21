@@ -1097,7 +1097,12 @@ class WorkspaceQuery:
             content = entry['content']
             row.update(windows=(EvidenceWindow(0, len(content), content),), excerpt=content)
         def fits(value):
-            return input_tokens([*plan['chosen'], value], plan['question'], reserve_refutes=True,
+            chosen = [*plan['chosen'], value]
+            if getattr(get('retrieve', version=plan['policy_versions']['retrieve']), 'explicit_answer_evidence', False):
+                from .v2.agentic_rag import _merge_observed
+                # 与调查和最终证据使用同一坐标并集，已读原文不重复占用容量。
+                chosen = _merge_observed(chosen)
+            return input_tokens(chosen, plan['question'], reserve_refutes=True,
                 history=plan.get('history', '')) + plan['prompt_overhead'] <= plan['budget']
         # 目录已明确选中读取对象，容量足够时保留原窗口，不再按问题启发式丢弃事实。
         fitted = row if fits(row) else self._fit_dynamic_candidate(row, plan['question'], limit=plan['budget'], admission=fits)
