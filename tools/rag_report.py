@@ -407,7 +407,15 @@ def verify_local_unknown(reader, paths, attempt):
             and not any(event['type'] == 'model.attempt.terminal' for event in events), '本机中断原生事件不一致')
 
 
-def heldout_report(reader, roots, reviews, run_label, date, environment_path=None, local_recovery_paths=()):
+def validate_batch_labels(labels, batch_count):
+    if labels:
+        require(len(labels) == batch_count, '--batch-label数量须等于--heldout数量')
+        require(all(isinstance(label, str) and label.strip() for label in labels), '批次标签不能为空')
+        require(len({label.strip() for label in labels}) == len(labels), '批次标签不能重复')
+
+
+def heldout_report(reader, roots, reviews, run_label, date, environment_path=None, local_recovery_paths=(), batch_labels=()):
+    validate_batch_labels(batch_labels, len(roots))
     batches, all_ids, all_models, all_attempts = [], None, set(), set()
     baseline_index = reader.read(roots[0] / 'dataset/index.json')
     baseline_materials, baseline_valid = {}, {}
@@ -428,6 +436,14 @@ def heldout_report(reader, roots, reviews, run_label, date, environment_path=Non
         require(len(identities) == 48 and len(index['conversations']) == 4, '留出数据身份未覆盖四会话48题')
         require(all_ids is None or all_ids == identities, '批次使用不同题目')
         all_ids = identities
+        actual_run_label = None
+        if batch_labels:
+            # 展示名不冒充实际运行身份；显式模式核对四份冻结运行配置。
+            labels = [reader.read(root / entry['sample_id'] / 'run-config.json').get('run_label')
+                      for entry in index['conversations']]
+            require(all(isinstance(label, str) and label.strip() for label in labels)
+                    and all(label == labels[0] for label in labels), '同批次四份实际运行标签缺失或不一致')
+            actual_run_label = labels[0]
         http_rows, wires = reader.read(root / 'http-requests.json'), reader.read(root / 'wires.json')
         audit, closed = reader.read(root / 'attempt-audit.json'), reader.read(root / 'closed.json')
         require(not closed['prepare_only'] and audit['pending'] == 0
@@ -500,7 +516,9 @@ def heldout_report(reader, roots, reviews, run_label, date, environment_path=Non
         recalls = [len(row['selected'] & valid[row['identity']]) / len(valid[row['identity']])
                    for row in questions if row['identity'] in valid]
         complete = usages['complete']
-        batches.append({'label': 'Initial batch' if batch_index == 0 else f'Repair batch {batch_index}',
+        batches.append({'label': batch_labels[batch_index] if batch_labels else
+                       'Initial batch' if batch_index == 0 else f'Repair batch {batch_index}',
+            **({'actual_run_label': actual_run_label} if batch_labels else {}),
             'kind': 'initial' if batch_index == 0 else 'repair', 'model': models, 'policies': policies,
             'attempted_questions': len(questions), 'unattempted_questions': 48 - len(questions), 'physical_calls': len(attempts),
             'outcomes': {key: sum(row['status'] == key for row in questions)
@@ -544,6 +562,8 @@ def validate_heldout(report):
     require(len({batch['label'] for batch in report['batches']}) == len(report['batches']), '批次身份重复')
     for index, batch in enumerate(report['batches']):
         require(batch['kind'] == ('initial' if index == 0 else 'repair'), '批次类型或顺序无效')
+        if 'actual_run_label' in batch:
+            require(isinstance(batch['actual_run_label'], str) and batch['actual_run_label'].strip(), '实际运行标签不能为空')
         require(batch['model'] and all(isinstance(value, str) and value for value in batch['model']), '批次模型未记录')
         require(all(key in batch['policies'] for key in ('compose', 'ladder', 'retrieve', 'rerank')), '批次策略未记录')
         attempted = count(batch['attempted_questions'])
@@ -641,7 +661,8 @@ def heldout_svg(report):
     text(40, 48, 'Held-out evaluation · 48 questions', 30, weight='600')
     text(40, 79, f"{report['date']} · {' / '.join(report['model'])} · 4 conversations", 17, '#4E4A44')
     versions = ' / '.join(f'{key} {report["policies"][key]}' for key in ('compose', 'ladder', 'retrieve', 'rerank'))
-    text(40, 108, 'Initial: ' + versions, 16, '#4E4A44')
+    initial_label = report['batches'][0]['label'] if 'actual_run_label' in report['batches'][0] else 'Initial'
+    text(40, 108, initial_label + ': ' + versions, 16, '#4E4A44')
     if environment_offset:
         environment = report['environment']
         text(40, 134, f"Server · {environment['logical_cpu_available']} logical CPUs · {environment['cpu_model']} · {environment['memory_bytes'] / 1024 ** 3:.2f} GiB", 14, '#4E4A44')
@@ -729,6 +750,7 @@ def main():
     parser.add_argument('--review', type=Path, help='独立事实裁决或明确标记的历史裁决记录')
     parser.add_argument('--summary', type=Path, help='从已公开聚合JSON重建图示，无需私有原文')
     parser.add_argument('--heldout', type=Path, action='append', help='真实工作台留出结果目录；初始批次在前，修复批次可追加')
+    parser.add_argument('--batch-label', action='append', default=[], help='逐批展示标签，重复顺序对应--heldout；显式提供时核对实际运行标签')
     parser.add_argument('--partition-review', type=Path, action='append', default=[], help='独立来源审阅，每份24题，按批次源码来源绑定')
     parser.add_argument('--run-label', help='留出运行公开标签')
     parser.add_argument('--date', help='留出运行日期')
@@ -739,16 +761,18 @@ def main():
     args = parser.parse_args()
     reader = SourceReader()
     if args.summary:
-        require(not any((args.rag30, args.pilot, args.review, args.heldout, args.partition_review, args.run_label, args.date, args.environment, args.local_recovery)),
+        require(not any((args.rag30, args.pilot, args.review, args.heldout, args.batch_label, args.partition_review, args.run_label, args.date, args.environment, args.local_recovery)),
                 '--summary与原始输入模式互斥')
         report = reader.read(args.summary)
     elif args.heldout:
         require(not any((args.rag30, args.pilot, args.review)) and args.run_label and args.date, '留出汇总需独立入口、运行标签和日期')
+        validate_batch_labels(args.batch_label, len(args.heldout))
         require(not any(args.output.resolve().is_relative_to(path.resolve()) for path in args.heldout), '输出目录必须位于原始运行目录之外')
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-        report = heldout_report(reader, args.heldout, args.partition_review, args.run_label, args.date, args.environment, args.local_recovery)
+        report = heldout_report(reader, args.heldout, args.partition_review, args.run_label, args.date, args.environment,
+                                args.local_recovery, batch_labels=args.batch_label)
     else:
-        require(not any((args.partition_review, args.run_label, args.date, args.environment, args.local_recovery)), '留出参数需配合--heldout')
+        require(not any((args.batch_label, args.partition_review, args.run_label, args.date, args.environment, args.local_recovery)), '留出参数需配合--heldout')
         require(all((args.rag30, args.pilot, args.review)), '原始汇总需同时提供--rag30、--pilot、--review')
         require(not any(args.output.resolve().is_relative_to(path.resolve()) for path in (args.rag30, args.pilot)), '输出目录必须位于原始运行目录之外')
         report = {'schema': 'rag-public-report@1', 'rag30': rag30_report(reader, args.rag30, args.review),
