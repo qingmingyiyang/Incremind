@@ -198,3 +198,26 @@ v7.drilldown = v6.drilldown
 v7.demand_based = v6.demand_based
 v7.agentic = v6.agentic
 register('retrieve', '@7')(v7)
+
+
+def v8(entrypoint, /, *args, **kwargs):
+    """当前层没有合法候选时，在同次查询内按阶梯检查下层。"""
+    if kwargs.get('operation') == 'agentic_search_depths':
+        requested, completed, available_layers = args
+        order = ('summary', 'body', 'original')
+        layers = ({'L3', 'L2'}, {'L1'}, {'L0'})
+        first = v7(None, requested, completed, operation='agentic_depth')
+        checked = []
+        for index in range(order.index(first), len(order)):
+            checked.append(order[index])
+            if layers[index] & available_layers:
+                break
+        return tuple(checked)
+    return v7(entrypoint, *args, **kwargs)
+
+
+v8.drilldown = v7.drilldown
+v8.demand_based = v7.demand_based
+v8.agentic = v7.agentic
+v8.empty_layer_drilldown = True
+register('retrieve', '@8')(v8)

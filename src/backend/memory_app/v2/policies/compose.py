@@ -1202,3 +1202,11 @@ def v32(entrypoint, /, *args, **kwargs):
 
 
 register('compose', '@32')(v32)
+
+
+def v33(entrypoint, /, *args, **kwargs):
+    """沿用30模型合同，允许核实同源冻结会话日期的纯上下文表述。"""
+    return v30(entrypoint, *args, **kwargs)
+
+
+register('compose', '@33')(v33)

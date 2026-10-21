@@ -74,7 +74,30 @@ For example, an introductory article on spaced repetition might produce an insig
 
 ## Evaluation and verification
 
-![RAG30 answer quality, latency, and recorded token usage](docs/images/evaluation-rag30.svg)
+![Server holdout answer quality, evidence recall, latency, and recorded tokens](docs/images/evaluation-heldout.svg)
+
+The same frozen 48 questions were run twice on a server with 4 logical CPUs and 7.35 GiB memory, using real DeepSeek Flash and CPU EmbeddingGemma 2 through the normal Workbench ask workflow. The dataset contains four conversations, 116 sessions, and 2,536 messages; it has no conversation or question-text overlap with the development set.
+
+| Metric | Initial `retrieve@7` | Repair `retrieve@8` |
+|---|---:|---:|
+| Attempted questions | 48 / 48 | 48 / 48 |
+| Correct / partially correct / wrong | 1 / 0 / 29 | 22 / 11 / 5 |
+| Clarifications / failures / unpublished | 18 / 0 / 0 | 2 / 8 / 0 |
+| Mean evidence Recall, 47 eligible questions | 2.13% | 65.97% |
+| All evidence found | 1 / 47 | 26 / 47 |
+| Mean / median / P95 request time, all attempts | 18.494 / 15.623 / 25.369 s | 108.704 / 91.646 / 211.124 s |
+| Known input / output tokens | 125,994 / 5,988 | 1,078,134 / 32,089 |
+| Unknown-usage calls | 0 | 1 |
+| Physical model requests | 155 | 192 |
+
+Both batches used `compose@30 / ladder@15 / rerank@2`. The repair makes original material reachable when upper memory layers are empty; `retrieve@8` is now the default. Two independent agents reviewed frozen answers against the complete original conversations. Recall measures evidence in the last dispatched answer input, with one invalid source annotation retained as null and excluded from its 47-question denominator. Time covers each complete server-side Workbench request, including failures and retries. The repair token count is a known subtotal; its complete total remains null because one transport failure has unknown usage. All 347 model attempts have terminal records. The eight Workbench 502 responses and all quality failures are retained.
+
+The [evaluation guide](docs/evaluation.md) (Chinese) records grading, source annotation issues, CPU encoding, failures, and reproduction commands. The [aggregate JSON](docs/images/evaluation-heldout-summary.json) and [`tools/rag_report.py`](tools/rag_report.py) reproduce this chart without model calls. Presentation follows the [OpenViking RAG report](https://github.com/volcengine/OpenViking/blob/main/benchmark/RAG/README.md). Monetary cost was not recorded. [`tools/rag_dataset.py`](tools/rag_dataset.py) freezes the original inputs; [`tools/rag_holdout.py`](tools/rag_holdout.py) runs the normal application workflow on the server.
+
+<details>
+<summary>Development questions, functional acceptance and earlier experiments</summary>
+
+![RAG30 development answer quality, latency, and recorded token usage](docs/images/evaluation-rag30.svg)
 
 | Fixed development set | Observed result |
 |---|---:|
@@ -84,14 +107,7 @@ For example, an introductory article on spaced repetition might produce an insig
 | Recorded input / output tokens | 335,444 / 12,498 |
 | Physical model requests | 36 |
 
-`RAG30-20261011` used DeepSeek Flash, local EmbeddingGemma 2, and `compose@30 / ladder@15 / retrieve@5 / rerank@2`. The review checked the frozen answers against all source messages; it made no new answer requests. These questions were repeatedly used during development. Supported unknown answers can count as correct; partial answers omit required facts. The current retrieval default is `retrieve@7`.
-
-The [evaluation guide](docs/evaluation.md) (Chinese) records the protocol, review criteria, failures, and reproduction commands. The [aggregate JSON](docs/images/evaluation-summary.json) and [`tools/rag_report.py`](tools/rag_report.py) reproduce the chart without model calls. Monetary cost was not recorded. Presentation follows the [OpenViking RAG report](https://github.com/volcengine/OpenViking/blob/main/benchmark/RAG/README.md); scores retain this project's own dataset and grading protocol.
-
-**Prepared holdout:** 48 questions from four additional conversations, with 12 questions in each of categories 1–4 and no conversation or question-text overlap with the development set. Of these, 47 have evidence IDs present in the source; one invalid annotation is retained and excluded from the Recall denominator. The dataset has not generated answers or scores. [`tools/rag_dataset.py`](tools/rag_dataset.py) freezes selection and original dialogue inputs; both evaluation runners support `--prepare-only`. See [dataset preparation](docs/evaluation.md#留出数据与标注质量) for the protocol and commands.
-
-<details>
-<summary>Functional acceptance and earlier experiments</summary>
+`RAG30-20261011` used DeepSeek Flash, local EmbeddingGemma 2, and `compose@30 / ladder@15 / retrieve@5 / rerank@2`. The review checked frozen answers against all source messages with no new answer requests. These questions were repeatedly used during development. Supported unknown answers can count as correct; partial answers omit required facts. Its [original aggregate JSON](docs/images/evaluation-summary.json) remains available.
 
 Real DeepSeek acceptance on 2026-10-15 used two synthetic scenarios with pre-indexed originals:
 
@@ -112,7 +128,7 @@ Engineering verification below is separate from answer quality:
 | **Correction after Hy-ASR** | Real SQLite, Turns, and confirmation; simulated ASR delivery and model transport | **30 new checks and 13 existing targeted checks passed**; one pre-existing comment-fetch failure is retained. Real recognition and correction quality await evaluation. |
 | **Server CPU embeddings** | Ubuntu 22.04 instance, real model assets, and device pairing | Loading, encoding, unloading, and reloading verified. GPU and standalone vector-service integration remain unverified. |
 
-The material-analysis candidate has confirmed L1 notes for 7/19 sources; the next source failed quotation validation. No new 12-question answer evaluation was run. Candidates `compose@31, @32 / ladder@16` produced wrong or unpublished answers in retests; defaults remain `30/15`.
+The material-analysis candidate has confirmed L1 notes for 7/19 sources; the next source failed quotation validation. No new 12-question answer evaluation was run. Candidates `compose@31, @32 / ladder@16` produced wrong or unpublished answers in retests; the current defaults are `compose@33 / ladder@15`.
 
 The [RAG pilot report](docs/rag-pilot.md) (Chinese) retains earlier protocols and results.
 
@@ -370,7 +386,7 @@ Further documentation is available in [ARCHITECTURE.md](ARCHITECTURE.md) for arc
 
 ## How a question finds its evidence
 
-Default `retrieve@7` lets the model decide whether to retrieve, inspect actual tool results, then search or read again, answer, or ask for missing conditions. The loop is bounded and retains the existing evidence selection and answer checks. See [the S1–S4 stages and validation scope](docs/agentic-rag.md) (Chinese).
+Default `retrieve@8` lets the model decide whether to retrieve, inspect actual tool results, then search or read again, answer, or ask for missing conditions. When the current memory layer has no eligible candidates, the same query checks successive lower layers and stops at the first nonempty layer. The loop retains the existing budgets, source eligibility, evidence selection, and answer checks. See [the S1–S4 stages and validation scope](docs/agentic-rag.md) (Chinese).
 
 ```mermaid
 flowchart TB
@@ -396,9 +412,9 @@ flowchart TB
 
 **How the ladder selects**
 
-- **Default combination.** `compose@30 / ladder@15 / retrieve@7 / rerank@2`. The model controls whether and where to search; local retrieval follows insights → summaries → organized notes → originals. It selects limited evidence by the facts, dates, relationships, and list requirements in the question, without fixed ordinary-source counts. Your "Me" profile uses a separate background block of at most 600 tokens, retaining each insight and its conditions together. Related, supporting, and contradicting neighbors are admitted by new information and available budget, with contradicting neighbors expanded first. All require eligible sources and available capacity, so a tight budget can prevent both sides from reaching the model.
+- **Default combination.** `compose@33 / ladder@15 / retrieve@8 / rerank@2`. The model controls whether and where to search; local retrieval follows insights → summaries → organized notes → originals, checking lower layers within the same query when the current layer is empty. It selects limited evidence by the facts, dates, relationships, and list requirements in the question, without fixed ordinary-source counts. Your "Me" profile uses a separate background block of at most 600 tokens, retaining each insight and its conditions together. Related, supporting, and contradicting neighbors are admitted by new information and available budget, with contradicting neighbors expanded first. All require eligible sources and available capacity, so a tight budget can prevent both sides from reaching the model.
 - **Actual budget.** Evidence uses the remainder after output reserve, instructions, Schema, the question, profile, history, and message framing; the complete input is checked too. The supported official `deepseek-flash` route at `api.deepseek.com` has a 200,000-token total cap; a 7,000-token output reserve leaves at most 193,000 input tokens. Unknown routes retain a conservative 16,000-token total window. If valid window and reserve information is unavailable, the input fallback is 4,000 tokens. UTF-8 bytes divided by three, rounded up, estimates the budget; it is not exact provider tokenization or billed usage. Filling the window is not a goal.
-- **Investigation and stopping.** `retrieve@7` returns actual search and reading results to the next model decision. Local reading follows eligible summary, body, and original-source links; skills provide read-only guidance, and web search requires its configured permission. Up to six decisions can choose another tool, the existing answer flow, or an explicit clarification. Repeated tools, two steps without new material or depth, exhausted capacity, a decision timeout, or the decision limit stop investigation. Only the latest verified clarification in the same project and conversation accepts a follow-up without a question mark; resolved questions do not reopen. Stopping does not prove answer sufficiency. Old `retrieve@5` remains available for explicit replay.
+- **Investigation and stopping.** `retrieve@8` returns actual search and reading results to the next model decision. Local reading follows eligible summary, body, and original-source links; skills provide read-only guidance, and web search requires its configured permission. Up to six decisions can choose another tool, the existing answer flow, or an explicit clarification. Repeated tools, two steps without new material or depth, exhausted capacity, a decision timeout, or the decision limit stop investigation. Only the latest verified clarification in the same project and conversation accepts a follow-up without a question mark; resolved questions do not reopen. Stopping does not prove answer sufficiency. Old retrieval versions remain available for explicit replay.
 - **De-duplication.** Material without qualifying new information is checked for near-duplicates at similarity ≥ 0.8, using existing comparable cached vectors or adjacent-character overlap. Passages qualifying for a new demand or relationship under the dynamic policy are not merged merely because they share terms. Active contradiction pairs are also exempt from similarity-based removal, and layers of the same source are not compared with each other. De-duplication never computes new vectors; the new-information rules remain heuristic.
 - **How contradictions are identified.** After insight confirmation and during startup maintenance, the model proposes supporting, contradicting, or superseding links. They become active only after you accept them in the Library. Retrieval reads these active `refutes` links and asks the answer model to explain both sides' evidence and disagreement; vector similarity does not establish logical contradiction. Only related links can be created automatically.
 
@@ -408,7 +424,7 @@ flowchart TB
 
 **Two-stage answers and provenance checks**
 
-`compose@30` uses two primary model calls to draft facts, then review, correct, and answer. The draft requests each independent, relevant fact once. Fact questions preserve original terms where possible; inference questions provide supported premises; time questions refer to complete date ranges calculated by the program. Instructions require checking the full evidence catalog before unknown or negative answers, identifying people by the actual speaker, and retaining each independent item in open lists rather than representative examples. These guide the model; they do not guarantee semantic correctness or overall accuracy.
+`compose@33` uses two primary model calls to draft facts, then review, correct, and answer. Conversation-date context is checked against the same frozen source; event dates retain their validation. The draft requests each independent, relevant fact once. Fact questions preserve original terms where possible; inference questions provide supported premises; time questions refer to complete date ranges calculated by the program. Instructions require checking the full evidence catalog before unknown or negative answers, identifying people by the actual speaker, and retaining each independent item in open lists.
 
 Fact and inference statements should use empty `date_refs`. If valid references are attached, the program first verifies their real units, quotations, and calculation records, then treats them as incidental metadata without calculation authority. Original model outputs remain unchanged. These references produce no derived date notes, calculation bindings, or later precision authorization. Converting relative time into absolute dates or ranges still requires an actual date statement and precise binding to the corresponding original text, relative expression, and record date. Invalid references, references borrowed across units, and calculations claiming authority from incidental references remain rejected.
 

@@ -351,12 +351,16 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                     if config.get('enabled') and address and urlsplit(address).hostname not in {'127.0.0.1', 'localhost', '::1'}:
                         validate_derived_query(query, plan, purpose)
                 collected = await settled_call(query.collect_candidates, project, decision['query'], scene=scene)
-                depth = _policy(plan)(None, decision['depth'], plan['_rag']['depths'], operation='agentic_depth')
-                layers = {'summary': {'L3', 'L2'}, 'body': {'L1'}, 'original': {'L0'}}[depth]
-                rows = [row for row in collected['candidates'] if row['layer'] in layers
-                        and row['kind'] in {'recognition', 'document', 'source'} and not row.get('inspiration')]
-                rows = sorted(rows, key=lambda row: -row.get('score', 0))[:limits['results']]
-                if depth != 'summary':
+                policy = _policy(plan)
+                depth = policy(None, decision['depth'], plan['_rag']['depths'], operation='agentic_depth')
+                drilldown = getattr(policy, 'empty_layer_drilldown', False)
+                candidates = [row for row in collected['candidates']
+                    if row['kind'] in {'recognition', 'document', 'source'} and not row.get('inspiration')]
+                if not drilldown:
+                    layers = {'summary': {'L3', 'L2'}, 'body': {'L1'}, 'original': {'L0'}}[depth]
+                    candidates = [row for row in candidates if row['layer'] in layers]
+                    candidates = sorted(candidates, key=lambda row: -row.get('score', 0))[:limits['results']]
+                if depth != 'summary' or drilldown:
                     upper = [row for row in pool.values() if row['layer'] in {'L3', 'L2'}]
                     if upper:
                         allowed = set()
@@ -369,8 +373,16 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                             elif row['kind'] == 'recognition':
                                 allowed.update(source_documents(query.records, row['scope'],
                                     [node['id'] for node in row['snapshot']['nodes'] if node['type'] == 'experience']))
-                        rows = [row for row in rows if row['entry']['id'] in allowed]
-                plan['_rag']['depths'].append(depth)
+                        candidates = [row for row in candidates
+                            if row['layer'] in {'L3', 'L2'} or row['entry']['id'] in allowed]
+                depths = (policy(None, decision['depth'], plan['_rag']['depths'],
+                    {row['layer'] for row in candidates}, operation='agentic_search_depths')
+                    if drilldown else (depth,))
+                depth = depths[-1]
+                layers = {'summary': {'L3', 'L2'}, 'body': {'L1'}, 'original': {'L0'}}[depth]
+                rows = [row for row in candidates if row['layer'] in layers]
+                rows = sorted(rows, key=lambda row: -row.get('score', 0))[:limits['results']]
+                plan['_rag']['depths'].extend(depths)
                 result['actual_depth'] = depth
                 for row in rows:
                     old = pool.get(candidate_id(row))

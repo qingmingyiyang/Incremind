@@ -3,6 +3,8 @@ import re
 from .date_calculation import date_provenance, calendar_values, append_date_notes, _anchor, _HEADER, _DATE
 from .date_quote_boundaries import _windows
 
+_RELATIVE_RECORD_COUNT = r'(?:[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)'
+
 
 def calendar_mentions_v1(text):
     return calendar_values(text)
@@ -66,7 +68,7 @@ def _explicit_options(quote):
     return result
 
 
-def validate_calendar_statements_v1(statements, catalog, chosen, question, *, record_bindings=None, _bound_anchor_context=False, _on_invalid=None, _anchor_article_context=False, _record_anchor_context=False):
+def validate_calendar_statements_v1(statements, catalog, chosen, question, *, record_bindings=None, _bound_anchor_context=False, _on_invalid=None, _anchor_article_context=False, _record_anchor_context=False, _frozen_record_anchors=False):
     """跨kind核新绝对日期；问题范围和记录锚只在明确上下文中使用。"""
     units = {unit['id']: unit for unit in catalog['units']}
     records = bind_date_provenance(catalog, chosen)
@@ -106,6 +108,9 @@ def validate_calendar_statements_v1(statements, catalog, chosen, question, *, re
                 prefix = statement.text[max(0, value['span'][0] - 45):value['span'][0]]
                 if (_record_anchor_context and evidence.role == 'support'
                         and _is_record_anchor_context(statement, value, evidence, unit, records)):
+                    explicit = True
+                if (_frozen_record_anchors
+                        and _frozen_record_context_span(statement, value, evidence, unit, chosen) is not None):
                     explicit = True
                 if (_bound_anchor_context and evidence.role == 'support'
                         and (_is_bound_anchor_context(statement, value, matching)
@@ -217,17 +222,83 @@ def _is_record_anchor_context(statement, value, evidence, unit, records):
     return False
 
 
-def _record_context_temporal_residue(statement, evidence, unit, records):
+def _frozen_record_anchor(candidate):
+    """33只取同一冻结来源唯一的真实标题或非引语日期头，不依赖能否计算相对式。"""
+    from .date_quote_boundaries import quote_spans
+    texts = []
+    title = candidate.get('title', '')
+    if _DATE.search(title):
+        texts.append(title)
+    quotes, offset = quote_spans(candidate, quote_version=3), 0
+    for raw in candidate.get('excerpt', '').splitlines(keepends=True):
+        line, left = raw.rstrip('\r\n'), offset
+        offset += len(raw)
+        if (not any(start < left + len(line) and end > left for start, end in quotes)
+                and (_HEADER.match(line) or _DATE.fullmatch(line.strip()))):
+            texts.append(line)
+    anchors = [_anchor(text)[0] for text in texts]
+    return anchors[0].isoformat() if anchors and None not in anchors and len(set(anchors)) == 1 else None
+
+
+def _relative_record_offset_span(prefix, quote):
+    """只复述同条引文的相对距离；不生成绝对日期或更细精度。"""
+    match = re.search(r'\b(' + _RELATIVE_RECORD_COUNT + r')\s+(days?|weeks?|months?|years?)\s+(before|after)\s+(?:the\s+)?$', prefix, re.I)
+    if match is None:
+        return None
+    direction = 'ago' if match[3].lower() == 'before' else 'later'
+    source = r'\b' + re.escape(match[1]) + r'\s+' + re.escape(match[2]) + r'\s+' + direction + r'\b'
+    return match.start() if re.search(source, quote, re.I) else None
+
+
+def _relative_record_duration_span(prefix, quote):
+    """同条原话的持续时长只可复述到已核实的会话日期，不推算开始日。"""
+    match = re.search(r'\bfor\s+(' + _RELATIVE_RECORD_COUNT + r')\s+(days?|weeks?|months?|years?)\s+as\s+of\s+(?:the\s+)?$', prefix, re.I)
+    if match is None:
+        return None
+    source = r'\bfor\s+' + re.escape(match[1]) + r'\s+' + re.escape(match[2]) + r'\s+now\b'
+    return match.start() if re.search(source, quote, re.I) else None
+
+
+def _frozen_record_context_span(statement, value, evidence, unit, chosen):
+    """同单元真实引文只授权明确标注的会话元数据，limitation可用context引用。"""
+    if (statement.kind not in {'fact', 'inference', 'limitation'} or value['precision'] != 'day'
+            or evidence.role != 'support' and statement.kind != 'limitation'
+            or not evidence.quote.strip() or evidence.quote not in unit['text']
+            or _frozen_record_anchor(chosen[unit['source_number'] - 1]) != value['start']):
+        return None
+    label = _record_anchor_label_span(statement.text, value)
+    if label is not None:
+        return label
+    prefix, suffix = statement.text[:value['span'][0]], statement.text[value['span'][1]:]
+    right = re.match(r'\s+(?:record|conversation|session)(?:\s+date)?\b', suffix, re.I)
+    if right is not None:
+        offset = _relative_record_offset_span(prefix, evidence.quote)
+        if offset is not None:
+            return offset, value['span'][1] + right.end()
+        left = re.search(r'\b(?:in|during|from)\s+(?:the\s+)?$', prefix, re.I)
+        if left is not None:
+            return left.start(), value['span'][1] + right.end()
+    left = re.search(r'\b(?:record|conversation|session)\s+(?:on|dated)\s*$', prefix, re.I)
+    return (left.start(), value['span'][1]) if left is not None else None
+
+
+def _record_context_temporal_residue(statement, evidence, unit, records, *, chosen=None):
     """只移除已核实的完整锚语法和原话相对式；剩余时间指代不借记录锚获授权。"""
     values = calendar_mentions_v1(statement.text)
-    contexts = [value for value in values if _is_record_anchor_context(statement, value, evidence, unit, records)]
+    contexts = [value for value in values if (_is_record_anchor_context(statement, value, evidence, unit, records)
+        or chosen is not None and _frozen_record_context_span(statement, value, evidence, unit, chosen) is not None)]
     if not contexts:
         return False
     spans = [value['span'] for value in values]
     for value in contexts:
-        label = _record_anchor_label_span(statement.text, value)
+        label = (_frozen_record_context_span(statement, value, evidence, unit, chosen) if chosen is not None
+            else _record_anchor_label_span(statement.text, value))
         if label is not None:
             spans.append(label)
+            if chosen is not None:
+                duration = _relative_record_duration_span(statement.text[:value['span'][0]], evidence.quote)
+                if duration is not None:
+                    spans.append((duration, value['span'][0]))
         else:
             # 已由同条真实原句核过的重复上/下周参照，只移除本次完整短语。
             week = re.search(r'\bweek\s+(?:before|after)\s+(?:the\s+)?$', statement.text[:value['span'][0]], re.I)
@@ -258,7 +329,7 @@ def _record_context_temporal_residue(statement, evidence, unit, records):
         r'今天|昨天|明天|今夜|昨夜|彼时|届时', ''.join(residual), re.I) is not None
 
 
-def validate_calendar_statements_v4(statements, catalog, chosen, question, *, record_bindings, _on_invalid=None):
+def validate_calendar_statements_v4(statements, catalog, chosen, question, *, record_bindings, _on_invalid=None, _frozen_record_anchors=False):
     """明确记录锚不算事件日；模糊当天仍需原文独立证明，不能借锚授权。"""
     units = {unit['id']: unit for unit in catalog['units']}
     records = bind_date_provenance(catalog, chosen)
@@ -271,7 +342,8 @@ def validate_calendar_statements_v4(statements, catalog, chosen, question, *, re
             and any(_computed_match(value, [option]) for option in _explicit_options(evidence.quote))
             for evidence in statement.evidence)]
         if unsupported and any(evidence.role == 'support' and _record_context_temporal_residue(
-                statement, evidence, units[evidence.unit_id], records) for evidence in statement.evidence):
+                statement, evidence, units[evidence.unit_id], records,
+                chosen=chosen if _frozen_record_anchors else None) for evidence in statement.evidence):
             if _on_invalid is not None:
                 _on_invalid(statement, unsupported[0])
             raise ValueError('grounded_calendar_provenance_invalid')
@@ -289,7 +361,13 @@ def validate_calendar_statements_v4(statements, catalog, chosen, question, *, re
                 raise ValueError('grounded_calendar_provenance_invalid')
     return validate_calendar_statements_v1(statements, catalog, chosen, question,
         record_bindings=record_bindings, _bound_anchor_context=True, _anchor_article_context=True,
-        _record_anchor_context=True, _on_invalid=_on_invalid)
+        _record_anchor_context=True, _on_invalid=_on_invalid, _frozen_record_anchors=_frozen_record_anchors)
+
+
+def validate_calendar_statements_v5(statements, catalog, chosen, question, *, record_bindings, _on_invalid=None):
+    """33允许同源会话日期上下文，计算、事件日期与剩余时间指代仍走原核验。"""
+    return validate_calendar_statements_v4(statements, catalog, chosen, question,
+        record_bindings=record_bindings, _on_invalid=_on_invalid, _frozen_record_anchors=True)
 
 
 def build_date_ref_catalog(catalog, chosen):
@@ -330,7 +408,7 @@ def resolve_date_refs(statement, catalog, chosen, refs, *, compose_version='@26'
             reject(position, 'ref_requires_matching_unit_and_complete_sentence', record)
         resolved.append(record)
     # 28先完整验ref，再把普通声明视为没有计算引用；不改原件，也不授权后续精度说明。
-    if compose_version in {'@28', '@29', '@30', '@31', '@32'} and statement.kind in {'fact', 'inference'}:
+    if compose_version in {'@28', '@29', '@30', '@31', '@32', '@33'} and statement.kind in {'fact', 'inference'}:
         return [], []
     # 完整旧注释由同一冻结来源重建，模型无需也不能改写它。
     numbers = list(dict.fromkeys(record['source_number'] for record in resolved))

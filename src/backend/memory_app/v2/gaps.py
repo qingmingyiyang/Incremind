@@ -26,9 +26,9 @@ def _frozen_coverage(group, answer, question, project, policy):
     try:
         wire = group['answer_input']
         messages = wire['messages']
-        reviewed = group['request'].get('policy_versions', {}).get('compose') in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}
-        partitioned = group['request'].get('policy_versions', {}).get('compose') in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}
-        lengths = ((2, 3, 4) if partitioned else (3, 4) if group['request'].get('policy_versions', {}).get('compose') in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}
+        reviewed = group['request'].get('policy_versions', {}).get('compose') in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
+        partitioned = group['request'].get('policy_versions', {}).get('compose') in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
+        lengths = ((2, 3, 4) if partitioned else (3, 4) if group['request'].get('policy_versions', {}).get('compose') in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
                    else (4, 5)) if reviewed else (2, 3)
         if (wire.get('purpose') != 'primary' or not isinstance(messages, list)
                 or len(messages) not in lengths or messages[-1].get('role') != 'user'
@@ -78,8 +78,8 @@ def _frozen_coverage(group, answer, question, project, policy):
             from .answer_evidence import catalog_source_excerpts, validate_partition
             payload = json.loads(sources)
             expected_keys = ({'evidence_catalog', 'date_provenance', 'untrusted_first_fact_plan', 'first_fact_positions'}
-                if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'} else {'evidence_catalog', 'untrusted_first_partition'})
-            if compose_version in {'@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32'}:
+                if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else {'evidence_catalog', 'untrusted_first_partition'})
+            if compose_version in {'@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
                 expected_keys = expected_keys | {'first_fact_diagnostics'}
             if compose_version == '@31':
                 expected_keys = expected_keys | {'review_queue'}
@@ -109,7 +109,7 @@ def _frozen_coverage(group, answer, question, project, policy):
                 validate_partition({'selected_ids': sorted(used), 'irrelevant_ids': sorted(complete - used),
                     'uncertain_ids': []}, catalog)
             else:
-                validate_partition(first_fact_partition(payload['untrusted_first_fact_plan'], catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31'} else payload['untrusted_first_partition'], catalog)
+                validate_partition(first_fact_partition(payload['untrusted_first_fact_plan'], catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@33'} else payload['untrusted_first_partition'], catalog)
             if [row['source_number'] for row in catalog['sources']] != list(range(1, len(chosen) + 1)):
                 return None
             excerpts = catalog_source_excerpts(catalog)
