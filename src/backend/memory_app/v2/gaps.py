@@ -18,7 +18,7 @@ _HISTORY = '\n\n对话历史（仅帮助理解，不是证据）：\n'
 _QUESTION = '\n\n问题：'
 
 
-def _frozen_coverage(group, answer, question, project, policy):
+def _frozen_coverage(group, answer, question, project, policy, *, frozen_plan=None):
     """从原冻结模型输入中恢复边界唯一且映射完整的最终证据。"""
     from core.search_and_recall.evidence_windows import query_terms
     from .budget import _source_texts
@@ -26,9 +26,9 @@ def _frozen_coverage(group, answer, question, project, policy):
     try:
         wire = group['answer_input']
         messages = wire['messages']
-        reviewed = group['request'].get('policy_versions', {}).get('compose') in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
-        partitioned = group['request'].get('policy_versions', {}).get('compose') in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
-        lengths = ((2, 3, 4) if partitioned else (3, 4) if group['request'].get('policy_versions', {}).get('compose') in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
+        reviewed = group['request'].get('policy_versions', {}).get('compose') in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}
+        partitioned = group['request'].get('policy_versions', {}).get('compose') in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}
+        lengths = ((2, 3, 4) if partitioned else (3, 4) if group['request'].get('policy_versions', {}).get('compose') in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}
                    else (4, 5)) if reviewed else (2, 3)
         if (wire.get('purpose') != 'primary' or not isinstance(messages, list)
                 or len(messages) not in lengths or messages[-1].get('role') != 'user'
@@ -78,8 +78,8 @@ def _frozen_coverage(group, answer, question, project, policy):
             from .answer_evidence import catalog_source_excerpts, validate_partition
             payload = json.loads(sources)
             expected_keys = ({'evidence_catalog', 'date_provenance', 'untrusted_first_fact_plan', 'first_fact_positions'}
-                if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else {'evidence_catalog', 'untrusted_first_partition'})
-            if compose_version in {'@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+                if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else {'evidence_catalog', 'untrusted_first_partition'})
+            if compose_version in {'@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
                 expected_keys = expected_keys | {'first_fact_diagnostics'}
             if compose_version == '@31':
                 expected_keys = expected_keys | {'review_queue'}
@@ -88,6 +88,17 @@ def _frozen_coverage(group, answer, question, project, policy):
             if set(payload) != expected_keys:
                 return None
             catalog = payload['evidence_catalog']
+            if compose_version == '@34':
+                from .answer_evidence import build_evidence_catalog, model_catalog, model_date_refs
+                from .policies.date_grounding import build_date_ref_catalog
+                if frozen_plan is None:
+                    return None
+                # 瘦模型投影不是坐标权威，沿原不可变计划恢复完整目录再逐值比较。
+                catalog = build_evidence_catalog(frozen_plan['chosen'], compose_version=compose_version)
+                if (model_catalog(catalog) != payload['evidence_catalog']
+                        or model_date_refs(build_date_ref_catalog(catalog, frozen_plan['chosen'], calendar_version=3))
+                        != payload['date_provenance']):
+                    return None
             if compose_version == '@31' and payload['review_queue'] != get('compose', version=compose_version)(
                     None, operation='review_queue', catalog=catalog, first_output=payload['untrusted_first_fact_plan'],
                     diagnostics=payload['first_fact_diagnostics'], date_refs=payload['date_provenance']):
@@ -109,7 +120,7 @@ def _frozen_coverage(group, answer, question, project, policy):
                 validate_partition({'selected_ids': sorted(used), 'irrelevant_ids': sorted(complete - used),
                     'uncertain_ids': []}, catalog)
             else:
-                validate_partition(first_fact_partition(payload['untrusted_first_fact_plan'], catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@33'} else payload['untrusted_first_partition'], catalog)
+                validate_partition(first_fact_partition(payload['untrusted_first_fact_plan'], catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@33', '@34'} else payload['untrusted_first_partition'], catalog)
             if [row['source_number'] for row in catalog['sources']] != list(range(1, len(chosen) + 1)):
                 return None
             excerpts = catalog_source_excerpts(catalog)
@@ -240,7 +251,17 @@ class Gaps:
                         scene = captured_scene
                         guards.append(('v2_turn_requests', bound[0]))
             policy = get('gap')
-            coverage = _frozen_coverage(group, answer, question, project, policy) if answer.get('citations') else None
+            frozen_plan = None
+            if request.get('policy_versions', {}).get('compose') == '@34' and store:
+                from ..answer_proof import _quote_plan
+                capsule = store.get_immutable_payload(row.object_id, 'answer-continuation-plan-v1')
+                if capsule is not None:
+                    try:
+                        frozen_plan = _quote_plan(request, capsule[1])
+                    except (KeyError, TypeError, ValueError):
+                        pass
+            coverage = _frozen_coverage(group, answer, question, project, policy,
+                frozen_plan=frozen_plan) if answer.get('citations') else None
             facts[row.object_id] = {'id': row.object_id, 'text': question, 'scene': scene,
                 'at': at.isoformat(), 'insufficient': policy.insufficient(answer, coverage=coverage),
                 'anchor_guard': {'revision': row.revision, 'created_at': value['created_at'],

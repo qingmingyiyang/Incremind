@@ -1210,3 +1210,32 @@ def v33(entrypoint, /, *args, **kwargs):
 
 
 register('compose', '@33')(v33)
+
+
+def v34(entrypoint, /, *args, **kwargs):
+    """保留33两轮Schema，以有限英文日偏移和去坐标投影减少重复输入。"""
+    operation = kwargs.get('operation')
+    if operation == 'sources':
+        from .date_calculation import append_date_notes
+        result = v5(entrypoint, *args, **kwargs)
+        return [append_date_notes(text, row, quote_version=3, calendar_version=3)
+            for text, row in zip(result, args[0])]
+    result = v33(entrypoint, *args, **kwargs)
+    if operation in {'instruction', 'partition_final_instruction'} and kwargs.get('response_schema'):
+        result += (
+            ' The catalog projection retains every real unit text and source label. Boundary flags mark actual '
+            'missing context; only units sharing a continuity_group are contiguous, never join different groups. '
+            'Absent program coordinates are not missing evidence. date_provenance includes all '
+            'available legal computations. same_sentence_date_ref_ids establishes only sentence binding; '
+            'matching_date_ref_ids additionally matches this exact calendar value and precision. record_date_context '
+            'is context only, never an event date. Correct every diagnosed value in a statement, not only the first. '
+            'Answer at the requested granularity (for example countries or occupations), with supported inference '
+            'when asked. Distinguish the person from companions, and interests/plans from completed events. '
+            'Do not use unknown to hide explicit facts. In final review use first_fact_uses.merge to combine '
+            'grounded atomic premises into the requested recommendation, explanation or list item, retaining '
+            'each independent meaning, subject and support. Do not first repeat background facts and then repeat '
+            'the same premises as a recommendation list. A merge reason is not evidence or a field correction.')
+    return result
+
+
+register('compose', '@34')(v34)

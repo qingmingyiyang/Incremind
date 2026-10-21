@@ -899,7 +899,7 @@ class WorkspaceQuery:
             numerator, denominator = caps.get('input_budget_share', (1, 2))
             budget = (max(0, min(caps["budget_cap"], (limits["window"] - limits["reserve"]) * numerator // denominator)) if valid
                       else caps["fallback_budget"])
-        overhead = structured_prompt_overhead() if (version('compose') in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} or answer_response_model(version('compose')) is EvidenceFirstAskOutput or any(callable(getattr(self.models, name, None))
+        overhead = structured_prompt_overhead() if (version('compose') in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} or answer_response_model(version('compose')) is EvidenceFirstAskOutput or any(callable(getattr(self.models, name, None))
             for name in ("complete_structured", "complete_stream"))) else 0
         return target, budget, overhead
 
@@ -1002,12 +1002,12 @@ class WorkspaceQuery:
         with override(**plan['policy_versions']):
             self.validate_ask_plan({**plan, 'chosen': rows})
             selected = version('compose')
-            if selected in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
-                catalog = build_evidence_catalog(rows)
+            if selected in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
+                catalog = build_evidence_catalog(rows, compose_version=selected)
                 arguments = dict(history=plan.get('history', ''), profile=plan.get('profile', {}),
                     part_context=plan.get('part_context'), compose_version=selected)
                 first = build_partition_messages(rows, plan['question'], **arguments)
-                facts = selected in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
+                facts = selected in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}
                 partition = {'selected_ids': [unit['id'] for unit in catalog['units']],
                     'irrelevant_ids': [], 'uncertain_ids': []}
                 final = build_partition_messages(rows, plan['question'], **arguments,
@@ -1016,7 +1016,7 @@ class WorkspaceQuery:
                     review_input_tokens(final, response_model=final_response_model(selected, plan['question'])) + 3)
                 required = (grounded_output_minimum(catalog, compose_version=selected)
                     if selected not in {'@18', '@19'} else partition_output_tokens(catalog))
-                if selected in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+                if selected in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
                     required = max(required, first_facts_output_minimum(catalog, compose_version=selected)
                         if facts else partition_output_tokens(catalog))
                 reserve = plan.get('answer_output_budget', {}).get('reserve',
@@ -1150,7 +1150,7 @@ class WorkspaceQuery:
         from .v2.links import InsightLinks
         links = InsightLinks(self.records, self.service)
         target, budget, overhead = self.ask_budget()
-        answer_output_budget = self._answer_output_budget(target) if version('compose') in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else None
+        answer_output_budget = self._answer_output_budget(target) if version('compose') in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else None
         from .v2.profile import confirmed_profile
         profile = confirmed_profile(self.records, self.service, rank_reference=collected.get('rank_reference'))
         ordinary_limit = evidence_limit
@@ -1191,26 +1191,26 @@ class WorkspaceQuery:
             if callable(getattr(get('ladder'), 'demand', None)):
                 options['fit'] = self._fit_dynamic_candidate
                 options['semantic_anchors'] = tuple(dict.fromkeys((retrieval_question, *(coverage_questions or ()))))
-                if version('compose') in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+                if version('compose') in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
                     # 两轮共用真实目录；原文、画像、历史、依赖及三种包装全部计入。
                     def partition_cost(rows):
-                        catalog = build_evidence_catalog(rows)
+                        catalog = build_evidence_catalog(rows, compose_version=version('compose'))
                         first = build_partition_messages(rows, question, history=history,
                             profile=profile, part_context=part_context, compose_version=version('compose'))
                         worst = {'selected_ids': [unit['id'] for unit in catalog['units']],
                             'irrelevant_ids': [], 'uncertain_ids': []}
                         final = build_partition_messages(rows, question, history=history,
                             profile=profile, part_context=part_context, compose_version=version('compose'),
-                            **({'first_output': first_fact_empty(version('compose'), catalog)} if version('compose') in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else {'partition': worst}))
+                            **({'first_output': first_fact_empty(version('compose'), catalog)} if version('compose') in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else {'partition': worst}))
                         return max(review_input_tokens(first, response_model=answer_response_model(version('compose'))),
                             review_input_tokens(final, response_model=final_response_model(version('compose'), question)) + 3)
                     def partition_admission(rows):
                         # 分类输出有界；实际公开原话仍在末轮渲染时单独检查，不能预先截资料。
-                        catalog = build_evidence_catalog(rows)
-                        required = (grounded_output_minimum(catalog, compose_version=version('compose')) if version('compose') in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
+                        catalog = build_evidence_catalog(rows, compose_version=version('compose'))
+                        required = (grounded_output_minimum(catalog, compose_version=version('compose')) if version('compose') in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}
                             else partition_output_tokens(catalog))
-                        if version('compose') in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
-                            required = max(required, first_facts_output_minimum(catalog, compose_version=version('compose')) if version('compose') in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else partition_output_tokens(catalog))
+                        if version('compose') in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
+                            required = max(required, first_facts_output_minimum(catalog, compose_version=version('compose')) if version('compose') in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else partition_output_tokens(catalog))
                         return required <= (
                             answer_output_budget['reserve'] if answer_output_budget is not None
                             else 512 if target['execution_location'] == 'local' else 7000)
@@ -1317,7 +1317,7 @@ class WorkspaceQuery:
             code = ("private_project_remote_blocked" if is_private_project(self.records, plan["project_id"])
                     else "remote_disabled")
             raise ModelConfigurationError(code)
-        if plan.get('policy_versions', {}).get('compose') in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} and self._answer_output_budget(plan['target']) != plan.get('answer_output_budget'):
+        if plan.get('policy_versions', {}).get('compose') in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} and self._answer_output_budget(plan['target']) != plan.get('answer_output_budget'):
             raise ValueError('grounded_output_budget_changed')
         if self.ask_target() != plan["target"]:
             raise ModelConfigurationError("ask_model_target_changed")
@@ -1481,7 +1481,7 @@ class WorkspaceQuery:
                     {'role':'user', 'content':plan['part_context']['text']})
         invocation_key = continuation['invocation_key'] if continuation else 'answer'
         compose_version = plan.get('policy_versions', {}).get('compose')
-        review_required = compose_version in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
+        review_required = compose_version in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}
         response_model = answer_response_model(plan.get('policy_versions', {}).get('compose'))
         if continuation:
             # 续答恢复同轮实际冻结的合同，不把旧两字段输出升级为新合同。
@@ -1493,7 +1493,7 @@ class WorkspaceQuery:
             messages = get('retry')({'kind': 'continue_messages', 'messages': continuation['messages'],
                 'partial': continuation['partial']})
             if review_required:
-                if continuation['partial'] or response_model is not (FocusedReferencedFactsOutput if compose_version in {'@27', '@28', '@29', '@30', '@31', '@32', '@33'} else FirstReferencedFactsOutput if compose_version == '@26' else FirstFactsOutput if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else EvidencePartitionOutput if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else SourceQuoteExtraction if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else AskOutput):
+                if continuation['partial'] or response_model is not (FocusedReferencedFactsOutput if compose_version in {'@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else FirstReferencedFactsOutput if compose_version == '@26' else FirstFactsOutput if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else EvidencePartitionOutput if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else SourceQuoteExtraction if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else AskOutput):
                     raise ValueError('answer_review_continuation_unavailable')
                 # 新合同没有公开草稿段落；恢复同轮键可复用已完成草稿及审核，不另发草稿调用。
                 messages, invocation_key, continuation = frozen_input[1]['messages'], 'answer', None
@@ -1503,14 +1503,14 @@ class WorkspaceQuery:
         context_messages = messages
         partition_catalog, partition_tokens = None, None
         try:
-            if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+            if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
                 if continuation is None:
                     messages = build_partition_messages(chosen, question, history=plan.get('history', ''),
                         profile=plan.get('profile', {}), part_context=plan.get('part_context'), compose_version=compose_version)
                 context_messages = messages
-                partition_catalog = build_evidence_catalog(chosen)
+                partition_catalog = build_evidence_catalog(chosen, compose_version=compose_version)
                 partition_tokens = partition_output_tokens(partition_catalog)
-            if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+            if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
                 from .kernel.answer_continuations import PLAN_KIND, save_plan
                 active_request, turn_store, _, _ = ACTIVE_ANSWER.get()
                 if turn_store.get_immutable_payload(active_request['turn_id'], PLAN_KIND) is None:
@@ -1528,19 +1528,19 @@ class WorkspaceQuery:
                         request=active_request, store=turn_store,
                         runtime=self.answer_turns.application.state.ai_runtime)
             review_budget = get('compose')(None, operation='review_budget') if review_required else None
-            if compose_version in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+            if compose_version in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
                 review_budget = plan.get('budget')
                 if type(review_budget) is not int or review_budget <= 0:
                     raise ValueError('answer_review_budget_unavailable')
                 if review_input_tokens(messages, response_model=response_model) > review_budget:
                     raise ValueError('answer_draft_budget_exceeded')
-            if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
-                output_limit = (grounded_output_limit(plan, review_input_tokens(messages, response_model)) if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
+            if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
+                output_limit = (grounded_output_limit(plan, review_input_tokens(messages, response_model)) if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}
                     else 512 if plan['target']['execution_location'] == 'local' else 7000)
-                required_output = (grounded_output_minimum(partition_catalog, compose_version=compose_version) if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else partition_tokens)
-                if compose_version in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+                required_output = (grounded_output_minimum(partition_catalog, compose_version=compose_version) if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else partition_tokens)
+                if compose_version in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
                     # 旧首全集或26稀疏首外壳各按真实合同准入，事实容量仍须首后重核。
-                    required_output = max(required_output, first_facts_output_minimum(partition_catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else partition_tokens)
+                    required_output = max(required_output, first_facts_output_minimum(partition_catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else partition_tokens)
                 if required_output > output_limit:
                     raise ValueError('evidence_partition_output_budget_exceeded')
                 # 首wire前核真实Schema与最小外壳；空facts只是预估，首后重核完整原件，不换资料。
@@ -1548,7 +1548,7 @@ class WorkspaceQuery:
                     'irrelevant_ids': [], 'uncertain_ids': []}
                 worst_review = build_partition_messages(chosen, question, history=plan.get('history', ''),
                     profile=plan.get('profile', {}), part_context=plan.get('part_context'), compose_version=compose_version,
-                    **({'first_output': first_fact_empty(compose_version, partition_catalog)} if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else {'partition': worst_partition}))
+                    **({'first_output': first_fact_empty(compose_version, partition_catalog)} if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else {'partition': worst_partition}))
                 if review_input_tokens(worst_review, response_model=final_response_model(compose_version, question)) + 3 > review_budget:
                     raise ValueError('answer_review_budget_exceeded')
             dispatched_at = time.perf_counter()
@@ -1572,11 +1572,11 @@ class WorkspaceQuery:
 
                 try:
                     return generate_answer(self.models, messages, response_model=response_model,
-                        max_tokens=(output_limit if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else partition_tokens if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else min(get('compose')(None, operation='answer_contract')['draft_max_tokens'],
+                        max_tokens=(output_limit if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else partition_tokens if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else min(get('compose')(None, operation='answer_contract')['draft_max_tokens'],
                             512 if plan["target"]["execution_location"] == "local" else 7000)
-                            if compose_version in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else 512 if plan["target"]["execution_location"] == "local" else 7000),
+                            if compose_version in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else 512 if plan["target"]["execution_location"] == "local" else 7000),
                         validate_current=lambda: self.validate_ask_plan(plan),
-                        on_delta=measured_delta if on_delta is not None and compose_version not in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else None, invocation_key=invocation_key,
+                        on_delta=measured_delta if on_delta is not None and compose_version not in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else None, invocation_key=invocation_key,
                         **({'on_retry': on_retry} if on_retry is not None else {}))
                 finally:
                     _record_elapsed("generation", started)
@@ -1586,9 +1586,9 @@ class WorkspaceQuery:
             self.validate_ask_plan(plan)
             if evidence_first:
                 output = accept_evidence_structure(output, chosen)
-            if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
-                if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
-                    if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+            if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
+                if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
+                    if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}:
                         validate_first_facts(output, partition_catalog, chosen=chosen, question=question, compose_version=compose_version)
                     else:
                         validate_partition(output, partition_catalog)
@@ -1612,20 +1612,20 @@ class WorkspaceQuery:
             if review_required:
                 reviewed = (build_partition_messages(chosen, question, history=plan.get('history', ''),
                     profile=plan.get('profile', {}), part_context=plan.get('part_context'), compose_version=compose_version,
-                    **({'first_output': output.model_dump()} if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else {'partition': output.model_dump()})) if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else
-                    quote_answer_messages(messages, output.model_dump(), chosen, compose_version=compose_version, question=question) if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else
+                    **({'first_output': output.model_dump()} if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else {'partition': output.model_dump()})) if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else
+                    quote_answer_messages(messages, output.model_dump(), chosen, compose_version=compose_version, question=question) if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else
                     review_messages(messages, output.model_dump(), get('compose')(None, operation='review_instruction')))
                 final_model = final_response_model(compose_version, question)
                 if review_input_tokens(reviewed, response_model=final_model) > review_budget:
                     raise ValueError('answer_review_budget_exceeded')
                 review_started = True
                 final_output_limit = (grounded_output_limit(plan, review_input_tokens(reviewed, final_model))
-                    if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else None)
+                    if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else None)
                 if compose_version == '@32':
                     from .v2.answer_evidence import review_output_minimum
                     if review_output_minimum(partition_catalog, extracted_output, chosen=chosen, question=question) > final_output_limit:
                         raise ValueError('grounded_output_budget_exceeded')
-                if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} and grounded_output_minimum(partition_catalog, compose_version=compose_version) > final_output_limit:
+                if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} and grounded_output_minimum(partition_catalog, compose_version=compose_version) > final_output_limit:
                     raise ValueError('grounded_output_budget_exceeded')
                 def review():
                     return generate_answer(self.models, reviewed, response_model=final_model,
@@ -1645,7 +1645,7 @@ class WorkspaceQuery:
                         output = grounded_scope_answer(output, partition_catalog, extracted_output, chosen=chosen)
                     elif final_model is GroundedUsageAnswerOutput:
                         output = grounded_usage_answer(output, partition_catalog, extracted_output, chosen=chosen)
-                    output = render_grounded_answer(output, partition_catalog, first_fact_partition(extracted_output, partition_catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else extracted_output,
+                    output = render_grounded_answer(output, partition_catalog, first_fact_partition(extracted_output, partition_catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else extracted_output,
                         max_output_tokens=final_output_limit, chosen=chosen, **get('compose')(None,
                             operation='grounded_render', question=question))
                 elif final_model is EvidencePartitionOutput:

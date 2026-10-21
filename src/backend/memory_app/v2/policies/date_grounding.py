@@ -15,14 +15,14 @@ def _body(sentence):
     return re.sub(r'^\s*\[D[0-9]+:[0-9]+\]\s*[^:\r\n]{1,60}:\s*', '', sentence).strip()
 
 
-def bind_date_provenance(catalog, chosen, *, include_identity=False):
+def bind_date_provenance(catalog, chosen, *, include_identity=False, calendar_version=2):
     """相对式及完整原句必须落在同一真实窗口和目录单元。"""
     result = []
     for number, candidate in enumerate(chosen, 1):
         windows = _windows(candidate)
         if windows is None:
             continue
-        for record in date_provenance(candidate, quote_version=3, calendar_version=2):
+        for record in date_provenance(candidate, quote_version=3, calendar_version=calendar_version):
             if not record.get('computed') or not record.get('published') or record['note'] not in catalog['sources'][number - 1]['framing_before']:
                 continue
             left, right = record['sentence_span']
@@ -68,14 +68,14 @@ def _explicit_options(quote):
     return result
 
 
-def validate_calendar_statements_v1(statements, catalog, chosen, question, *, record_bindings=None, _bound_anchor_context=False, _on_invalid=None, _anchor_article_context=False, _record_anchor_context=False, _frozen_record_anchors=False):
+def validate_calendar_statements_v1(statements, catalog, chosen, question, *, record_bindings=None, _bound_anchor_context=False, _on_invalid=None, _anchor_article_context=False, _record_anchor_context=False, _frozen_record_anchors=False, _calendar_version=2, _collect_invalid=False):
     """跨kind核新绝对日期；问题范围和记录锚只在明确上下文中使用。"""
     units = {unit['id']: unit for unit in catalog['units']}
-    records = bind_date_provenance(catalog, chosen)
+    records = bind_date_provenance(catalog, chosen, calendar_version=_calendar_version)
     question_dates = calendar_mentions_v1(question)
-    frozen_notes = {number: append_date_notes('', candidate, quote_version=3, calendar_version=2).lstrip('\n')
+    frozen_notes = {number: append_date_notes('', candidate, quote_version=3, calendar_version=_calendar_version).lstrip('\n')
         for number, candidate in enumerate(chosen, 1)}
-    validated = []
+    validated, invalid = [], False
     # 先审核正面日期，后审核只描述其剩余精度的limitation。
     for statement in sorted(statements, key=lambda item: item.kind == 'limitation'):
         for value in calendar_mentions_v1(statement.text):
@@ -134,7 +134,11 @@ def validate_calendar_statements_v1(statements, catalog, chosen, question, *, re
                     continue
             if _on_invalid is not None:
                 _on_invalid(statement, value)
-            raise ValueError('grounded_calendar_provenance_invalid')
+            if not _collect_invalid:
+                raise ValueError('grounded_calendar_provenance_invalid')
+            invalid = True
+    if invalid:
+        raise ValueError('grounded_calendar_provenance_invalid')
 
 
 def _is_bound_anchor_context(statement, value, records):
@@ -329,10 +333,11 @@ def _record_context_temporal_residue(statement, evidence, unit, records, *, chos
         r'今天|昨天|明天|今夜|昨夜|彼时|届时', ''.join(residual), re.I) is not None
 
 
-def validate_calendar_statements_v4(statements, catalog, chosen, question, *, record_bindings, _on_invalid=None, _frozen_record_anchors=False):
+def validate_calendar_statements_v4(statements, catalog, chosen, question, *, record_bindings, _on_invalid=None, _frozen_record_anchors=False, _calendar_version=2, _collect_invalid=False):
     """明确记录锚不算事件日；模糊当天仍需原文独立证明，不能借锚授权。"""
     units = {unit['id']: unit for unit in catalog['units']}
-    records = bind_date_provenance(catalog, chosen)
+    records = bind_date_provenance(catalog, chosen, calendar_version=_calendar_version)
+    invalid = False
     for statement in statements:
         if statement.kind not in {'fact', 'inference'}:
             continue
@@ -345,8 +350,11 @@ def validate_calendar_statements_v4(statements, catalog, chosen, question, *, re
                 statement, evidence, units[evidence.unit_id], records,
                 chosen=chosen if _frozen_record_anchors else None) for evidence in statement.evidence):
             if _on_invalid is not None:
-                _on_invalid(statement, unsupported[0])
-            raise ValueError('grounded_calendar_provenance_invalid')
+                for value in (unsupported if _collect_invalid else unsupported[:1]):
+                    _on_invalid(statement, value)
+            if not _collect_invalid:
+                raise ValueError('grounded_calendar_provenance_invalid')
+            invalid = True
     for statement in statements:
         if statement.kind not in {'fact', 'inference', 'date'} or not re.search(
                 r'\b(?:this|that|same|the\s+same|recorded)\s+(?:day|date|time|moment|instant|occasion)\b|'
@@ -358,10 +366,15 @@ def validate_calendar_statements_v4(statements, catalog, chosen, question, *, re
                     for option in _explicit_options(evidence.quote)) for evidence in statement.evidence):
                 if _on_invalid is not None:
                     _on_invalid(statement, value)
-                raise ValueError('grounded_calendar_provenance_invalid')
-    return validate_calendar_statements_v1(statements, catalog, chosen, question,
+                if not _collect_invalid:
+                    raise ValueError('grounded_calendar_provenance_invalid')
+                invalid = True
+    validate_calendar_statements_v1(statements, catalog, chosen, question,
         record_bindings=record_bindings, _bound_anchor_context=True, _anchor_article_context=True,
-        _record_anchor_context=True, _on_invalid=_on_invalid, _frozen_record_anchors=_frozen_record_anchors)
+        _record_anchor_context=True, _on_invalid=_on_invalid, _frozen_record_anchors=_frozen_record_anchors,
+        _calendar_version=_calendar_version, _collect_invalid=_collect_invalid)
+    if invalid:
+        raise ValueError('grounded_calendar_provenance_invalid')
 
 
 def validate_calendar_statements_v5(statements, catalog, chosen, question, *, record_bindings, _on_invalid=None):
@@ -370,9 +383,16 @@ def validate_calendar_statements_v5(statements, catalog, chosen, question, *, re
         record_bindings=record_bindings, _on_invalid=_on_invalid, _frozen_record_anchors=True)
 
 
-def build_date_ref_catalog(catalog, chosen):
+def validate_calendar_statements_v6(statements, catalog, chosen, question, *, record_bindings, _on_invalid=None, _collect_invalid=False):
+    """34只增加英文日偏移；诊断可收集全部非法值，末稿仍遇错即拒。"""
+    return validate_calendar_statements_v4(statements, catalog, chosen, question,
+        record_bindings=record_bindings, _on_invalid=_on_invalid, _frozen_record_anchors=True,
+        _calendar_version=3, _collect_invalid=_collect_invalid)
+
+
+def build_date_ref_catalog(catalog, chosen, *, calendar_version=2):
     """26只为当轮冻结窗口中的真实已发表计算分配稳定位置编号。"""
-    records = sorted(bind_date_provenance(catalog, chosen, include_identity=True),
+    records = sorted(bind_date_provenance(catalog, chosen, include_identity=True, calendar_version=calendar_version),
         key=lambda item: (item['source_number'], tuple(item['sentence_span']), item['expression'], item['anchor'], item['unit_id']))
     return [dict(record, date_ref_id=index) for index, record in enumerate(records, 1)]
 
@@ -408,11 +428,11 @@ def resolve_date_refs(statement, catalog, chosen, refs, *, compose_version='@26'
             reject(position, 'ref_requires_matching_unit_and_complete_sentence', record)
         resolved.append(record)
     # 28先完整验ref，再把普通声明视为没有计算引用；不改原件，也不授权后续精度说明。
-    if compose_version in {'@28', '@29', '@30', '@31', '@32', '@33'} and statement.kind in {'fact', 'inference'}:
+    if compose_version in {'@28', '@29', '@30', '@31', '@32', '@33', '@34'} and statement.kind in {'fact', 'inference'}:
         return [], []
     # 完整旧注释由同一冻结来源重建，模型无需也不能改写它。
     numbers = list(dict.fromkeys(record['source_number'] for record in resolved))
     notes = [] if (statement.kind == 'limitation' or compose_version == '@27' and statement.kind != 'date') else [
-        {'source_number': number, 'text': append_date_notes('', chosen[number - 1], quote_version=3, calendar_version=2).lstrip('\n')}
+        {'source_number': number, 'text': append_date_notes('', chosen[number - 1], quote_version=3, calendar_version=3 if compose_version == '@34' else 2).lstrip('\n')}
         for number in numbers]
     return resolved, notes

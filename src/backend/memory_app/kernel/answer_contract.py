@@ -21,7 +21,7 @@ def answer_contract_scope(request):
     budget = 3
     timeout = 240_000
     if (isinstance(request, dict) and request.get('desired_outcome') == 'project.answer'
-            and (request.get('policy_versions') or {}).get('compose') in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}):
+            and (request.get('policy_versions') or {}).get('compose') in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'}):
         budget = get('compose', version=request['policy_versions']['compose'])(None, operation='answer_contract')['nested_model_handle_budget']
     if isinstance(request, dict) and request.get('desired_outcome') == 'project.answer':
         timeout = answer_lifecycle(request)['tool_timeout_ms']
