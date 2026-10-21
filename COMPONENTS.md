@@ -1,5 +1,11 @@
 # 统一组件与公共能力索引
 
+## 当前问答策略接续（2026-10-21）
+
+默认组合为 `compose@34 / ladder@15 / retrieve@9 / rerank@2`；下文旧版本条目保留其实现背景。`retrieve@9` 沿 `agentic_rag.answer_candidates` 与 `WorkspaceQuery.select_rag_answer` 显式交接已观察的必要证据，复用真实窗口、来源校验及两轮容量，拒绝时不回退旧证据作答。`compose@34` 保留33两轮Schema，以calendar_version3增加有限英文日偏移，区分同句引用与日期值匹配，完整目录继续冻结校验；模型只消费保留全部正文、连续链及日期选项的内部投影，proof/gaps同formatter复算。`ModelConfiguration.public_for_purpose` 沿原带锁用途投影缩窄读取，query仅单次来源校验按项目复用外发判断，下一调用重读；辅助fast绑定及原私密/修订守卫保持。旧版本可显式回放，公开接口、持久格式和启动方式不变。
+
+本次只有真实零付费Source/SQLite、公开原文、调用方及独立审查证据；固定48题旧输出回放、语义收益和服务器总体耗时仍待唯一服务器owner复验，历史成绩不改写。
+
 - 同源会话日期（2026-10-21，默认 `compose@33`）：`policies.date_grounding.validate_calendar_statements_v5` 复用原日期核验，从同一冻结来源标题及非引语日期头核对唯一日期。明确会话或记录标签只提供元数据上下文，limitation可使用同源context引文；相对距离须与同条原话一致，事件日、同日指代、精度及计算ref继续原核验。首稿诊断、末稿审核、工作台、回执证明、模型额度及缺口共用33接线；旧30–32保留。
 
 - 空层下钻（2026-10-21，默认 `retrieve@8`）：`v2.agentic_rag.investigate` 复用同一次 `collect_candidates` 查询和原来源资格，当前层没有合格候选时依次检查摘要、整理稿和原件，在首个非空层停止。`policies.retrieve.v8` 统一返回实际检查深度，旧版本保留；原范围、上层关联、六次决策、连续两次无进展及八条结果额度继续生效。只有原件的项目也能从原工具进入有据作答。
