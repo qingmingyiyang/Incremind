@@ -995,6 +995,42 @@ class WorkspaceQuery:
             messages = get('retrieve')(None, plan['_drilldown']['retrieval_question'], texts, operation='gap_messages')
         return {'messages': messages, 'privacy': privacy, 'selection': selection}
 
+    def select_rag_answer(self, plan, rows):
+        """最终证据整体复用原两轮容量合同；拒绝时保留原选择和真实窗口。"""
+        if len(rows) > 8:
+            return False
+        with override(**plan['policy_versions']):
+            self.validate_ask_plan({**plan, 'chosen': rows})
+            selected = version('compose')
+            if selected in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+                catalog = build_evidence_catalog(rows)
+                arguments = dict(history=plan.get('history', ''), profile=plan.get('profile', {}),
+                    part_context=plan.get('part_context'), compose_version=selected)
+                first = build_partition_messages(rows, plan['question'], **arguments)
+                facts = selected in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
+                partition = {'selected_ids': [unit['id'] for unit in catalog['units']],
+                    'irrelevant_ids': [], 'uncertain_ids': []}
+                final = build_partition_messages(rows, plan['question'], **arguments,
+                    **({'first_output': first_fact_empty(selected, catalog)} if facts else {'partition': partition}))
+                cost = max(review_input_tokens(first, response_model=answer_response_model(selected)),
+                    review_input_tokens(final, response_model=final_response_model(selected, plan['question'])) + 3)
+                required = (grounded_output_minimum(catalog, compose_version=selected)
+                    if selected not in {'@18', '@19'} else partition_output_tokens(catalog))
+                if selected in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+                    required = max(required, first_facts_output_minimum(catalog, compose_version=selected)
+                        if facts else partition_output_tokens(catalog))
+                reserve = plan.get('answer_output_budget', {}).get('reserve',
+                    512 if plan['target']['execution_location'] == 'local' else 7000)
+                if cost > plan['budget'] or required > reserve:
+                    return False
+            else:
+                from .v2.budget import input_tokens
+                if input_tokens(rows, plan['question'], reserve_refutes=True,
+                        history=plan.get('history', '')) + plan['prompt_overhead'] > plan['budget']:
+                    return False
+            plan['chosen'] = list(rows)
+            return True
+
     def rag_read(self, plan, candidate, depth):
         """目录限定原 owner；按现有坐标读取对应正文或原件，容量不足不外扩。"""
         from .v2.budget import input_tokens

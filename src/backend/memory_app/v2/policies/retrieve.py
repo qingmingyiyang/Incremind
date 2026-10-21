@@ -221,3 +221,47 @@ v8.demand_based = v7.demand_based
 v8.agentic = v7.agentic
 v8.empty_layer_drilldown = True
 register('retrieve', '@8')(v8)
+
+
+def v9(entrypoint, /, *args, **kwargs):
+    """调查观察与最终交付显式区分，模型只选择确实需要的已读材料。"""
+    operation = kwargs.get('operation')
+    if operation == 'agentic_decision':
+        value, = args
+        if isinstance(value, dict) and value.get('action') == 'answer':
+            # 先沿原协议校验所有字段，仅新版本允许answer使用既有ids表达最终交付集合。
+            identities = value.get('ids')
+            if (not isinstance(identities, list) or len(identities) > 8
+                    or any(not isinstance(item, str) or not item.strip() or len(item) > 500 for item in identities)
+                    or len(set(identities)) != len(identities)):
+                raise ValueError('invalid_rag_decision')
+            v8(entrypoint, {**value, 'ids': []}, **kwargs)
+            return value
+    if operation == 'agentic_messages':
+        import json
+        context, = args
+        result = v6(entrypoint, *args, **kwargs)
+        instruction = (
+            '\n材料的final_evidence及final_evidence_ids标记当前真正会交给最终回答的证据。'
+            '其他materials只是调查观察，catalog只是目录；看见它们不表示最终回答能看见。'
+            '同一身份的观察可能比当前交付窗口更完整，只有final_evidence=true才表示这里展示的全部文本已交付。'
+            'answer的ids可以显式列出最终回答所需的全部已观察materials身份，最多8个，'
+            '可保留当前集合中的必要项、加入新找到的必要项、去掉无关项；不能填仅在目录中的id或技能id。'
+            'ids=[]表示原样沿用当前已选窗口，不会自动补齐同身份的其他观察；需要完整已观察窗口时应明确选择该id。'
+            '选择answer前，对照原问题逐项核实所需人物、不同对象、同源后续行动及限定条件已在最终集合中。'
+            '必要证据尚未读到应read或search；不要为了交接把全部观察一律选入，也不要重复检索已有事实。'
+            'search的query非空、ids=[]、questions=[]；read的ids非空、query=""、questions=[]；'
+            'answer的query=""、questions=[]；clarify的questions非空、query=""、ids=[]。'
+            '缺少会改变答案的必要条件时应clarify，不代用户选择条件。'
+        )
+        return [{**result[0], 'content': result[0]['content'] + instruction},
+                {'role': 'user', 'content': json.dumps(context, ensure_ascii=False, separators=(',', ':'))}]
+    return v8(entrypoint, *args, **kwargs)
+
+
+v9.drilldown = v8.drilldown
+v9.demand_based = v8.demand_based
+v9.agentic = v8.agentic
+v9.empty_layer_drilldown = v8.empty_layer_drilldown
+v9.explicit_answer_evidence = True
+register('retrieve', '@9')(v9)

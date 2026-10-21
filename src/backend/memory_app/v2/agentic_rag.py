@@ -69,10 +69,36 @@ def candidate_id(candidate):
 
 
 def _candidates(plan):
+    if getattr(_policy(plan), 'explicit_answer_evidence', False):
+        # 同源多次阅读保留全部真实窗口，不能让最后一个片段覆盖先前行动或对象。
+        return _merge_observed([*plan['_rag']['observed'], *plan['chosen']])
     rows = {}
     for candidate in [*plan['_rag']['observed'], *plan['chosen']]:
         rows[candidate_id(candidate)] = candidate
     return list(rows.values())
+
+
+def _merge_observed(rows):
+    from .policies.ladder import project_sources_v14, source_identity_v14
+    identities, grouped = {}, {}
+    for row in rows:
+        identity = candidate_id(row)
+        binding = source_identity_v14(row)
+        if identity in identities and identities[identity] != binding:
+            raise RecognitionConflict('rag_material_changed')
+        identities[identity] = binding
+        grouped.setdefault(identity, []).append(row)
+    # 复用现有坐标并集：相邻与重叠只拼真实已读文本，分离窗口不填中间空白。
+    result = []
+    for group in grouped.values():
+        if group[0]['kind'] == 'recognition':
+            # 认识的条件及来源说明是原子排版，不可用正文窗口重写excerpt。
+            if any(row['windows'] != group[0]['windows'] or row['excerpt'] != group[0]['excerpt'] for row in group):
+                raise RecognitionConflict('rag_material_changed')
+            result.append(group[0])
+        else:
+            result.extend(project_sources_v14(group))
+    return result
 
 
 def _descriptors(candidates):
@@ -86,6 +112,21 @@ def _descriptors(candidates):
                 'project_id': row['scope'].project_id}
         result[(kind, item['id'], item['project_id'])] = item
     return list(result.values())
+
+
+def answer_candidates(plan, identities):
+    """只交接决策实际看过的窗口，不把目录或全部观察自动变成最终证据。"""
+    available = {candidate_id(row): row for row in _candidates(plan)}
+    if not identities:
+        selected = _merge_observed(plan['chosen'])
+        if len(selected) > _policy(plan)(None, operation='agentic_limits')['results']:
+            raise RecognitionConflict('rag_answer_outside_observed')
+        return selected
+    selected = identities
+    if (len(selected) > _policy(plan)(None, operation='agentic_limits')['results']
+            or len(set(selected)) != len(selected) or not set(selected) <= available.keys()):
+        raise RecognitionConflict('rag_answer_outside_observed')
+    return [available[identity] for identity in selected]
 
 
 def _frozen_candidates(rows):
@@ -169,7 +210,11 @@ def material_input(query, plan, models, *, local_only):
             text = '\n…\n'.join(window.text for window in windows)
             if candidate['excerpt'] != text:
                 raise RecognitionConflict('rag_material_changed')
-        texts.append({'id': candidate_id(candidate), 'layer': candidate['layer'], 'title': candidate['title'], 'text': text})
+        item = {'id': candidate_id(candidate), 'layer': candidate['layer'], 'title': candidate['title'], 'text': text}
+        if getattr(_policy(plan), 'explicit_answer_evidence', False):
+            chosen = next((row for row in _merge_observed(plan['chosen']) if candidate_id(row) == item['id']), None)
+            item['final_evidence'] = chosen is not None and chosen['windows'] == candidate['windows']
+        texts.append(item)
     # 画像和历史虽不是证据，辅助决策及其派生查询仍受完整来源约束。
     descriptors = _all_descriptors(query, plan)
     allowed, privacy = freeze_turn_materials(query.records, models, plan['project_id'], descriptors,
@@ -189,6 +234,8 @@ def material_input(query, plan, models, *, local_only):
                'catalog': state['catalog'], 'round': state['round'],
                'tools': tool_availability(query, plan['project_id']),
                'remaining_decisions': _policy(plan)(None, operation='agentic_limits')['decisions'] - state['round']}
+    if getattr(_policy(plan), 'explicit_answer_evidence', False):
+        context['final_evidence_ids'] = [item['id'] for item in texts if item['final_evidence']]
     proof = {'privacy': privacy, 'candidates': _frozen_candidates(rows), 'skills': deepcopy(skills),
              'history': encode(state['history']), 'profile': encode(plan.get('profile')),
              'tools': tool_availability(query, plan['project_id']),
@@ -326,6 +373,11 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                 usages.append(sum_usage(*observation['observations']))
         action = decision['action']
         if action in {'answer', 'clarify'}:
+            if action == 'answer' and getattr(_policy(plan), 'explicit_answer_evidence', False):
+                selected = answer_candidates(plan, decision['ids'])
+                if not query.select_rag_answer(plan, selected):
+                    # 明确选中的必要证据不能被旧chosen替代后继续作答。
+                    raise RagInputBudgetExhausted('rag_answer_input_budget_exhausted')
             stop = action
             plan['_rag_last'] = {'version': 1, 'status': action, 'round': number,
                 'invocation': invocation, 'question': task_text, 'questions': decision['questions']}
