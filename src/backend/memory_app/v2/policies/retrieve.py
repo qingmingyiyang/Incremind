@@ -265,3 +265,19 @@ v9.agentic = v8.agentic
 v9.empty_layer_drilldown = v8.empty_layer_drilldown
 v9.explicit_answer_evidence = True
 register('retrieve', '@9')(v9)
+
+
+def v10(entrypoint, /, *args, **kwargs):
+    """显式候选先探查既有记忆层，其余调查与证据交接沿用9。"""
+    if kwargs.get('operation') == 'initial_layers':
+        return ('L3', 'L2', 'L1')
+    return v9(entrypoint, *args, **kwargs)
+
+
+v10.drilldown = v9.drilldown
+v10.demand_based = v9.demand_based
+v10.agentic = v9.agentic
+v10.empty_layer_drilldown = v9.empty_layer_drilldown
+v10.explicit_answer_evidence = v9.explicit_answer_evidence
+v10.initial_memory_probe = True
+register('retrieve', '@10')(v10)

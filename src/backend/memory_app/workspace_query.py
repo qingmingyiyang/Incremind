@@ -345,6 +345,51 @@ class WorkspaceQuery:
         return {**result, 'policy_versions': selections}
 
     @with_question_vectors
+    def collect_initial_candidates(self, project_id, question, *, scene=None, policy_versions=None):
+        """Candidate-only upper-layer probe through the existing retrieval owner."""
+        selections = policy_versions or versions_for_turn('project.answer')
+        with override(**selections), stage('build_entries'):
+            policy = get('retrieve')
+            if not getattr(policy, 'initial_memory_probe', False):
+                raise ValueError('initial_memory_policy_required')
+            layers = policy(None, operation='initial_layers')
+            result = policy(partial(self._collect_candidates, only_layers=layers),
+                            project_id, question, scene=scene)
+        return {**result, 'policy_versions': selections,
+                '_initial_binding': {'project': project_id, 'question': question, 'scene': scene}}
+
+    def validate_initial_candidates(self, project_id, question, initial, *, scene=None):
+        """A request-local cached probe retains the same current source/scene authority."""
+        if initial.get('_initial_binding') != {'project': project_id, 'question': question, 'scene': scene}:
+            raise RecognitionConflict('initial_memory_binding_changed')
+        rows = initial['candidates']
+        self.validate_ask_plan({'project_id': project_id, 'scope': WorkScope('local-user', project_id),
+                               'target': self.ask_target(), 'chosen': rows})
+        from .v2.reranking import _validate_scene
+        scope_policy = get('scope', version=initial['policy_versions']['scope'])
+        documents = (self.records.list_matching('documents', project_id=project_id)
+                     if any(row['kind'] == 'source' for row in rows) else ())
+        for row in rows:
+            _validate_scene(self, project_id, scene, row, scope_policy, documents)
+
+    @with_question_vectors
+    def collect_initial_remainder(self, project_id, question, initial, *, scene=None):
+        """Complete an unchanged probe query at L0 without recollecting its upper layers."""
+        self.validate_initial_candidates(project_id, question, initial, scene=scene)
+        selections = initial['policy_versions']
+        with override(**selections), stage('build_entries'):
+            policy = get('retrieve')
+            if not getattr(policy, 'initial_memory_probe', False):
+                raise ValueError('initial_memory_policy_required')
+            lower = policy(partial(self._collect_candidates, only_layers=('L0',),
+                                   rank_reference=initial.get('rank_reference')),
+                           project_id, question, scene=scene)
+            from .v2.multi_query import fuse_candidates
+            candidates = fuse_candidates([initial['candidates'], lower['candidates']])
+        return {**initial, 'candidates': candidates,
+                'excluded_sources': [*initial['excluded_sources'], *lower['excluded_sources']][:20]}
+
+    @with_question_vectors
     def collect_lower_candidates(self, project_id: str, question: str, *, scene=None,
                                  policy_versions=None, time_scope=None, time_documents=None,
                                  time_candidates=(), rank_reference=None) -> dict:
@@ -1345,6 +1390,9 @@ class WorkspaceQuery:
         if plan.get("history_guard") is not None:
             plan["history_guard"]()
         self._validate_ask_sources(plan)
+        if plan.get('initial_answer_proof') is not None:
+            from .v2.initial_answer import validate_plan
+            validate_plan(self, plan)
 
     def _validate_ask_sources(self, plan, *, local_only=False):
         project_id = plan["project_id"]
@@ -1664,6 +1712,9 @@ class WorkspaceQuery:
                         output = grounded_scope_answer(output, partition_catalog, extracted_output, chosen=chosen)
                     elif final_model is GroundedUsageAnswerOutput:
                         output = grounded_usage_answer(output, partition_catalog, extracted_output, chosen=chosen)
+                    if plan.get('initial_answer_proof') is not None:
+                        from .v2.initial_answer import validate_output
+                        validate_output(plan, output, partition_catalog)
                     output = render_grounded_answer(output, partition_catalog, first_fact_partition(extracted_output, partition_catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34'} else extracted_output,
                         max_output_tokens=final_output_limit, chosen=chosen, **get('compose')(None,
                             operation='grounded_render', question=question))

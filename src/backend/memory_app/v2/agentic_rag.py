@@ -335,7 +335,8 @@ def _skill_context(query, plan):
     return {'task_text': plan['_rag']['task_text'], 'project_summary': '\n'.join(filter(None, (summary, refs)))}
 
 
-async def investigate(query, project, question, plan, *, turn_id, scene=None, history=None):
+async def investigate(query, project, question, plan, *, turn_id, scene=None, history=None,
+                      initial_memory=None, initial_route=None):
     from .multi_query import fuse_candidates
     from .rag_skills import RagSkills
     from .search import agentic_search, validate_agentic_search_tools
@@ -354,17 +355,51 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
     empty_bookshelf.continuation = {'spines': [], 'version': privacy_version, 'project': project, 'scene': scene}
     empty_bookshelf.frozen_binding = {'hits': [], 'version': privacy_version, 'project': project, 'scene': scene}
     plan['bookshelf_guard'] = empty_bookshelf
+    if initial_route is not None and not getattr(_policy(plan), 'initial_memory_probe', False):
+        raise RecognitionConflict('initial_memory_policy_required')
     if not query.ask_target()['model'] or (query.ask_target()['execution_location'] == 'remote'
             and not egress_allowed(query.records, query.models, project, 'generation')):
+        if initial_route is not None:
+            initial_route['reason'] = 'model_unavailable'
         plan.pop('_rag')
         plan['_rag_summary'] = {'version': 1, 'status': 'skipped', 'stop': 'model_unavailable', 'steps': []}
         return plan, {'usage': {}, 'receipt_ids': [], 'status': 'skipped', 'usage_complete': True}, {'queries': [], 'used': False}
     usages, receipts, seen, no_progress, pool = [], [], set(), 0, {}
+    initial_seed_ids = set()
+    initial_complete = None
+    if initial_memory is not None:
+        query.validate_initial_candidates(project, question, initial_memory, scene=scene)
+        from .initial_answer import assess
+        assessment = assess(query, plan, reference=initial_memory.get('rank_reference'))
+        initial_route['reason'] = assessment['reason']
+        if assessment['status'] == 'sufficient':
+            proof = assessment['proof']
+            selected = [row for row in plan['chosen']
+                        if row['kind'] == 'recognition' and row['id'] == proof['source_id']]
+            if query.select_rag_answer(plan, selected):
+                plan['initial_answer_proof'] = proof
+                query.validate_ask_plan(plan)
+                initial_route.update(route='direct', reason='initial_evidence_sufficient')
+                plan['_rag_summary'] = {'version': 1, 'status': 'skipped',
+                                       'stop': 'initial_evidence_sufficient', 'steps': []}
+                plan.pop('_rag')
+                return plan, {'usage': {}, 'receipt_ids': [], 'status': 'skipped',
+                              'usage_complete': True}, {'queries': [], 'used': False}
+            initial_route['reason'] = 'answer_budget_insufficient'
+        # These actual selected windows are displayed to the first real decision.
+        for row in plan['chosen']:
+            _remember_observed(plan, pool, row)
+            initial_seed_ids.add(candidate_id(row))
+        plan['_rag']['observed'] = list(pool.values())
+        plan['_rag']['catalog'] = _catalog(list(pool.values()), limits['results'])
+        plan['_rag']['depths'] = ['summary', 'body']
     status, stop = 'completed', 'round_limit'
     for number in range(1, limits['decisions'] + 1):
         _checkpoint()
         plan['_rag']['round'] = number
         invocation = 'rag-decision-' + str(number)
+        if initial_route is not None:
+            initial_route['decision_invocations'] += 1
         try:
             decision, usage = await _decide(query, plan)
             usages.append(usage)
@@ -412,7 +447,18 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                     address = str(config.get('base_url') or '')
                     if config.get('enabled') and address and urlsplit(address).hostname not in {'127.0.0.1', 'localhost', '::1'}:
                         validate_derived_query(query, plan, purpose)
-                collected = await settled_call(query.collect_candidates, project, decision['query'], scene=scene)
+                if initial_memory is not None and decision['query'] == question:
+                    if initial_complete is None:
+                        initial_complete = await settled_call(query.collect_initial_remainder,
+                            project, question, initial_memory, scene=scene)
+                        initial_route['remainder_collections'] += 1
+                    else:
+                        await settled_call(query.validate_initial_candidates,
+                            project, question, initial_complete, scene=scene)
+                    collected = initial_complete
+                    initial_route['reused_queries'] += 1
+                else:
+                    collected = await settled_call(query.collect_candidates, project, decision['query'], scene=scene)
                 policy = _policy(plan)
                 depth = policy(None, decision['depth'], plan['_rag']['depths'], operation='agentic_depth')
                 drilldown = getattr(policy, 'empty_layer_drilldown', False)
@@ -423,7 +469,9 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                     candidates = [row for row in candidates if row['layer'] in layers]
                     candidates = sorted(candidates, key=lambda row: -row.get('score', 0))[:limits['results']]
                 if depth != 'summary' or drilldown:
-                    upper = [row for row in pool.values() if row['layer'] in {'L3', 'L2'}]
+                    # A probe observation is not yet a model-selected navigation anchor.
+                    upper = [row for row in pool.values() if row['layer'] in {'L3', 'L2'}
+                             and candidate_id(row) not in initial_seed_ids]
                     if upper:
                         allowed = set()
                         from .insights import source_documents
@@ -447,6 +495,7 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                 plan['_rag']['depths'].extend(depths)
                 result['actual_depth'] = depth
                 for row in rows:
+                    initial_seed_ids.discard(candidate_id(row))
                     old = pool.get(candidate_id(row))
                     if old is not None and old['entry']['revision'] != row['entry']['revision']:
                         raise RecognitionConflict('rag_material_changed')
@@ -492,6 +541,7 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                         raise RecognitionConflict('rag_read_outside_catalog')
                     else:
                         candidate = pool.get(identity) or next(row for row in plan['chosen'] if candidate_id(row) == identity)
+                        initial_seed_ids.discard(identity)
                         depth = _policy(plan)(None, decision['depth'], plan['_rag']['depths'], operation='agentic_depth')
                         rows = await settled_call(query.rag_read, plan, candidate, depth)
                         for row in rows:

@@ -6,6 +6,7 @@ import logging
 import re
 import sqlite3
 from contextlib import nullcontext
+from time import monotonic
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -1196,7 +1197,24 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
     rewritten = await condense(query, project, cleaned, history, turn_id=turn_id)
     retrieval_question = rewritten["question"] or cleaned
     agentic = getattr(get('retrieve'), 'agentic', False)
-    collected = ({'candidates': [], 'excluded_sources': [], 'policy_versions': versions_for_turn('project.answer')}
+    initial_memory, initial_route = None, None
+    if agentic and getattr(get('retrieve'), 'initial_memory_probe', False):
+        from .initial_answer import parse_question
+        initial_route = {'route': 'investigate', 'reason': 'unsupported_question',
+            'probe_collections': 0, 'remainder_collections': 0, 'reused_queries': 0,
+            'decision_invocations': 0, 'probe_seconds': 0.0}
+        if history['text'] or history.get('clarification') or part_context is not None or situation is not None:
+            initial_route['reason'] = 'unsupported_context'
+        elif retrieval_question != cleaned:
+            initial_route['reason'] = 'rewritten_question'
+        elif parse_question(cleaned) is not None:
+            started = monotonic()
+            initial_memory = await run_in_threadpool(query.collect_initial_candidates, project,
+                retrieval_question, scene=scene, policy_versions=versions_for_turn('project.answer'))
+            initial_route.update(reason='upper_evidence_insufficient', probe_collections=1,
+                                 probe_seconds=round(monotonic() - started, 6))
+    collected = (initial_memory if initial_memory is not None else
+        {'candidates': [], 'excluded_sources': [], 'policy_versions': versions_for_turn('project.answer')}
         if agentic else query.collect_candidates(project, retrieval_question, scene=scene,
             **({'situation':situation} if situation is not None else {})))
     retrieval = get('retrieve', version=collected['policy_versions']['retrieve'])
@@ -1215,7 +1233,8 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         from .agentic_rag import investigate
         try:
             plan, expanded, rewrite = await investigate(query, project, retrieval_question, plan,
-                turn_id=turn_id, scene=scene, history=history)
+                turn_id=turn_id, scene=scene, history=history,
+                initial_memory=initial_memory, initial_route=initial_route)
         except RecognitionError:
             raise HTTPException(409, 'source_changed_retry') from None
     elif gap:
@@ -1260,6 +1279,8 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         history_turn_ids=[{"id": turn["id"], "revision": turn["revision"]} for turn in history["turns"]])
     if agentic:
         plan['trace'][0]['agentic'] = plan['_rag_summary']
+    if initial_route is not None:
+        plan['trace'][0]['initial_memory'] = dict(initial_route)
     # execute_ask releases its evidence after completion; retain only mapping metadata.
     chosen = tuple({"layer": candidate["layer"], "persona": bool(candidate.get("persona")),
         **({'inspiration': True} if candidate.get('inspiration') else {}),
