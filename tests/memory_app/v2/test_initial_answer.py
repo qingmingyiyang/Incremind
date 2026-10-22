@@ -67,6 +67,58 @@ def test_supported_question_consumes_all_slots(question):
     assert parsed['subject'] == 'Orion' and parsed['attribute'] == '重试上限'
 
 
+@pytest.mark.parametrize('subject,name', [
+    ('星桥服务', '星桥服务'), ('「星桥服务」', '星桥服务'), ('“星桥服务”', '星桥服务'),
+    ('「星桥云舟平台」', '星桥云舟平台'), ('“星桥云舟平台”', '星桥云舟平台'),
+    ('「星河数据平台」', '星河数据平台'),
+    ('数据服务', '数据服务'), ('「数据服务」', '数据服务'), ('“数据服务”', '数据服务'),
+    ('Orion', 'Orion'),
+])
+@pytest.mark.parametrize('question_form', ['是多少', '为多少'])
+def test_literal_chinese_names_and_narrow_question_equivalents_have_the_same_slots(subject, name, question_form):
+    parsed = parse_question(f' {subject} 在 开发环境 的 重试上限 {question_form}？ ')
+    assert parsed == {'subject': name, 'condition': '开发环境', 'attribute': '重试上限'}
+
+
+@pytest.mark.parametrize('subject', [
+    '星桥', '星桥云舟服务', '星 桥服务', '「星 桥」', '“星桥”服务', '“星桥」',
+    '它', '它们服务', '自己服务', '今年星桥服务', '去年服务', '本周服务', '最近服务',
+    '当前服务', '在生产环境星桥服务', '星桥和云桥服务', '「星桥和云桥」',
+    '星桥服务与云舟服务', '非星桥服务', '「非星桥」', '「若星桥」', '「今年星桥」',
+    '星桥A服务', 'Orion星桥', '「Orion星桥」', 'A和B', 'A 和 B',
+])
+def test_chinese_name_boundaries_do_not_swallow_pronouns_modifiers_or_multiple_subjects(subject):
+    assert parse_question(f'{subject}的重试上限是多少？') is None
+
+
+@pytest.mark.parametrize('name', [
+    '所有服务', '全部服务', '任意服务', '任何项目', '部分系统', '过去服务', '过往服务',
+    '一切服务', '一些服务', '少数服务', '多数服务', '诸多服务',
+    '一类服务', '一批服务', '一组服务', '几种服务', '三个项目', '二十服务', '壹拾服务',
+    '数项服务', '数家服务', '数套服务', '数名服务',
+])
+@pytest.mark.parametrize('quoted', [False, True])
+def test_matching_quantified_or_past_subjects_are_not_single_named_entities(env, name, quoted):
+    subject = f'「{name}」' if quoted else name
+    body = f'{subject}的重试上限为 3 次。'
+    question = f'{subject}在开发环境的重试上限是多少？'
+    original = publish(env, body)
+    assert env.service.get_recognition(scope=env.scope, recognition_id=original.id).authorized
+    assert parse_question(question) is None
+    decision = assess(env.query, plan_for(env, question), reference=REFERENCE)
+    assert decision['status'] == 'unsupported' and decision['proof'] is None
+
+
+@pytest.mark.parametrize('question', [
+    '星桥服务现在的重试上限是多少？',
+    '星桥服务在开发环境和生产环境的重试上限为多少？',
+    '星桥服务的重试上限与并发上限为多少？',
+    '星桥服务的重试上限是几次？',
+])
+def test_chinese_equivalents_do_not_add_time_conditions_multiple_slots_or_implicit_units(question):
+    assert parse_question(question) is None
+
+
 @pytest.mark.parametrize('question', [
     '它的重试上限是多少？', 'it 的重试上限是多少？',
     'Orion 的重试上限和并发上限是多少？', 'Orion 当前的重试上限是多少？',
@@ -111,6 +163,94 @@ def test_real_confirmed_l3_has_bound_body_conditions_clock_and_source(env):
     assert proof['matching_corpus'][0]['validity']['valid_from'] == PUBLISHED
     assert proof['matching_corpus'][0]['source_evidence']
     validate_plan(env.query, plan)
+
+
+@pytest.mark.parametrize('body,question,answer', [
+    ('星桥服务的重试上限为 3 次。', '星桥服务在开发环境的重试上限为多少？',
+     '「星桥服务」的重试上限为 3 次。'),
+    ('「星桥服务」的重试上限为 3 次。', '星桥服务在开发环境的重试上限是多少？',
+     '星桥服务的重试上限为 3 次。'),
+    ('“星桥云舟平台”的重试上限为 3 次。', '「星桥云舟平台」在开发环境的重试上限是多少？',
+     '「星桥云舟平台」的重试上限为 3 次。'),
+    ('数据服务的重试上限为 3 次。', '「数据服务」在开发环境的重试上限为多少？',
+     '数据服务的重试上限为 3 次。'),
+    ('「星河数据平台」的重试上限为 3 次。', '“星河数据平台”在开发环境的重试上限是多少？',
+     '「星河数据平台」的重试上限为 3 次。'),
+])
+def test_confirmed_chinese_fact_preserves_owner_proof_and_only_normalizes_outer_name_quotes(env, body, question, answer):
+    original = publish(env, body)
+    plan = admitted(env, question)
+    proof = plan['initial_answer_proof']
+    assert proof['source_id'] == original.id and proof['statement'] == body
+    assert proof['quote'] == body + '\n\n适用条件：\n- 开发环境'
+    validate_plan(env.query, plan)
+    output = {'statements': [{'kind': 'fact', 'text': answer, 'evidence': [
+        {'role': 'support', 'unit_id': proof['unit_id'], 'quote': proof['quote']}]}]}
+    catalog = build_evidence_catalog(plan['chosen'], compose_version='@34')
+    validate_output(plan, output, catalog)
+    name = proof['slot']['subject']
+    split_name = name[:1] + ' ' + name[1:]
+    for bad_text in (answer.replace('3', '4'), answer.replace(name, split_name, 1)):
+        bad = deepcopy(output)
+        bad['statements'][0]['text'] = bad_text
+        with pytest.raises(ValueError, match='initial_answer_output_incomplete'):
+            validate_output(plan, bad, catalog)
+
+
+@pytest.mark.parametrize('suffix', ['服务', '系统', '项目', '组件', '模块'])
+@pytest.mark.parametrize('quoted_source', [False, True])
+def test_each_typed_chinese_suffix_has_identical_bare_and_quoted_entity_binding(env, suffix, quoted_source):
+    name = '星桥' + suffix
+    source_name = f'「{name}」' if quoted_source else name
+    question_name = name if quoted_source else f'“{name}”'
+    publish(env, f'{source_name}的重试上限为 3 次。')
+    plan = admitted(env, f'{question_name}在开发环境的重试上限为多少？')
+    proof = plan['initial_answer_proof']
+    assert proof['slot']['subject'] == name == proof['request']['subject']
+    validate_plan(env.query, plan)
+
+
+@pytest.mark.parametrize('body', [
+    '今年星桥服务的重试上限为 3 次。', '「今年星桥」的重试上限为 3 次。',
+    '星 桥服务的重试上限为 3 次。', '星桥A服务的重试上限为 3 次。',
+])
+def test_ambiguous_or_split_chinese_source_names_do_not_support_a_clear_named_question(env, body):
+    publish(env, body)
+    decision = assess(env.query, plan_for(env, '星桥服务在开发环境的重试上限是多少？'), reference=REFERENCE)
+    assert decision['status'] == 'insufficient' and decision['proof'] is None
+
+
+@pytest.mark.parametrize('blocked', ['condition', 'expired', 'conflict', 'source'])
+def test_chinese_name_support_keeps_the_existing_applicability_and_source_gates(env, blocked):
+    body = '星桥服务的重试上限为 3 次。'
+    original = publish(env, body, conditions=('生产环境',) if blocked == 'condition' else ('开发环境',))
+    plan = plan_for(env, '星桥服务在开发环境的重试上限为多少？')
+    if blocked == 'expired':
+        with env.records.begin() as tx:
+            marker = tx.read('v2_insight_validity', original.id)
+            tx.put('v2_insight_validity', original.id, {**marker.payload, 'valid_until': REFERENCE},
+                   expected_revision=marker.revision)
+            tx.commit()
+    elif blocked == 'conflict':
+        publish(env, '星桥服务的重试上限为 4 次。')
+    elif blocked == 'source':
+        identity = original.source_experience_ids[0]
+        source = env.records.read('recognition_experiences', identity)
+        env.service.revoke_experience(scope=env.scope, experience_id=identity, expected_revision=source.revision)
+    decision = assess(env.query, plan, reference=REFERENCE)
+    assert decision['status'] == 'insufficient' and decision['proof'] is None
+
+
+def test_quoted_and_bare_chinese_names_cannot_hide_a_conflicting_slot_value(env):
+    original = publish(env, '星桥服务的重试上限为 3 次。')
+    plan = admitted(env, '星桥服务在开发环境的重试上限是多少？')
+    alternative = publish(env, '「星桥服务」的重试上限为 4 次。')
+    assert [row['id'] for row in plan['chosen']] == [original.id]
+    assert alternative.id != original.id
+    decision = assess(env.query, plan, reference=REFERENCE)
+    assert decision['status'] == 'insufficient' and decision['reason'] == 'matching_slot_values_conflict'
+    with pytest.raises(RecognitionConflict, match='initial_answer_evidence_changed'):
+        validate_plan(env.query, plan)
 
 
 def test_unconditional_literal_requires_an_unconditional_question(env):

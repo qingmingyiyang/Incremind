@@ -3,6 +3,12 @@
 Only literal numeric declarations in confirmed L3 memory are supported.  This
 does not turn lexical coverage, publication, or a model's self-assessment into
 a proof of arbitrary natural-language entailment.
+
+Subjects are Latin identifiers, or exactly two Han name characters followed
+by 服务/系统/项目/组件/模块.  Other Chinese names require paired 「…」 or “…”
+and 2–16 contiguous Han characters.  Reserved grammatical characters, mixed
+scripts and internal whitespace are unsupported; only paired outer quotes
+are normalized.  Questions accept only 是多少 or 为多少 for the finite slot.
 """
 from copy import deepcopy
 import re
@@ -14,7 +20,10 @@ from .insight_validity import COLLECTION, from_confirmation, now, read_validity
 from .policies.insight_time import instant, valid
 
 
-_SUBJECT = r'[A-Za-z][A-Za-z0-9_.-]{0,63}'
+_LATIN_SUBJECT = r'[A-Za-z][A-Za-z0-9_.-]{0,63}'
+_CHINESE_BARE_SUBJECT = r'[\u4e00-\u9fff]{2}(?:服务|系统|项目|组件|模块)'
+_SUBJECT = (rf'(?:{_LATIN_SUBJECT}|{_CHINESE_BARE_SUBJECT}|'
+            r'「[\u4e00-\u9fff]{2,16}」|“[\u4e00-\u9fff]{2,16}”)')
 _LABEL = r'[\u4e00-\u9fffA-Za-z0-9_.-]{1,24}'
 _ATTRIBUTE = r'[\u4e00-\u9fff]{2,16}'
 _ATTRIBUTES = frozenset({'重试上限', '并发上限', '连接上限', '超时上限',
@@ -24,16 +33,42 @@ _UNIT = r'(?:毫秒|分钟|小时|字节|字符|KB|MB|GB|次|秒|天|个|项|条
 _SPACE = r'[ \t]*'
 _QUESTION = re.compile(
     rf'(?P<subject>{_SUBJECT}){_SPACE}(?:在{_SPACE}(?P<condition>{_LABEL}){_SPACE})?的{_SPACE}'
-    rf'(?P<attribute>{_ATTRIBUTE}){_SPACE}是多少{_SPACE}[？?]?')
+    rf'(?P<attribute>{_ATTRIBUTE}){_SPACE}(?:是多少|为多少){_SPACE}[？?]?')
 _STATEMENT = re.compile(
     rf'(?P<subject>{_SUBJECT}){_SPACE}的{_SPACE}(?P<attribute>{_ATTRIBUTE}){_SPACE}为{_SPACE}'
     rf'(?P<value>0|[1-9][0-9]{{0,8}}){_SPACE}(?P<unit>{_UNIT}){_SPACE}[。.]?')
 _PRONOUNS = {'it', 'they', 'them', 'this', 'that', 'he', 'she', 'we', 'you', 'i'}
+_CHINESE_RESERVED = frozenset(
+    '我你他她它咱您其谁这那哪某各每该此彼另自个己们双两都均'
+    '年月日周时刻今昨明近本上下前后曾已正将刚新旧最早晚初末常总现当'
+    '所有全部任何意分过去往些少数多诸类批组几种众半'
+    '零〇一二三四五六七八九十百千万亿俩仨壹贰叁肆伍陆柒捌玖拾佰仟萬億'
+    '和与及或暨且并同共兼又也而但'
+    '若如则才除非于在从到至为是的得地'
+    '不未无非否别莫勿没仅只')
 _MAX_CORPUS = 512
 
 
 def _text(value):
     return value.strip(' \t') if isinstance(value, str) else ''
+
+
+def _subject(value):
+    """A bounded literal name, never a free-form Chinese noun phrase."""
+    if re.fullmatch(_LATIN_SUBJECT, value):
+        return value if value.casefold() not in _PRONOUNS else None
+    if len(value) >= 2 and (value[0], value[-1]) in {('「', '」'), ('“', '”')}:
+        name = value[1:-1]
+        if not re.fullmatch(r'[\u4e00-\u9fff]{2,16}', name):
+            return None
+        stem = name[:2] if re.fullmatch(_CHINESE_BARE_SUBJECT, name) else name
+    elif re.fullmatch(_CHINESE_BARE_SUBJECT, value):
+        name, stem = value, value[:2]
+    else:
+        return None
+    # 数据 is an explicit name word, not a quantifier; the canonical name stays intact.
+    grammatical = stem.replace('数据', '')
+    return name if not any(character in _CHINESE_RESERVED for character in grammatical) else None
 
 
 def parse_question(question):
@@ -44,7 +79,8 @@ def parse_question(question):
     if match is None:
         return None
     result = match.groupdict()
-    if (result['subject'].casefold() in _PRONOUNS
+    result['subject'] = _subject(result['subject'])
+    if (result['subject'] is None
             or result['attribute'] not in _ATTRIBUTES
             or result['condition'] is not None and result['condition'] not in _CONDITIONS):
         return None
@@ -55,7 +91,9 @@ def _declaration(content):
     match = _STATEMENT.fullmatch(_text(content))
     if match is None or match['attribute'] not in _ATTRIBUTES:
         return None
-    return match.groupdict()
+    result = match.groupdict()
+    result['subject'] = _subject(result['subject'])
+    return result if result['subject'] is not None else None
 
 
 def _decision(status, reason, proof=None):
