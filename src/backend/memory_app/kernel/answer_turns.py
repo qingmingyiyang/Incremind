@@ -4,6 +4,8 @@ import asyncio
 from copy import deepcopy
 from contextvars import ContextVar
 from dataclasses import replace
+from hashlib import sha256
+import json
 from threading import RLock
 from time import monotonic
 from types import SimpleNamespace
@@ -602,8 +604,70 @@ class ProductAnswerTurns:
                 self.active.pop(turn_id, None)
 
 
+def _answer_failure_classification(error):
+    """Only finite local facts cross the diagnostic boundary; never error text."""
+    from backend.recognition import RecognitionError
+    from backend.shared.llm.model_transport import ModelInterrupted
+    from core.ai_kernel.event_store import RunLeaseRevoked
+    from ..model_config import ModelConfigurationError, ModelResponseDecodeError
+
+    if (type(error) is ModelResponseDecodeError and error.completed_wire is True
+            and type(error.decode_code) is str
+            and error.decode_code in {'json_empty', 'json_object_required', 'json_invalid', 'schema_invalid'}):
+        return 'decode', error.decode_code, True
+    if isinstance(error, RecognitionError):
+        return 'source', 'recognition_error', None
+    if isinstance(error, RunLeaseRevoked):
+        return 'control', 'lease_revoked', None
+    if isinstance(error, ModelInterrupted):
+        return 'control', 'interrupted', None
+    if isinstance(error, asyncio.CancelledError):
+        return 'control', 'cancelled', None
+    if isinstance(error, TimeoutError):
+        return 'deadline', 'timeout', None
+    if (type(error) is ModelConfigurationError and len(error.args) == 1
+            and type(error.args[0]) is str):
+        code = error.args[0]
+        if code in {'model_output_incomplete', 'model_output_missing_content', 'model_response_invalid'}:
+            return 'provider_output', code, None
+        if code in {'model_configuration_changed_before_request', 'model_configuration_changed_during_request',
+                    'model_egress_not_configured', 'model_egress_endpoint_invalid', 'model_egress_remote_not_consented'}:
+            return 'configuration', code, None
+        if code == 'model_request_failed: check endpoint, model and credentials':
+            # This wrapper can also hide an older non-stream decode rejection.
+            return 'model', 'model_request_failed', None
+    return 'other', 'unclassified_failure', None
+
+
+def _answer_failure_usage(value):
+    if not isinstance(value, dict):
+        return {}
+    return {key: value[key] for key in ('input_tokens', 'output_tokens', 'total_tokens')
+            if type(value.get(key)) is int and value[key] >= 0}
+
+
+def _record_answer_failure(store, request, invocation, handle, input_ref, schema, error):
+    """A diagnostic snapshot, never a generated result or answer evidence.
+
+    A pending attempt keeps its dispatch reference.  Later terminal/usage facts
+    remain in the normal attempt ledger; this immutable snapshot is not revised.
+    """
+    category, code, completed = _answer_failure_classification(error)
+    observed = answer_observation(invocation)
+    payload = {'version': 'answer-model-failure-v1', 'turn_id': request['turn_id'],
+        'invocation': invocation, 'model_request_id': handle.model_request_id, 'input_ref': input_ref,
+        'response_schema_sha256': sha256(json.dumps(schema, ensure_ascii=False, sort_keys=True,
+            separators=(',', ':')).encode('utf-8')).hexdigest(),
+        'category': category, 'code': code, 'completed_wire': completed,
+        'usage': _answer_failure_usage(error.usage) if completed is True else {},
+        'observations': [_answer_failure_usage(item) for item in observed['observations']],
+        'receipt_ids': list(observed['receipt_ids']), 'usage_complete': observed['complete'] is True}
+    store.get_or_create_immutable_payload(request['turn_id'], 'answer-model-failure-' + invocation, payload)
+
+
 def generate_answer(models, messages, *, response_model, max_tokens, validate_current,
-                    on_delta=None, purpose="primary", invocation_key="answer", timeout_seconds=None, gap_plan=None, on_retry=None, **unused):
+                    on_delta=None, purpose="primary", invocation_key="answer", timeout_seconds=None, gap_plan=None, on_retry=None,
+                    failure_diagnostics=False, **unused):
     """Use the tool-owned model lifecycle; domain code never owns a wire call."""
     active = ACTIVE_ANSWER.get()
     if active is None:
@@ -626,8 +690,9 @@ def generate_answer(models, messages, *, response_model, max_tokens, validate_cu
     if existing is not None:
         payload = existing[1]
         return response_model.model_validate(payload["output"]), payload["metadata"]
-    store.get_or_create_immutable_payload(request["turn_id"], "answer-model-input-" + invocation_key,
-        {"messages": messages, "purpose": purpose, "response_schema": response_model.model_json_schema()})
+    schema = response_model.model_json_schema()
+    input_ref = store.get_or_create_immutable_payload(request["turn_id"], "answer-model-input-" + invocation_key,
+        {"messages": messages, "purpose": purpose, "response_schema": schema})
     execution = query.answer_turns.active[request['turn_id']]
     call_key = (invocation_key + '-' + execution['invocation_key']
         if execution.get('continuation') is not None else invocation_key)
@@ -678,6 +743,13 @@ def generate_answer(models, messages, *, response_model, max_tokens, validate_cu
         if handle.terminal is not None:
             handle.discard()
         handle.finalize(error_code="ai.answer_model_failed")
+        if failure_diagnostics is True:
+            try:
+                _record_answer_failure(store, request, invocation_key, handle, input_ref, schema, error)
+            except Exception:
+                # Optional archival must never replace the original failure or
+                # trigger a different model retry/fallback decision.
+                pass
         raise
 
 

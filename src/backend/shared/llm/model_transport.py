@@ -136,7 +136,7 @@ def complete_with_owned_transport(completion, request):
         result = completion(**{**request, 'client': sdk.with_options(http_client=client, max_retries=0)})
         attempt.check()
         if request.get('stream'):
-            return _OwnedModelStream(result, attempt)
+            return _OwnedModelStream(result, attempt, _observe_sdk_provider(result))
     except BaseException as error:
         attempt.close()
         attempt.check()
@@ -226,10 +226,61 @@ class _OwnedHTTPAttempt:
         self.closed = True
 
 
+def _observe_sdk_provider(completion):
+    """Observe only the proven SDK pair, before LiteLLM normalizes its chunks.
+
+    LiteLLM can synthesize a terminal and estimate usage at natural EOF.  Those
+    adapter values do not prove that this provider finished or reported tokens.
+    Custom completion streams retain their existing behavior.
+    """
+    provider = getattr(completion, 'completion_stream', None)
+    if provider is None:
+        return None
+    from litellm.utils import CustomStreamWrapper
+    from openai import Stream
+    if (not isinstance(completion, CustomStreamWrapper)
+            or not isinstance(provider, Stream)):
+        return None
+    observer = _ProviderChunkFacts(provider)
+    completion.completion_stream = observer
+    return observer
+
+
+class _ProviderChunkFacts:
+    """Pass through original SDK chunks; retain no content or tool arguments."""
+    def __init__(self, provider):
+        self.provider, self.iterator = provider, iter(provider)
+        self.terminal, self.usage = False, None
+
+    @property
+    def response(self):
+        return self.provider.response
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        chunk = next(self.iterator)
+        if any((getattr(choice, 'index', None) == 0
+                or len(chunk.choices) == 1 and getattr(choice, 'index', None) is None)
+               and isinstance(choice.finish_reason, str) and choice.finish_reason for choice in chunk.choices):
+            self.terminal = True
+        if chunk.usage is not None:
+            # exclude_unset preserves provider-reported zero and omitted fields;
+            # SDK defaults are not measured provider usage.
+            self.usage = chunk.usage.model_dump(exclude_unset=True)
+        return chunk
+
+    def close(self):
+        self.provider.close()
+
+
 class _OwnedModelStream:
-    def __init__(self, stream, attempt):
+    def __init__(self, stream, attempt, provider_facts=None):
         self.stream, self.iterator, self.attempt = stream, iter(stream), attempt
-        self.closed = False
+        self.provider_facts = provider_facts
+        self.closed, self.provider_incomplete = False, False
+        self.last_chunk, self.usage_projected, self.pending_error = None, None, None
 
     @property
     def completion_stream(self):
@@ -239,12 +290,57 @@ class _OwnedModelStream:
         return self
 
     def __next__(self):
+        if self.pending_error is not None:
+            error, self.pending_error = self.pending_error, None
+            raise error
         try:
-            return next(self.iterator)
+            if self.provider_incomplete:
+                raise ConnectionError('provider stream ended before its terminal event')
+            chunk = next(self.iterator)
+            self.last_chunk = chunk
+            if self.provider_facts is not None:
+                if (not self.provider_facts.terminal
+                        and any(getattr(choice, 'finish_reason', None) is not None for choice in chunk.choices)):
+                    if self.provider_facts.usage is not None:
+                        # Preserve already reported consumption before failing;
+                        # this metadata contains no terminal or answer content.
+                        self.provider_incomplete = True
+                        return self._usage_metadata()
+                    raise ConnectionError('provider stream ended before its terminal event')
+                # Keep the SDK's public chunk type and content; only measured
+                # provider usage may enter the normal attempt ledger.
+                chunk = chunk.model_copy(update={'usage': self.provider_facts.usage})
+                self.usage_projected = self.provider_facts.usage
+            return chunk
+        except StopIteration:
+            self.close()
+            self.attempt.check()
+            if self.provider_facts is not None and not self.provider_facts.terminal:
+                raise ConnectionError('provider stream ended before its terminal event') from None
+            raise
         except BaseException as error:
             self.close()
             self.attempt.check()
-            raise self.attempt.timeout.header_error(error) from None
+            failure = self.attempt.timeout.header_error(error)
+            if (self.provider_facts is not None and self.provider_facts.usage is not None
+                    and self.provider_facts.usage != self.usage_projected and isinstance(failure, Exception)):
+                # Only ordinary SDK/provider decoding failures may yield already
+                # measured usage once. Control/cancellation and close failures
+                # retain the immediate path above, without another body read.
+                import json
+                from openai import APIError
+                if isinstance(failure, (APIError, json.JSONDecodeError)):
+                    self.pending_error = failure
+                    return self._usage_metadata()
+            raise failure from None
+
+    def _usage_metadata(self):
+        chunk = self.last_chunk
+        if chunk is None:
+            from litellm.types.utils import ModelResponseStream
+            chunk = ModelResponseStream(choices=[])
+        self.usage_projected = self.provider_facts.usage
+        return chunk.model_copy(update={'choices': [], 'usage': self.usage_projected})
 
     def close(self):
         if self.closed:

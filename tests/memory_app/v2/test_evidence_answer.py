@@ -236,3 +236,129 @@ def test_multiple_requirements_can_reference_actual_same_source_statements():
     output['statements'].append({'kind': 'fact', 'text': 'Elin leaves at dawn.',
         'evidence': [{'unit_id': unit['id'], 'quote': unit['text'], 'role': 'support'}], 'date_refs': []})
     assert validate_output(plan, contract, output).answer == 'Elin normally cycles. [1]\nElin leaves at dawn. [1]'
+
+
+def test_v12_contract_and_messages_keep_the_original_frozen_bytes():
+    plan = plan_for()
+    contract = preflight(plan)
+    encoded = lambda value: json.dumps(value, ensure_ascii=False, sort_keys=True,
+        separators=(',', ':')).encode()
+    assert hashlib.sha256(encoded(contract)).hexdigest() == '7d5c0c7c25a917fbeef573eda61bc957387795b7b092f1ddd075d9cc306ad6ac'
+    assert hashlib.sha256(encoded(messages(plan, contract))).hexdigest() == '2350b69962e46b8e3424eca65d082f2ff8b8f244ce00201f10f588bf77e4018f'
+
+
+def test_v13_freezes_and_sends_the_complete_schema_without_changing_the_original_question():
+    from openai.lib._parsing._completions import type_to_response_format_param
+
+    old_plan = plan_for()
+    old_contract = preflight(old_plan)
+    plan = deepcopy(old_plan)
+    plan['policy_versions']['retrieve'] = '@13'
+    contract = preflight(plan)
+    schema = EvidenceAnswerOutput.model_json_schema()
+    assert contract['response_schema'] == schema
+    assert {key: value for key, value in contract.items() if key != 'response_schema'} == old_contract
+    prompt = messages(plan, contract)
+    assert prompt[0] == messages(old_plan, old_contract)[0]
+    assert prompt[-1] == messages(old_plan, old_contract)[-1]
+    assert prompt[1]['role'] == 'system'
+    assert json.loads(prompt[1]['content'].split('\n', 1)[1]) == schema
+    assert schema['required'] == ['requirements', 'statements', 'issues']
+    assert schema['$defs']['EvidenceRequirement']['required'] == ['text', 'status', 'statement_indices']
+    assert schema['$defs']['ReferencedStatement']['required'] == ['kind', 'text', 'evidence', 'date_refs']
+    native = type_to_response_format_param(EvidenceAnswerOutput)
+    assert native['json_schema']['strict'] is True
+    assert native['json_schema']['schema']['properties'] == schema['properties']
+    assert validate_output(plan, contract, proposal(contract)).citations == [1]
+
+
+def test_v13_schema_is_part_of_frozen_input_and_returned_messages_are_isolated():
+    plan = plan_for()
+    plan['policy_versions']['retrieve'] = '@13'
+    contract = preflight(plan)
+    prompt = messages(plan, contract)
+    prompt[1]['content'] = 'Changed instruction.'
+    assert messages(plan, contract)[1]['content'] != prompt[1]['content']
+    contract['response_schema']['required'].remove('issues')
+    with pytest.raises(ValueError, match='contract_changed_or_unavailable'):
+        messages(plan, contract)
+    with pytest.raises(ValueError, match='contract_changed_or_unavailable'):
+        validate_output(plan, contract, proposal(contract))
+
+
+def test_v13_schema_instruction_counts_toward_input_budget():
+    from backend.memory_app.answer_proof import review_input_tokens
+
+    old_plan = plan_for()
+    old_cost = review_input_tokens(messages(old_plan, preflight(old_plan)), EvidenceAnswerOutput)
+    plan = deepcopy(old_plan)
+    plan['policy_versions']['retrieve'] = '@13'
+    new_cost = review_input_tokens(messages(plan, preflight(plan)), EvidenceAnswerOutput)
+    assert new_cost > old_cost
+    old_plan['budget'] = old_cost
+    plan['budget'] = old_cost
+    assert preflight(old_plan) is not None
+    assert preflight(plan) is None
+    plan['budget'] = new_cost
+    assert preflight(plan) is not None
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_v13_real_sdk_json_responses_validate_with_the_schema_present_in_json_mode(stream):
+    from openai.types.chat import ChatCompletion, ChatCompletionChunk
+    from backend.shared.llm.litellm_gateway import LiteLLMCompletionGateway
+
+    plan = plan_for()
+    plan['policy_versions']['retrieve'] = '@13'
+    contract = preflight(plan)
+    output = proposal(contract)
+    raw = json.dumps(output, ensure_ascii=False)
+    calls = []
+
+    class Lease:
+        def finish(self, status, *, error_code=None):
+            assert status == 'succeeded'
+
+    def completion(**request):
+        calls.append(request)
+        assert request['response_format'] == {'type': 'json_object'}
+        schema_messages = [item for item in request['messages']
+                           if item['role'] == 'system' and '\n' in item['content']]
+        assert len(schema_messages) == 1
+        assert json.loads(schema_messages[0]['content'].split('\n', 1)[1]) == contract['response_schema']
+        common = {'id': 'synthetic-sdk-response', 'created': 0, 'model': 'synthetic'}
+        usage = {'prompt_tokens': 9, 'completion_tokens': 4, 'total_tokens': 13}
+        if request.get('stream'):
+            return iter([
+                ChatCompletionChunk.model_validate({**common, 'object': 'chat.completion.chunk',
+                    'choices': [{'index': 0, 'delta': {'reasoning_content': 'Synthetic private reasoning.'},
+                                 'finish_reason': None}]}),
+                ChatCompletionChunk.model_validate({**common, 'object': 'chat.completion.chunk',
+                    'choices': [{'index': 0, 'delta': {'content': '```json\n' + raw + '\n```'},
+                                 'finish_reason': None}]}),
+                ChatCompletionChunk.model_validate({**common, 'object': 'chat.completion.chunk',
+                    'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]}),
+                ChatCompletionChunk.model_validate({**common, 'object': 'chat.completion.chunk',
+                    'choices': [], 'usage': usage}),
+            ])
+        return ChatCompletion.model_validate({**common, 'object': 'chat.completion',
+            'choices': [{'index': 0, 'finish_reason': 'stop', 'message': {'role': 'assistant',
+                'content': '```json\n' + raw + '\n```', 'reasoning_content': 'Private reasoning.'}}],
+            'usage': usage})
+
+    gateway = LiteLLMCompletionGateway(provider='deepseek', model='synthetic',
+        base_url='https://api.deepseek.com', api_key='synthetic-only',
+        completion_fn=completion, egress_guard=lambda *args: Lease())
+    prompt = messages(plan, contract)
+    if stream:
+        emitted = []
+        value, usage = gateway.stream_structured_with_usage(prompt, response_model=EvidenceAnswerOutput,
+            field=None, on_delta=emitted.append, validate_current=lambda: None)
+        assert emitted == []
+    else:
+        value, usage, _ = gateway.complete_structured_with_usage(prompt,
+            response_model=EvidenceAnswerOutput, retries=0, max_wire_attempts=1)
+    assert value.model_dump() == output
+    assert validate_output(plan, contract, value).citations == [1]
+    assert usage == {'input_tokens': 9, 'output_tokens': 4, 'total_tokens': 13}
+    assert len(calls) == 1

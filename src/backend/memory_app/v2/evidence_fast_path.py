@@ -169,7 +169,7 @@ def validate_evidence_plan(query, plan):
     if 'evidence_answer_proof' not in plan:
         return
     proof = plan['evidence_answer_proof']
-    if (plan.get('policy_versions', {}).get('retrieve') != '@12'
+    if (plan.get('policy_versions', {}).get('retrieve') not in {'@12', '@13'}
             or plan.get('policy_versions', {}).get('compose') != '@36'
             or type(proof) is not dict or set(proof) != {'contract', 'invocation'}
             or proof['invocation'] != INVOCATION or type(proof['contract']) is not dict):
@@ -258,7 +258,7 @@ async def attempt(query, plan, collected, route):
         output, metadata = await run_in_threadpool(lambda: generate_answer(
             query.models, prepared, response_model=EvidenceAnswerOutput,
             max_tokens=output_limit, validate_current=validate,
-            invocation_key=INVOCATION, timeout_seconds=35))
+            invocation_key=INVOCATION, timeout_seconds=35, failure_diagnostics=True))
         result['usage'] = metadata.get('usage', {})
         validate()
         try:
@@ -297,6 +297,25 @@ async def attempt(query, plan, collected, route):
         route['generation_usage_complete'] = observed['complete']
         route['generation_physical_attempts'] = len(observed['receipt_ids'])
         route['generation_seconds'] = round(monotonic() - started, 6)
+        active = ACTIVE_ANSWER.get()
+        if active is not None and route.get('reason') == 'evidence_generation_failed':
+            try:
+                failed = active[1].get_immutable_payload(active[0]['turn_id'], 'answer-model-failure-' + INVOCATION)
+                sent = active[1].get_immutable_payload(active[0]['turn_id'], 'answer-model-input-' + INVOCATION)
+                handle = active[3].get(INVOCATION)
+                if failed is not None and sent is not None and handle is not None:
+                    value = failed[1]
+                    if (isinstance(value, dict) and value.get('version') == 'answer-model-failure-v1'
+                            and value.get('turn_id') == active[0]['turn_id']
+                            and value.get('invocation') == INVOCATION
+                            and value.get('model_request_id') == handle.model_request_id
+                            and value.get('input_ref') == sent[0]
+                            and all(key in value for key in ('category', 'code', 'completed_wire', 'usage_complete'))):
+                        route['generation_failure'] = {key: value[key] for key in
+                            ('category', 'code', 'completed_wire', 'usage_complete')}
+            except Exception:
+                # Optional diagnostics must not replace the original fallback.
+                pass
 
 
 def frozen_result(query, plan):

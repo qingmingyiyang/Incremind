@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping, Sequence
 from contextlib import closing
 from contextvars import ContextVar
 import json
@@ -23,6 +24,193 @@ from tools import rag_dataset, rag_pilot as pilot
 from tools.demo_smoke import AttemptMeter
 
 CALL = ContextVar('heldout_completion', default={})
+PRIVATE_RESPONSE_CONTENT_LIMIT = 262_144
+_FINISH_REASONS = {'stop', 'length', 'content_filter', 'tool_calls', 'function_call'}
+
+
+def _response_field(value, key):
+    return value.get(key) if isinstance(value, Mapping) else getattr(value, key, None)
+
+
+class _PrivateResponseCapture:
+    """Best-effort private observation, never an answer or transport authority."""
+
+    def __init__(self, output, number, stream, status):
+        self.path = output / 'private-responses' / f'completion-{number}.json'
+        self.status, self.parts, self.finished = status, [], False
+        self.value = {'version': 1, 'completion_number': number, 'stream': stream,
+            'state': 'started', 'content_scope': 'first_choice_content',
+            'content': '', 'content_truncated': False,
+            'content_characters_observed': 0,
+            'content_limit_characters': PRIVATE_RESPONSE_CONTENT_LIMIT,
+            'finish_reasons': [], 'usage': None}
+        self.kept = 0
+
+    def observe(self, response):
+        try:
+            choices = _response_field(response, 'choices')
+            if isinstance(choices, Sequence) and not isinstance(choices, (str, bytes)) and choices:
+                choice = choices[0]
+                message = _response_field(choice, 'delta' if self.value['stream'] else 'message')
+                content = _response_field(message, 'content')
+                if isinstance(content, str):
+                    self._text(content)
+                elif isinstance(content, Sequence) and not isinstance(content, (str, bytes)):
+                    for part in content:
+                        kind = None if isinstance(part, str) else _response_field(part, 'type')
+                        text = part if isinstance(part, str) else (
+                            _response_field(part, 'text') if kind in {None, 'text', 'output_text'} else None)
+                        if isinstance(text, str):
+                            self._text(text)
+                reason = _response_field(choice, 'finish_reason')
+                if reason is not None and len(self.value['finish_reasons']) < 16:
+                    self.value['finish_reasons'].append(reason if reason in _FINISH_REASONS else 'other')
+            usage = _response_field(response, 'usage')
+            if usage is not None:
+                observed = {}
+                for key in ('prompt_tokens', 'completion_tokens', 'total_tokens',
+                            'prompt_cache_hit_tokens', 'prompt_cache_miss_tokens'):
+                    count = _response_field(usage, key)
+                    if type(count) is int and count >= 0:
+                        observed[key] = count
+                for field, keys in (('prompt_tokens_details', ('cached_tokens',)),
+                                    ('completion_tokens_details', ('reasoning_tokens',
+                                        'accepted_prediction_tokens', 'rejected_prediction_tokens'))):
+                    details = _response_field(usage, field)
+                    counts = {key: _response_field(details, key) for key in keys}
+                    counts = {key: value for key, value in counts.items()
+                              if type(value) is int and value >= 0}
+                    if counts:
+                        observed[field] = counts
+                if observed:
+                    self.value['usage'] = {**(self.value['usage'] or {}), **observed}
+        except Exception:
+            # Do not turn an observation failure into a paid transport retry.
+            self.value['capture_code'] = 'private_response_observation_failed'
+
+    def _text(self, text):
+        self.value['content_characters_observed'] += len(text)
+        remaining = PRIVATE_RESPONSE_CONTENT_LIMIT - self.kept
+        if remaining > 0 and text:
+            prefix = text[:remaining]
+            self.parts.append(prefix)
+            self.kept += len(prefix)
+        self.value['content_truncated'] = self.value['content_characters_observed'] > self.kept
+
+    def finish(self, state, error=None):
+        if self.finished:
+            return
+        self.finished = True
+        self.value.update(state=state, content=''.join(self.parts))
+        if error is not None:
+            # Exception messages may contain provider content or credentials.
+            self.value['error_type'] = type(error).__name__[:80]
+        started = time.monotonic()
+        try:
+            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            # This is a new immutable artifact, unlike the mutable wire ledger.
+            try:
+                descriptor = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                code = 'private_response_exists'
+            else:
+                with os.fdopen(descriptor, 'w', encoding='utf-8') as target:
+                    # Escapes also preserve a provider's unpaired surrogate exactly.
+                    json.dump(self.value, target, ensure_ascii=True)
+                code = self.value.get('capture_code', 'private_response_stored')
+        except Exception:
+            code = 'private_response_write_failed'
+        # No capture failure may escape into the provider retry policy.
+        try:
+            self.status(code, self.path, round(time.monotonic() - started, 6))
+        except Exception:
+            pass
+
+
+class _ObservedResponseStream:
+    """Consume exactly what the caller consumes and return the original chunks."""
+
+    def __init__(self, stream, capture, correlation):
+        self._inner, self._capture, self._correlation = stream, capture, correlation
+        self._iterator = None
+        self._provider_view = None
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        token = CALL.set(self._correlation)
+        try:
+            if self._iterator is None:
+                self._iterator = iter(self._inner)
+            chunk = next(self._iterator)
+        except StopIteration:
+            self._capture.finish('eof')
+            raise
+        except BaseException as error:
+            self._capture.finish('stream_error', error)
+            raise
+        finally:
+            CALL.reset(token)
+        self._capture.observe(chunk)
+        return chunk
+
+    def _close(self, close, *args, **kwargs):
+        token = CALL.set(self._correlation)
+        try:
+            result = close(*args, **kwargs)
+        except BaseException as error:
+            self._capture.finish('close_error', error)
+            raise
+        else:
+            self._capture.finish('closed')
+            return result
+        finally:
+            CALL.reset(token)
+
+    def __getattr__(self, name):
+        value = getattr(self._inner, name)
+        if name == 'close' and callable(value):
+            return lambda *args, **kwargs: self._close(value, *args, **kwargs)
+        if name == 'completion_stream':
+            if value is self._inner:
+                return self
+            # Some timeout binders close this public provider, not the outer SDK.
+            if self._provider_view is None or self._provider_view._inner is not value:
+                self._provider_view = _ObservedResponseStream(value, self._capture, self._correlation)
+            return self._provider_view
+        return value
+
+    def __enter__(self):
+        entered = self._inner.__enter__()
+        return self if entered is self._inner else _ObservedResponseStream(
+            entered, self._capture, self._correlation)
+
+    def __exit__(self, *args):
+        try:
+            result = self._inner.__exit__(*args)
+        except BaseException as error:
+            self._capture.finish('close_error', error)
+            raise
+        self._capture.finish('closed')
+        return result
+
+
+def _capture_response_stream(stream, capture, correlation):
+    from backend.shared.llm.model_transport import _OwnedModelStream
+
+    if isinstance(stream, _OwnedModelStream):
+        class ObservedOwnedStream(_ObservedResponseStream, _OwnedModelStream):
+            # Preserve bind_completion's owned-stream branch and cleanup owner.
+            @property
+            def completion_stream(self):
+                return self._inner.completion_stream
+
+            def close(self):
+                return self._close(self._inner.close)
+
+        return ObservedOwnedStream(stream, capture, correlation)
+    return _ObservedResponseStream(stream, capture, correlation)
 
 
 class PhysicalLimit(RuntimeError):
@@ -90,6 +278,10 @@ class HttpObserver:
 
 
 class CompletionObserver(pilot.Budget):
+    def __init__(self, output, limit, *, capture_private_responses=False):
+        super().__init__(output, limit)
+        self.capture_private_responses = capture_private_responses
+
     def complete(self, **request):
         from backend.memory_app.kernel.answer_turns import ACTIVE_ANSWER
         from backend.memory_app.model_config import _load_litellm_completion
@@ -102,13 +294,34 @@ class CompletionObserver(pilot.Budget):
             pilot.save(self.output / f"messages-{row['number']}.json", request.get('messages', []))
         token = CALL.set({key: row[key] for key in ('number', 'label', 'turn_id')})
         started = time.monotonic()
+        capture = None
+        if self.capture_private_responses:
+            def status(code, path, seconds):
+                with self.lock:
+                    row.update(response_capture_code=code,
+                        response_capture_path=str(path.relative_to(self.output)),
+                        response_capture_seconds=seconds)
+                    pilot.save(self.output / 'wires.json', self.rows)
+            capture = _PrivateResponseCapture(self.output, row['number'], bool(request.get('stream')), status)
         try:
             # 不添加旧试点的词元、期限或重试覆盖。
             result = _load_litellm_completion(**request)
             row['state'] = 'transport_returned'
+            if capture is not None:
+                if request.get('stream'):
+                    try:
+                        return _capture_response_stream(result, capture, dict(CALL.get()))
+                    except Exception:
+                        capture.value['capture_code'] = 'private_response_wrapper_failed'
+                        capture.finish('capture_error')
+                        return result
+                capture.observe(result)
+                capture.finish('returned')
             return result
         except BaseException as error:
             row.update(state='failed_before_return', error_type=type(error).__name__)
+            if capture is not None:
+                capture.finish('failed_before_return', error)
             raise
         finally:
             CALL.reset(token)
@@ -357,7 +570,8 @@ def run(args):
     if not args.prepare_only and code['dirty']:
         raise ValueError('heldout_committed_source_required')
     configs, fast = configuration(args.config_root.resolve(), args.config_db.resolve())
-    completion = CompletionObserver(output, args.max_calls)
+    completion = CompletionObserver(output, args.max_calls,
+        capture_private_responses=getattr(args, 'capture_private_responses', False))
     http = HttpObserver(output, configs['generation']['base_url'], args.max_calls, paid=not args.prepare_only)
     directory = local_vectors.model_directory(args.models_root.resolve())
     planned, attempted = 0, []
@@ -497,9 +711,11 @@ def main():
     parser.add_argument('--questions', type=int, default=48, choices=range(1, 49))
     parser.add_argument('--max-calls', type=int, required=True)
     parser.add_argument('--prepare-only', action='store_true')
+    parser.add_argument('--capture-private-responses', action='store_true',
+        help='显式在隔离 output 保存有界原始回答正文；默认关闭，不进入公开报告')
     parser.add_argument('--run-label', default='heldout-v1', help='冻结本批提交身份，复验使用新标签以保留旧回合')
-    parser.add_argument('--expected-retrieve', default='@7', choices=('@7', '@8', '@9'), help='核对实际生产版本，不选择运行策略')
-    parser.add_argument('--expected-compose', default='@30', choices=('@30', '@33', '@34'), help='核对实际生产版本，不选择运行策略')
+    parser.add_argument('--expected-retrieve', default='@7', choices=('@7', '@8', '@9', '@12', '@13'), help='核对实际生产版本，不选择运行策略')
+    parser.add_argument('--expected-compose', default='@30', choices=('@30', '@33', '@34', '@36'), help='核对实际生产版本，不选择运行策略')
     parser.add_argument('--only-question', action='append', default=[], help='仅执行冻结 index 中明确选择的 sample_id:qa_index，可重复指定')
     parser.add_argument('--source-archive', type=Path, help='核对 Git 原生归档内的提交和全部普通文件，用于没有 .git 的部署目录')
     args = parser.parse_args()

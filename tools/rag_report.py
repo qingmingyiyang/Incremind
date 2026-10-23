@@ -317,7 +317,7 @@ def final_answer_candidates(native, frozen, compose_version, *, status):
     requests = [json.loads(turn['request_json']) for group in native for turn in group['turn']
                 if isinstance(turn.get('request_json'), str)]
     requests = [request for request in requests if request.get('desired_outcome') == 'project.answer'
-                and request.get('policy_versions', {}).get('retrieve') == '@12']
+                and request.get('policy_versions', {}).get('retrieve') in {'@12', '@13'}]
     if not requests and EVIDENCE_INPUT not in frozen and EVIDENCE_RESULT not in frozen:
         return [(key, frozen[key]) for key in ('answer-model-input-answer', REVIEW_INPUT) if key in frozen], False
     require(len(requests) == 1, '新单轮问答缺少唯一冻结Turn请求')

@@ -76,7 +76,7 @@ def preflight(plan):
     """
     if not isinstance(plan, dict) or plan.get('part_context') or plan.get('situation'):
         return None
-    if (plan.get('policy_versions', {}).get('retrieve') != '@12'
+    if (plan.get('policy_versions', {}).get('retrieve') not in {'@12', '@13'}
             or plan.get('policy_versions', {}).get('compose') != '@36'):
         return None
     question, history = plan.get('question'), plan.get('history', '')
@@ -113,6 +113,10 @@ def preflight(plan):
             'budget': plan['budget'], 'answer_output_budget': plan['answer_output_budget'],
             'target_revision': plan['target']['revision'],
         })
+        # @12's immutable input predates the schema-bearing JSON-mode prompt.
+        # Freeze the new schema only for the independent @13 candidate.
+        if plan['policy_versions']['retrieve'] == '@13':
+            contract['response_schema'] = EvidenceAnswerOutput.model_json_schema()
         cost = _input_tokens(_messages(contract))
         cap = min(_MAX_OUTPUT, plan['answer_output_budget']['reserve'])
         if cost > min(plan['budget'], plan['answer_output_budget']['window'] - cap):
@@ -123,7 +127,7 @@ def preflight(plan):
 
 
 def _messages(contract):
-    return [
+    result = [
         {'role': 'system', 'content': (
             'evidence-answer-v1: Propose a concise answer from the supplied evidence_catalog. '
             'Return only the EvidenceAnswerOutput schema: requirements, statements, issues. '
@@ -154,6 +158,14 @@ def _messages(contract):
             'date_provenance': model_date_refs(contract['date_provenance']),
         }, ensure_ascii=False, separators=(',', ':'), allow_nan=False)},
     ]
+    if 'response_schema' in contract:
+        result.insert(-1, {'role': 'system', 'content': (
+            'Return exactly one JSON object matching this complete EvidenceAnswerOutput JSON Schema. '
+            'Use its exact nested field names, required fields, value types and enum values; '
+            'do not add a free answer or omit required arrays.\n'
+            + json.dumps(contract['response_schema'], ensure_ascii=False, sort_keys=True,
+                         separators=(',', ':'), allow_nan=False))})
+    return result
 
 
 def _current(plan, contract):

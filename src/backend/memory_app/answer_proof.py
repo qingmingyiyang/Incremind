@@ -152,7 +152,7 @@ def has_evidence_answer_proof(request, capsule):
     """
     candidate = (isinstance(request, dict)
         and isinstance(request.get('policy_versions'), dict)
-        and request['policy_versions'].get('retrieve') == '@12'
+        and request['policy_versions'].get('retrieve') in {'@12', '@13'}
         and request['policy_versions'].get('compose') == '@36')
     try:
         from .kernel.answer_continuations import decode
@@ -171,7 +171,7 @@ def select_evidence_answer_input(request, product, evidence_input, evidence_resu
     """Recompute the one-call candidate; semantic coverage remains model assessed."""
     try:
         if (not isinstance(request, dict)
-                or request.get('policy_versions', {}).get('retrieve') != '@12'
+                or request.get('policy_versions', {}).get('retrieve') not in {'@12', '@13'}
                 or request.get('policy_versions', {}).get('compose') != '@36'
                 or request.get('desired_outcome') != 'project.answer'
                 or not isinstance(request.get('turn_id'), str) or not request['turn_id']

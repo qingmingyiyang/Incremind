@@ -170,6 +170,31 @@ def test_input_budget_prevents_dispatch(lifecycle):
     assert not run(lifecycle)['accepted'] and lifecycle.calls == []
 
 
+@pytest.mark.parametrize('current_request', [True, False])
+def test_failure_trace_uses_only_current_input_and_model_request(lifecycle, current_request):
+    lifecycle.error = ModelConfigurationError('model_request_failed: check endpoint, model and credentials')
+    fast.ACTIVE_ANSWER.get()[3][fast.INVOCATION] = SimpleNamespace(model_request_id='current-request')
+    lifecycle.facts['answer-model-input-' + fast.INVOCATION] = ('current-input', {})
+    lifecycle.facts['answer-model-failure-' + fast.INVOCATION] = ('failure-ref', {
+        'version': 'answer-model-failure-v1', 'turn_id': 'unit-turn', 'invocation': fast.INVOCATION,
+        'model_request_id': 'current-request' if current_request else 'previous-request',
+        'input_ref': 'current-input', 'category': 'model', 'code': 'model_request_failed',
+        'completed_wire': None, 'usage_complete': False})
+    assert not run(lifecycle)['accepted']
+    assert lifecycle.route['reason'] == 'evidence_generation_failed'
+    assert ('generation_failure' in lifecycle.route) is current_request
+
+
+def test_unavailable_failure_diagnostic_does_not_prevent_fallback(lifecycle):
+    lifecycle.error = ModelConfigurationError('model_request_failed: check endpoint, model and credentials')
+    def unavailable(*_):
+        raise OSError('synthetic unavailable diagnostic')
+    fast.ACTIVE_ANSWER.get()[1].get_immutable_payload = unavailable
+    assert not run(lifecycle)['accepted']
+    assert lifecycle.route['reason'] == 'evidence_generation_failed'
+    assert 'generation_failure' not in lifecycle.route
+
+
 @pytest.mark.parametrize('limits', [None, {'window': 64000, 'reserve': -1}, {'window': 64000, 'reserve': 64000}])
 def test_unavailable_current_gateway_budget_prevents_dispatch(lifecycle, limits):
     lifecycle.query.models.generation_budget_limits = lambda **_: limits

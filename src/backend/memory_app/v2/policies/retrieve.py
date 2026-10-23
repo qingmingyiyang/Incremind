@@ -326,3 +326,18 @@ v12.explicit_answer_evidence = v9.explicit_answer_evidence
 v12.initial_memory_probe = True
 v12.evidence_answer_probe = True
 register('retrieve', '@12')(v12)
+
+
+def v13(entrypoint, /, *args, **kwargs):
+    """独立候选把完整回答Schema送入JSON模式，保留12的冻结消息。"""
+    return v12(entrypoint, *args, **kwargs)
+
+
+v13.drilldown = v12.drilldown
+v13.demand_based = v12.demand_based
+v13.agentic = v12.agentic
+v13.empty_layer_drilldown = v12.empty_layer_drilldown
+v13.explicit_answer_evidence = v12.explicit_answer_evidence
+v13.initial_memory_probe = v12.initial_memory_probe
+v13.evidence_answer_probe = v12.evidence_answer_probe
+register('retrieve', '@13')(v13)

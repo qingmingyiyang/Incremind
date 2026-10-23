@@ -87,7 +87,8 @@ def selectors(monkeypatch):
     return observed
 
 
-def test_accepted_single_generation_uses_actual_frozen_catalog_and_keeps_unknown_retry_cost(tmp_path, selectors):
+@pytest.mark.parametrize('retrieve', ['@12', '@13'])
+def test_accepted_single_generation_uses_actual_frozen_catalog_and_keeps_unknown_retry_cost(tmp_path, selectors, retrieve):
     report = report_module()
     single = payload('D1:1', 'D1:2', evidence=True)
     frozen = {report.EVIDENCE_INPUT: single, report.EVIDENCE_RESULT: {'output': {},
@@ -96,7 +97,7 @@ def test_accepted_single_generation_uses_actual_frozen_catalog_and_keeps_unknown
               'answer-continuation-plan-v1': {'accepted': True}, 'product-answer-result-v2': {'answer': 'synthetic'}}
     from backend.shared.llm.message_metadata import _build_json_mode_messages
     actual = _build_json_mode_messages(messages=single['messages'], validation_error=None)
-    path, http, wires = case(tmp_path, frozen, [actual, actual], unknown_first=True)
+    path, http, wires = case(tmp_path, frozen, [actual, actual], unknown_first=True, retrieve=retrieve)
     reader = report.SourceReader()
     row = report.heldout_question(reader, path, http, wires, '@36')
     assert row['selected'] == {'D1:1', 'D1:2'} and row['input_state'] == 'recorded'

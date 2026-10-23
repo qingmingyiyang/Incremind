@@ -34,8 +34,9 @@ def capsule_for(request, plan):
                           'preview_lifetime': 60.0})}
 
 
-@pytest.fixture
-def frozen():
+@pytest.fixture(params=['@12', '@13'])
+def frozen(request):
+    retrieve_version = request.param
     scope = WorkScope('local-user', 'alpha')
     source = {'kind': 'source', 'layer': 'L0', 'id': 'source-one', 'scope': scope,
         'entry': {'kind': 'source', 'id': 'source-one', 'content': CONTENT,
@@ -44,7 +45,7 @@ def frozen():
         'windows': [EvidenceWindow(0, len(CONTENT), CONTENT)],
         'coordinate_space': 'source_content_v1'}
     plan = {'project_id': 'alpha', 'scope': scope, 'question': QUESTION,
-        'policy_versions': {'retrieve': '@12', 'compose': '@36'}, 'chosen': [source],
+        'policy_versions': {'retrieve': retrieve_version, 'compose': '@36'}, 'chosen': [source],
         'history': '', 'profile': {}, 'part_context': None, 'budget': 28000,
         'target': {'revision': 1, 'execution_location': 'remote'},
         'answer_output_budget': {'window': 32000, 'reserve': 4000, 'target_revision': 1},
