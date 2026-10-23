@@ -334,6 +334,7 @@
 - 认识来源说明：`RecognitionService._qualified_recognition`在既有只读递归资格核验中收集`source_evidence`，最多256条精确Experience修订、64KiB紧凑UTF8 JSON。只输出类型、ID、修订、provenance种类/核验状态、发生与记录时间、成果及业务结果状态，不复制来源正文或actor。上限与异常通过`source_evidence_complete/reason`表达，不改变`authorized`、持久化状态或历史导出。共享格式化入口拒绝不完整或畸形投影；旧手工适配输入完全缺字段时明确核验状态未知。
 - 问答证据预算：`WorkspaceQuery`私有`_recognition_evidence_basis`只比较当前项目中完全一致的正文、条件、直接来源、修订、资格、来源说明和冻结节点/许可；一次选择中相同证据只占一份预算。保留原记录，`excluded_sources`带`duplicate_recognition_evidence`及代表记录ID/修订；整体预算不足统一为`recognition_evidence_budget_insufficient`，来源说明不完整为`recognition_source_evidence_incomplete`。解释列表仍最多20项；前端`ExcludedSourcesNotice`供预览和回答复用，也识别旧条件预算原因。
 - 初检候选：仅显式冻结 `retrieve@10` 时，`WorkspaceQuery.collect_initial_candidates/collect_initial_remainder` 沿同一检索owner限制上层初检与同查询L0补查；默认 `@9` 不变。`v2.initial_answer` 只负责严格已确认L3单槽直述的准入证明、当前owner重验及最终值/引文核对，不是通用语义充分性服务。`workbench` 冻结路由原因，`agentic_rag` 复用真实初检窗口，满足门槛才在首次decision前早返；两轮回答与原生调用/用量计量保持。只含L0的事实、不支持语法或字段不完整继续调查，见 `docs/agentic-rag.md`。
+- 原文候选：显式 `retrieve@11` 同次收集四层；`v2.raw_answer` 只验收完整L0中的有限属格直述及逐槽抽取合同，`v2.raw_fast_path` 复用原生生成/来源guard并保留拒收成本，接受后沿正常计划保存与回执发布单轮冻结结果。`answer_proof` 与内核回执投影独立选择 `raw-answer-v1` 证明；失败复用实际检索进入旧调查与两轮回答，不借旧复审标记证明单轮输出。默认策略与 `@10` 不变，冲突范围仅本次检索记录，见 `docs/agentic-rag.md`。
 - 认识编辑会话：候选与Markdown修订冲突复用`DraftConflictView`，各调用方保存自己的服务器基线和本机稿，不把状态职责交给展示组件。认识工作台刷新复用`useRequestScope`，核心失败保留同项目编辑会话并阻止父级保存/执行；辅助失败独立提示。`recognitionMarkdownDraft.rebaseRecognitionMarkdown`只将已识别v2稿的可编辑正文和条件放入当前服务器导出外壳，用于明确保留本机及自己保存后的继续编辑；无法识别或被修改的身份外壳保留原文本供核对。保稿限定同组件、同项目、同一认识身份，切认识、项目或路由不会恢复上一身份的未保存稿。
 
 ## v2 与 shared/ui（重构新增，执行者按任务登记）

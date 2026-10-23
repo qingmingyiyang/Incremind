@@ -367,10 +367,29 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
     usages, receipts, seen, no_progress, pool = [], [], set(), 0, {}
     initial_seed_ids = set()
     initial_complete = None
+    raw_attempt = {'usage': {}, 'receipt_ids': [], 'usage_complete': True}
     if initial_memory is not None:
         query.validate_initial_candidates(project, question, initial_memory, scene=scene)
-        from .initial_answer import assess
-        assessment = assess(query, plan, reference=initial_memory.get('rank_reference'))
+        raw_probe = getattr(_policy(plan), 'raw_evidence_probe', False)
+        if raw_probe:
+            from .raw_fast_path import attempt
+            # The raw contract has its own exact input budget. Do not require
+            # the old dialogue-oriented two-draft fitter to understand it.
+            probe = {**plan, 'chosen': list(initial_memory['candidates'])}
+            raw_attempt = await attempt(query, probe, initial_memory, initial_route)
+            initial_complete = initial_memory  # This probe already included L0.
+            if raw_attempt.get('accepted'):
+                plan.update(chosen=probe['chosen'], raw_source_basis=probe['raw_source_basis'],
+                            raw_answer_proof=probe['raw_answer_proof'])
+                plan['_rag_summary'] = {'version': 1, 'status': 'skipped',
+                                       'stop': 'raw_answer_accepted', 'steps': []}
+                plan.pop('_rag')
+                return plan, {'usage': {}, 'receipt_ids': [], 'status': 'skipped',
+                              'usage_complete': raw_attempt['usage_complete']}, {'queries': [], 'used': False}
+            assessment = {'status': 'insufficient', 'reason': initial_route['reason']}
+        else:
+            from .initial_answer import assess
+            assessment = assess(query, plan, reference=initial_memory.get('rank_reference'))
         initial_route['reason'] = assessment['reason']
         if assessment['status'] == 'sufficient':
             proof = assessment['proof']
@@ -387,12 +406,12 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                               'usage_complete': True}, {'queries': [], 'used': False}
             initial_route['reason'] = 'answer_budget_insufficient'
         # These actual selected windows are displayed to the first real decision.
-        for row in plan['chosen']:
+        for row in initial_memory['candidates'] if raw_probe else plan['chosen']:
             _remember_observed(plan, pool, row)
             initial_seed_ids.add(candidate_id(row))
         plan['_rag']['observed'] = list(pool.values())
         plan['_rag']['catalog'] = _catalog(list(pool.values()), limits['results'])
-        plan['_rag']['depths'] = ['summary', 'body']
+        plan['_rag']['depths'] = ['summary', 'body', 'original'] if raw_probe else ['summary', 'body']
     status, stop = 'completed', 'round_limit'
     for number in range(1, limits['decisions'] + 1):
         _checkpoint()
@@ -581,8 +600,9 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
         plan['_rag_proof'] = {'turn_id': turn_id, 'invocation': invocation, 'input_ref': prepared[0]}
     # 冻结给最终作答/继续消费者的数据不含可执行闭包和临时选择器。
     plan.pop('_rag', None)
-    return plan, {'usage': sum_usage(*usages), 'receipt_ids': receipts, 'status': status,
-                  'usage_complete': all(answer_observation('rag-decision-' + str(index))['complete']
+    return plan, {'usage': sum_usage(raw_attempt['usage'], *usages),
+                  'receipt_ids': [*raw_attempt['receipt_ids'], *receipts], 'status': status,
+                  'usage_complete': raw_attempt['usage_complete'] and all(answer_observation('rag-decision-' + str(index))['complete']
                       for index in range(1, number + 1))}, {'queries': [step['decision']['query']
                       for step in plan['_rag_summary']['steps'] if step['decision']['action'] == 'search'],
                       'used': bool(plan['_rag_summary']['steps'])}

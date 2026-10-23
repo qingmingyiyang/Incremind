@@ -1199,10 +1199,18 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
     agentic = getattr(get('retrieve'), 'agentic', False)
     initial_memory, initial_route = None, None
     if agentic and getattr(get('retrieve'), 'initial_memory_probe', False):
-        from .initial_answer import parse_question
+        raw_probe = getattr(get('retrieve'), 'raw_evidence_probe', False)
+        if raw_probe:
+            from .raw_answer import parse_question
+        else:
+            from .initial_answer import parse_question
         initial_route = {'route': 'investigate', 'reason': 'unsupported_question',
             'probe_collections': 0, 'remainder_collections': 0, 'reused_queries': 0,
             'decision_invocations': 0, 'probe_seconds': 0.0}
+        if raw_probe:
+            initial_route.update(generation_invocations=0, generation_usage_complete=True,
+                                 generation_physical_attempts=0, generation_seconds=0.0,
+                                 conflict_scope='retrieved_evidence_only')
         if history['text'] or history.get('clarification') or part_context is not None or situation is not None:
             initial_route['reason'] = 'unsupported_context'
         elif retrieval_question != cleaned:
@@ -1211,7 +1219,7 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
             started = monotonic()
             initial_memory = await run_in_threadpool(query.collect_initial_candidates, project,
                 retrieval_question, scene=scene, policy_versions=versions_for_turn('project.answer'))
-            initial_route.update(reason='upper_evidence_insufficient', probe_collections=1,
+            initial_route.update(reason='initial_evidence_insufficient' if raw_probe else 'upper_evidence_insufficient', probe_collections=1,
                                  probe_seconds=round(monotonic() - started, 6))
     collected = (initial_memory if initial_memory is not None else
         {'candidates': [], 'excluded_sources': [], 'policy_versions': versions_for_turn('project.answer')}
@@ -1280,7 +1288,8 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
     if agentic:
         plan['trace'][0]['agentic'] = plan['_rag_summary']
     if initial_route is not None:
-        plan['trace'][0]['initial_memory'] = dict(initial_route)
+        name = 'raw_fast_path' if getattr(get('retrieve'), 'raw_evidence_probe', False) else 'initial_memory'
+        plan['trace'][0][name] = dict(initial_route)
     # execute_ask releases its evidence after completion; retain only mapping metadata.
     chosen = tuple({"layer": candidate["layer"], "persona": bool(candidate.get("persona")),
         **({'inspiration': True} if candidate.get('inspiration') else {}),

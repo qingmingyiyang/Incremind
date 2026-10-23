@@ -281,3 +281,23 @@ v10.empty_layer_drilldown = v9.empty_layer_drilldown
 v10.explicit_answer_evidence = v9.explicit_answer_evidence
 v10.initial_memory_probe = True
 register('retrieve', '@10')(v10)
+
+
+def v11(entrypoint, /, *args, **kwargs):
+    """显式原文候选沿完整阶梯初检，为单轮尝试保留一个额外模型句柄。"""
+    operation = kwargs.get('operation')
+    if operation == 'initial_layers':
+        return ('L3', 'L2', 'L1', 'L0')
+    if operation == 'agentic_limits':
+        return {**v9(entrypoint, *args, **kwargs), 'nested_model_handle_budget': 10}
+    return v9(entrypoint, *args, **kwargs)
+
+
+v11.drilldown = v9.drilldown
+v11.demand_based = v9.demand_based
+v11.agentic = v9.agentic
+v11.empty_layer_drilldown = v9.empty_layer_drilldown
+v11.explicit_answer_evidence = v9.explicit_answer_evidence
+v11.initial_memory_probe = True
+v11.raw_evidence_probe = True
+register('retrieve', '@11')(v11)

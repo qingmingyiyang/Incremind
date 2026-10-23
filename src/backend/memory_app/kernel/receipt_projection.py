@@ -321,11 +321,18 @@ def kernel_call_groups(runtime_root, *, turn_id=None, project=None, remote_only=
                     if include_no_wire_answers:
                         group['terminal'] = terminal
                     if include_answer_input:
-                        from ..answer_proof import REVIEW_KEY, select_answer_input
-                        group['answer_input'] = select_answer_input(root_request, group['answer'],
-                            immutable.get('answer-model-input-answer'), immutable.get('answer-model-result-answer'),
-                            immutable.get('answer-model-input-' + REVIEW_KEY), immutable.get('answer-model-result-' + REVIEW_KEY),
-                            capsule=immutable.get('answer-continuation-plan-v1'))
+                        from ..answer_proof import (RAW_ANSWER_KEY, REVIEW_KEY, has_raw_answer_proof,
+                            select_answer_input, select_raw_answer_input)
+                        capsule = immutable.get('answer-continuation-plan-v1')
+                        if has_raw_answer_proof(root_request, capsule):
+                            group['answer_input'] = select_raw_answer_input(root_request, group['answer'],
+                                immutable.get('answer-model-input-' + RAW_ANSWER_KEY),
+                                immutable.get('answer-model-result-' + RAW_ANSWER_KEY), capsule)
+                        else:
+                            group['answer_input'] = select_answer_input(root_request, group['answer'],
+                                immutable.get('answer-model-input-answer'), immutable.get('answer-model-result-answer'),
+                                immutable.get('answer-model-input-' + REVIEW_KEY), immutable.get('answer-model-result-' + REVIEW_KEY),
+                                capsule=capsule)
             for group in selected.values():
                 fresh = []
                 for call in group['calls']:

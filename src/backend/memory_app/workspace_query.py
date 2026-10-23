@@ -41,7 +41,7 @@ from .v2.budget import WINDOW_SCAN_CHARS, structured_prompt_overhead, ask_instru
 from backend.recognition import RecognitionError, RecognitionConflict, WorkScope
 from backend.memory_app.source_egress import SourceEgressService
 from backend.memory_app.document_visibility import LegacyDocumentVisibility
-from core.search_and_recall.evidence_windows import EvidenceWindow, select_evidence_windows
+from core.search_and_recall.evidence_windows import EvidenceSelection, EvidenceWindow, select_evidence_windows
 from core.storage_provider.observability import stage, current_observation
 from .workspace_contracts import _COLLECTION, _project, _text, _now, _ASK_PART_KEYS, _empty_ask_context
 from .workspace_generation import _strip_fence
@@ -537,7 +537,35 @@ class WorkspaceQuery:
             for span_slot, (layer, start, end, coordinates, chunks) in enumerate(spans):
                 if only_layers is not None and layer not in only_layers:
                     continue
-                if layer == "L2" and dynamic_policy is None:
+                vectors = {}
+                literal_selection = None
+                if (getattr(get('retrieve'), 'raw_evidence_probe', False)
+                        and entry['kind'] == 'source' and layer == 'L0'
+                        and coordinates == 'source_content_v1' and start == 0
+                        and 0 < end <= WINDOW_SCAN_CHARS):
+                    # Plain copular notes need not start with the entity name.
+                    # Retain complete related originals under the new candidate;
+                    # only the aggregate contract establishes literal support.
+                    # Keep the default dialogue ownership ladder unchanged.
+                    if current is None:
+                        current, hydrated = self.retrieval_index.hydrate(project_id, entry)
+                    if current is not None and all(current.get(key) == entry.get(key)
+                            for key in ('revision', 'item_revision', 'title', 'item_id')):
+                        body = current_text(coordinates)
+                        if len(body) == end:
+                            from .v2.raw_answer import parse_question
+                            request = parse_question(question)
+                            # Discovery is relevance, not sufficiency. Retain
+                            # all same-subject/property records, including
+                            # exceptions, conflicts and unparsed qualifiers.
+                            # The aggregate contract must decide admission.
+                            if (request is not None and request['subject'] in body
+                                    and request['predicate'] in body):
+                                literal_selection = EvidenceSelection(
+                                    (EvidenceWindow(0, end, body),), body, 1, 'content')
+                if literal_selection is not None:
+                    selection = literal_selection
+                elif layer == "L2" and dynamic_policy is None:
                     selection = _timed_evidence_windows(context_summary, question,
                         title=entry["title"], max_chars=WINDOW_SCAN_CHARS)
                 else:
@@ -1393,6 +1421,9 @@ class WorkspaceQuery:
         if plan.get('initial_answer_proof') is not None:
             from .v2.initial_answer import validate_plan
             validate_plan(self, plan)
+        if 'raw_answer_proof' in plan:
+            from .v2.raw_fast_path import validate_raw_plan
+            validate_raw_plan(self, plan)
 
     def _validate_ask_sources(self, plan, *, local_only=False):
         project_id = plan["project_id"]
@@ -1537,6 +1568,41 @@ class WorkspaceQuery:
                            **({"conditions": c["entry"]["conditions"]} if c["kind"] == "recognition" else {}),
                            "coordinate_space": c.get("coordinate_space", "workspace_query_content_v1")}
                           for index, c in enumerate(chosen, 1)]
+        if 'raw_answer_proof' in plan:
+            try:
+                from .v2.raw_fast_path import frozen_result
+                output, messages, metadata = frozen_result(self, plan)
+                self.validate_ask_plan(plan)
+                result = {'answer': output.answer.strip(),
+                    'sources': [answer_sources[number - 1] for number in dict.fromkeys(output.citations)],
+                    'model_used': True, 'model_usage': metadata.get('usage', {}),
+                    'excluded_sources': plan['excluded_sources'],
+                    'context': _ask_context(chosen, format_source_texts(chosen), messages,
+                        metadata.get('context_budget'))}
+                from .answer_proof import select_raw_answer_input
+                active_request, store, _, _ = ACTIVE_ANSWER.get()
+                identity = active_request['turn_id']
+                sent = store.get_immutable_payload(identity, 'answer-model-input-raw-answer-v1')
+                received = store.get_immutable_payload(identity, 'answer-model-result-raw-answer-v1')
+                capsule = store.get_immutable_payload(identity, 'answer-continuation-plan-v1')
+                if select_raw_answer_input(store.get_request(identity), result,
+                        sent[1] if sent else None, received[1] if received else None,
+                        capsule[1] if capsule else None) is None:
+                    raise ValueError('raw_answer_public_binding_changed')
+                self.mark_ask_receipt(preview_id, 'completed', usage=result['model_usage'])
+                with self.ask_preview_lock:
+                    plan.update(result=result, state='completed', chosen=[])
+                if on_delta is not None:
+                    on_delta(result['answer'])
+                return result
+            except RecognitionError:
+                self.mark_ask_receipt(preview_id, 'failed')
+                plan['state'] = 'failed'
+                raise HTTPException(409, 'source_changed_retry') from None
+            except (ValueError, ModelConfigurationError):
+                self.mark_ask_receipt(preview_id, 'failed')
+                plan['state'] = 'failed'
+                raise HTTPException(502, 'answer_generation_failed') from None
         with stage("prompt_build"):
             source_texts = format_source_texts(chosen)
             messages = [{"role": "system", "content": get('compose')(ask_instruction, chosen)},
