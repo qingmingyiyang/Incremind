@@ -254,14 +254,14 @@ def _ask(flow, key, *, retrieve='@11', http=None):
             json={'project_id': PROJECT, 'text': flow.case['question'], 'intent': 'ask'})
 
 
-def _native(flow, turn_id, stages, *, retrieve='@11'):
+def _native(flow, turn_id, stages, *, retrieve='@11', compose='@34'):
     from backend.memory_app.kernel.receipt_projection import kernel_call_groups
 
     assert [call['stage'] for call in flow.transport.calls] == stages
     store = flow.app.state.ai_turn_store
     request = store.get_request(turn_id)
     assert request['policy_versions']['retrieve'] == retrieve
-    assert request['policy_versions']['compose'] == '@34'
+    assert request['policy_versions']['compose'] == compose
     groups = kernel_call_groups(flow.root, turn_id=turn_id, project=PROJECT,
                                records=flow.records, include_answer_input=True)
     assert len(groups) == 1 and len(groups[0]['calls']) == len(stages)
@@ -322,6 +322,29 @@ def test_raw_only_literal_fact_uses_one_generation_and_replays_frozen_version(ra
     assert _ask(flow, 'raw-direct', retrieve='@9').json() == saved
     with TestClient(flow.build()) as restarted:
         replay = _ask(flow, 'raw-direct', retrieve='@10', http=restarted)
+        assert replay.status_code == 200 and replay.json() == saved
+    assert (len(flow.transport.calls), len(flow.collections)) == counts
+    assert (version('retrieve'), version('compose')) == ('@9', '@34')
+
+
+def test_calendar_candidate_preserves_raw_single_generation_and_frozen_replay(raw_flow_factory):
+    from backend.memory_app.answer_proof import read_answer_input
+    from backend.memory_app.v2.policies import override, version
+
+    flow = raw_flow_factory('en')
+    with override(compose='@35'):
+        response = _ask(flow, 'raw-calendar-compatible')
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    turn = saved['turn']
+    store, group = _native(flow, turn['id'], ['raw'], compose='@35')
+    frozen = store.get_immutable_payload(turn['id'], 'answer-model-input-raw-answer-v1')
+    assert frozen is not None and read_answer_input(store, turn['id']) == frozen
+    assert group['answer_input'] == frozen[1]
+    assert turn['receipt']['ask']['trace'][0]['raw_fast_path']['generation_invocations'] == 1
+    counts = len(flow.transport.calls), len(flow.collections)
+    with TestClient(flow.build()) as restarted:
+        replay = _ask(flow, 'raw-calendar-compatible', retrieve='@9', http=restarted)
         assert replay.status_code == 200 and replay.json() == saved
     assert (len(flow.transport.calls), len(flow.collections)) == counts
     assert (version('retrieve'), version('compose')) == ('@9', '@34')

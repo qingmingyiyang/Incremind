@@ -163,7 +163,7 @@ def assess(query, plan, *, reference=None):
         return _decision('unsupported', 'question_shape_unsupported')
     if plan.get('history') or plan.get('part_context'):
         return _decision('unsupported', 'context_dependent_question')
-    if plan.get('policy_versions', {}).get('compose') != '@34':
+    if plan.get('policy_versions', {}).get('compose') not in {'@34', '@35'}:
         return _decision('unsupported', 'compose_contract_unsupported')
     scope = plan.get('scope')
     if type(scope) is not WorkScope or scope != WorkScope('local-user', plan.get('project_id')):
@@ -196,7 +196,7 @@ def assess(query, plan, *, reference=None):
             matching = next((row for row in corpus if row['id'] == candidate['id']), None)
             if matching is None:
                 continue
-            catalog = build_evidence_catalog([candidate], compose_version='@34')
+            catalog = build_evidence_catalog([candidate], compose_version=plan['policy_versions']['compose'])
             if len(catalog['units']) != 1:
                 continue
             unit = catalog['units'][0]

@@ -196,7 +196,7 @@ def preflight(plan):
     if not isinstance(plan, dict) or plan.get('history') or plan.get('part_context'):
         return None
     request = parse_question(plan.get('question'))
-    if request is None or plan.get('policy_versions', {}).get('compose') != '@34':
+    if request is None or plan.get('policy_versions', {}).get('compose') not in {'@34', '@35'}:
         return None
     chosen = plan.get('chosen')
     if not isinstance(chosen, (tuple, list)) or not 1 <= len(chosen) <= 16:
@@ -220,7 +220,7 @@ def preflight(plan):
                          'revision': entry.get('revision'),
                          'sha256': hashlib.sha256(content.encode('utf-8')).hexdigest()})
     try:
-        catalog = build_evidence_catalog(chosen, compose_version='@34')
+        catalog = build_evidence_catalog(chosen, compose_version=plan['policy_versions']['compose'])
     except (ValueError, TypeError, KeyError):
         return None
     if len(catalog['units']) > 256:

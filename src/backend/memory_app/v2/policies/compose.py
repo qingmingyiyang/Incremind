@@ -1239,3 +1239,11 @@ def v34(entrypoint, /, *args, **kwargs):
 
 
 register('compose', '@34')(v34)
+
+
+def v35(entrypoint, /, *args, **kwargs):
+    """保留34两轮模型合同；末稿的有限日期投影由共享纯守卫执行。"""
+    return v34(entrypoint, *args, **kwargs)
+
+
+register('compose', '@35')(v35)
