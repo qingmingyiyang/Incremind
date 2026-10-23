@@ -35,6 +35,17 @@ CASES = {
            'body': 'In production, The owner of Project Cedar is Alice.',
            'other': 'The owner of Project Cedar is Bob.', 'title': 'Project Cedar original owner records',
            'subject': 'Project Cedar', 'predicate': 'owner', 'value': 'Alice'},
+    'zh_latest': {'question': '星河项目的最新重试上限是多少？',
+           'body': '星河项目的最新重试上限是3次。', 'title': '星河项目原始记录',
+           'subject': '星河项目', 'predicate': '最新重试上限', 'value': '3次'},
+    'en_latest': {'question': 'What is the latest retry limit of Project Cedar?',
+           'body': "Project Cedar's latest retry limit is 3 retries.",
+           'title': 'Project Cedar original record',
+           'subject': 'Project Cedar', 'predicate': 'latest retry limit', 'value': '3 retries'},
+    'en_newest': {'question': 'What is the newest retry limit of Project Cedar?',
+           'body': "Project Cedar's newest retry limit is 3 retries.",
+           'title': 'Project Cedar original record',
+           'subject': 'Project Cedar', 'predicate': 'newest retry limit', 'value': '3 retries'},
 }
 
 
@@ -382,6 +393,34 @@ def test_default_and_previous_candidate_do_not_call_raw_generation(raw_flow_fact
     assert 'raw_fast_path' not in turn['receipt']['ask']['trace'][0]
     store, _ = _native(flow, turn['id'], ['decision', 'decision'], retrieve=retrieve)
     assert store.get_immutable_payload(turn['id'], 'answer-model-input-raw-answer-v1') is None
+
+
+@pytest.mark.parametrize('language', ['zh_latest', 'en_latest', 'en_newest'])
+def test_freshness_requests_keep_original_wording_and_enter_investigation(raw_flow_factory, language):
+    from backend.memory_app.v2.policies import version
+
+    flow = raw_flow_factory(language)
+    response = _ask(flow, 'raw-freshness-' + language)
+    assert response.status_code == 200, response.text
+    turn = response.json()['turn']
+    answer = turn['receipt']['ask']
+    raw = answer['trace'][0]['raw_fast_path']
+    assert raw['route'] == 'investigate' and raw['reason'] == 'unsupported_question'
+    assert raw['generation_invocations'] == 0 and raw['generation_physical_attempts'] == 0
+    assert raw['probe_collections'] == 0 and raw['decision_invocations'] == 2
+    assert answer['trace'][0]['agentic']['status'] == 'clarify'
+    _one_real_raw_collection(flow)
+    store, _ = _native(flow, turn['id'], ['decision', 'decision'])
+    assert store.get_request(turn['id'])['input']['text'] == flow.case['question']
+    assert store.get_immutable_payload(turn['id'], 'answer-model-input-raw-answer-v1') is None
+    assert store.get_immutable_payload(turn['id'], 'answer-model-result-raw-answer-v1') is None
+    for number, context in enumerate(flow.transport.contexts, 1):
+        assert context['question'] == flow.case['question']
+        frozen = store.get_immutable_payload(turn['id'], f'answer-gap-input-rag-decision-{number}-v1')
+        assert json.loads(frozen[1]['messages'][-1]['content']) == context
+    assert any(flow.case['body'] in row['text'] for row in flow.transport.contexts[1]['materials'])
+    assert answer['citations'] == [] and flow.case['value'] not in answer['answer']
+    assert (version('retrieve'), version('compose')) == ('@9', '@34')
 
 
 def test_unknown_raw_usage_remains_unknown_after_local_rejection(raw_flow_factory):

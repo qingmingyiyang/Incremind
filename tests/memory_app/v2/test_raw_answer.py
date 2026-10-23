@@ -365,3 +365,65 @@ def test_bare_english_deictic_value_requires_attribution_but_quoted_is_literal(v
     contract = preflight(plan)
     assert contract is not None and contract['records'][0]['value'] == quoted
     assert quoted in validate_output(plan, contract, witness(contract)).answer
+
+
+@pytest.mark.parametrize('modifier', [
+    '最新', '现任', '现行', '当前', '现在', '实时', '即时', '当下', '当今', '近期',
+    '最近', '新近', '近日', '至今', '迄今', '今年', '去年', '明年', '本周',
+    '截至2026-10-23', '新任',
+    '最新_', '最-新', '现_任', 'latest_', 'NEWEST-', 'up-to-date_', 'most_recent_',
+    'as-of-2026-10-23_',
+])
+@pytest.mark.parametrize('slot', ['subject', 'predicate'])
+@pytest.mark.parametrize('prefix', ['', '在2026-10-23，'])
+def test_chinese_and_mixed_temporal_requirements_are_not_empty_time_literals(modifier, slot, prefix):
+    subject = modifier + '星河项目' if slot == 'subject' else '星河项目'
+    predicate = modifier + '负责人' if slot == 'predicate' else '负责人'
+    question = f'{prefix}{subject}的{predicate}是谁？'
+    content = f'{prefix}{subject}的{predicate}是“李明”。'
+    assert parse_question(question) is None
+    assert preflight(make_plan(question, content)) is None
+    # A supported unmodified question cannot skip a temporal source record.
+    assert preflight(make_plan(prefix + CASES[0][0], content)) is None
+    assert preflight(make_plan(prefix + CASES[0][0], prefix + CASES[0][1] + '\n' + content)) is None
+
+
+@pytest.mark.parametrize('modifier', [
+    'latest', 'LATEST', 'Latest', 'newest', 'NEWEST', 'current', 'currently',
+    'now', 'today', 'recent', 'updated', 'up-to-date', 'UP_TO_DATE', 'up to date',
+    'up-to_date', 'most-recent', 'MOST_RECENT', 'most recent', 'last-week',
+    'as-of', 'as_of', 'as of', 'as-of-2026-10-23',
+])
+@pytest.mark.parametrize('separator', [' ', '_', '-'])
+@pytest.mark.parametrize('slot', ['subject', 'predicate'])
+@pytest.mark.parametrize('prefix', ['', 'On 2026-10-23, '])
+def test_english_temporal_requirement_variants_cannot_hide_in_subject_or_property(modifier, separator, slot, prefix):
+    subject = modifier + separator + 'Project Cedar' if slot == 'subject' else 'Project Cedar'
+    predicate = modifier + separator + 'owner' if slot == 'predicate' else 'owner'
+    question = f'{prefix}What is the {predicate} of {subject}?'
+    content = f'{prefix}The {predicate} of {subject} is Alice.'
+    assert parse_question(question) is None
+    assert preflight(make_plan(question, content)) is None
+    assert preflight(make_plan(f'{prefix}What is the owner of Project Cedar?', content)) is None
+    ordinary = f'{prefix}The owner of Project Cedar is Alice.'
+    assert preflight(make_plan(f'{prefix}What is the owner of Project Cedar?', ordinary + '\n' + content)) is None
+
+
+@pytest.mark.parametrize('prefix', ['', '在2026-10-23，'])
+def test_mixed_ascii_non_temporal_property_remains_literal(prefix):
+    plan = make_plan(prefix + '星河项目的release_owner是谁？', prefix + '星河项目的release_owner是“李明”。')
+    contract = preflight(plan)
+    assert contract is not None and contract['predicate'] == 'release_owner'
+    assert contract['time'] == ('2026-10-23' if prefix else '')
+    assert '“李明”' in validate_output(plan, contract, witness(contract)).answer
+
+
+@pytest.mark.parametrize('question,content', [
+    ('星河项目的版本是什么？', '星河项目的版本是“最新版本”。'),
+    ('What is the label of Project Cedar?', 'The label of Project Cedar is “latest_up-to-date”.'),
+])
+def test_quoted_literal_temporal_words_are_data_not_question_requirements(question, content):
+    plan = make_plan(question, content)
+    contract = preflight(plan)
+    assert contract is not None and contract['time'] == ''
+    assert contract['records'][0]['value'] in validate_output(plan, contract, witness(contract)).answer

@@ -64,6 +64,8 @@ _CN_FUNCTION = (
     '或者', '以及', '和', '与', '并且', '不', '未', '没', '无', '非', '可能', '应该',
     '必须', '将会', '曾经', '当前', '现在', '今天', '昨天', '明天', '今年', '去年',
     '明年', '本周', '上周', '下周', '最近', '过去', '目前', '之前', '之后',
+    '最新', '现任', '现行', '实时', '即时', '当下', '当今', '现阶段', '近期', '新近',
+    '近来', '近日', '刚刚', '刚才', '此刻', '此时', '至今', '迄今', '截至', '新任',
     '所有', '全部', '任何', '任意', '每个', '各个', '一些', '多个', '哪些',
 )
 _CN_DEICTIC = {'我', '你', '他', '她', '它', '我们', '你们', '他们', '她们', '它们',
@@ -77,6 +79,9 @@ _EN_FUNCTION = frozenset(('the a an of is are was were be been being and or nor 
     'in on at for from to with without before after during until since').split())
 _EN_DEICTIC = frozenset(('here there myself yourself yourselves himself herself itself '
                         'ourselves themselves oneself').split())
+_EN_TEMPORAL = frozenset(('latest newest current currently now today yesterday tomorrow '
+                         'recent recently previous previously next last former formerly '
+                         'present presently updated this').split())
 
 
 def _numeric_periods(value):
@@ -104,12 +109,22 @@ def _literal(value, *, language):
         return False
     if not _numeric_periods(value):
         return False
+    # Grammar screening also applies to mixed-script slots.  Tokenization is
+    # only a rejection check: it never rewrites the literal or the question.
+    grammar_words = re.findall(r'[a-z]+', value.casefold())
+    if (any(word in _EN_TEMPORAL for word in grammar_words)
+            or any(grammar_words[index:index + 3] == ['up', 'to', 'date']
+                   for index in range(len(grammar_words) - 2))
+            or any(grammar_words[index:index + 2] == ['as', 'of']
+                   for index in range(len(grammar_words) - 1))):
+        return False
     if language == 'zh':
         if value.startswith(_CN_REFERENCE_PREFIX):
             return False
         if not re.fullmatch(r'[\u4e00-\u9fffA-Za-z0-9_%-]+', value):
             return False
-        return value not in _CN_DEICTIC and not any(word in value for word in _CN_FUNCTION)
+        grammar = value.replace('_', '').replace('-', '')
+        return value not in _CN_DEICTIC and not any(word in grammar for word in _CN_FUNCTION)
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9 _%.-]*', value) or '  ' in value:
         return False
     words = value.casefold().split(' ')
