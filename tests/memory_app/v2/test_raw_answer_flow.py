@@ -327,17 +327,18 @@ def test_raw_only_literal_fact_uses_one_generation_and_replays_frozen_version(ra
     assert (version('retrieve'), version('compose')) == ('@9', '@34')
 
 
-def test_calendar_candidate_preserves_raw_single_generation_and_frozen_replay(raw_flow_factory):
+@pytest.mark.parametrize('compose', ['@35', '@36'])
+def test_calendar_candidate_preserves_raw_single_generation_and_frozen_replay(raw_flow_factory, compose):
     from backend.memory_app.answer_proof import read_answer_input
     from backend.memory_app.v2.policies import override, version
 
     flow = raw_flow_factory('en')
-    with override(compose='@35'):
+    with override(compose=compose):
         response = _ask(flow, 'raw-calendar-compatible')
     assert response.status_code == 200, response.text
     saved = response.json()
     turn = saved['turn']
-    store, group = _native(flow, turn['id'], ['raw'], compose='@35')
+    store, group = _native(flow, turn['id'], ['raw'], compose=compose)
     frozen = store.get_immutable_payload(turn['id'], 'answer-model-input-raw-answer-v1')
     assert frozen is not None and read_answer_input(store, turn['id']) == frozen
     assert group['answer_input'] == frozen[1]

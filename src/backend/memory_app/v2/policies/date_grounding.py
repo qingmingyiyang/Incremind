@@ -1,9 +1,11 @@
 """24有限日历语法的出处与精度校验，不替代事件语义审核。"""
+from datetime import date
 import re
 from .date_calculation import date_provenance, calendar_values, append_date_notes, _anchor, _HEADER, _DATE
 from .date_quote_boundaries import _windows
 
 _RELATIVE_RECORD_COUNT = r'(?:[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)'
+_ARITHMETIC_DAY_COUNT = r'(?:[1-9][0-9]*|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)'
 
 
 def calendar_mentions_v1(text):
@@ -68,7 +70,7 @@ def _explicit_options(quote):
     return result
 
 
-def validate_calendar_statements_v1(statements, catalog, chosen, question, *, record_bindings=None, _bound_anchor_context=False, _on_invalid=None, _anchor_article_context=False, _record_anchor_context=False, _frozen_record_anchors=False, _calendar_version=2, _collect_invalid=False):
+def validate_calendar_statements_v1(statements, catalog, chosen, question, *, record_bindings=None, _bound_anchor_context=False, _on_invalid=None, _anchor_article_context=False, _record_anchor_context=False, _frozen_record_anchors=False, _calendar_version=2, _collect_invalid=False, _arithmetic_record_anchor=False):
     """跨kind核新绝对日期；问题范围和记录锚只在明确上下文中使用。"""
     units = {unit['id']: unit for unit in catalog['units']}
     records = bind_date_provenance(catalog, chosen, calendar_version=_calendar_version)
@@ -116,6 +118,12 @@ def validate_calendar_statements_v1(statements, catalog, chosen, question, *, re
                         and (_is_bound_anchor_context(statement, value, matching)
                             or _anchor_article_context and _is_article_anchor_context(statement, value, matching))):
                     explicit = True
+                if (_arithmetic_record_anchor and record_bindings is not None
+                        and evidence.role == 'support'
+                        and notes.get(unit['source_number']) == frozen_notes[unit['source_number']]
+                        and _is_record_anchor_explanation(statement, value, matching,
+                                                         record_bindings[id(statement)])):
+                    explicit = True
                 if re.search(r'(?:relative to|as of|recorded on|session date|截至|记录于)\s*[:：]?\s*$', prefix, re.I):
                     candidate = chosen[unit['source_number'] - 1]
                     anchor_texts = [candidate.get('title', '')] + [line for line in candidate.get('excerpt', '').splitlines() if _HEADER.match(line)]
@@ -159,6 +167,71 @@ def _is_bound_anchor_context(statement, value, records):
         if any(other['span'] != value['span'] and _computed_match(other, record['options'])
                 for other in calendar_mentions_v1(statement.text)):
             return True
+    return False
+
+
+def _is_record_anchor_explanation(statement, value, matching, bound):
+    """36 recognizes an occurrence of a bound record day as arithmetic input.
+
+    The complete same-ref result must also be present.  This grants no event
+    on the anchor day and never searches another source for a matching number.
+    """
+    from .date_calculation import _calculate, _number, _RELATIVE_V3, _ENGLISH_COUNT_PREFIX
+    if (statement.kind != 'date' or value['precision'] != 'day'
+            or len(bound) != 1 or len(matching) != 1 or matching[0] != bound[0]):
+        return False
+    record = bound[0]
+    if (record['anchor_kind'] not in {'record_header', 'frozen_title'}
+            or record['anchor'] != value['start'] or len(record['options']) != 1
+            or _RELATIVE_V3.fullmatch(record['expression']) is None):
+        return False
+    option = record['options'][0]
+    if option['precision'] != 'day' or option['start'] != option['end']:
+        return False
+    prefix, suffix = statement.text[:value['span'][0]], statement.text[value['span'][1]:]
+    english = re.search(r'(?:(?<=\s)|(?<=[(（])|^)(' + _ARITHMETIC_DAY_COUNT + r')\s+days?\s+(before|after)\s+(?:the\s+)?$', prefix, re.I)
+    chinese = re.match(r'\s*(?:的)?(前|后)([0-9一二两三四五六七八九十]+)天', suffix)
+    comparative = re.match(r'\s*(早|晚)([0-9一二两三四五六七八九十]+)天', suffix) if re.search(r'比\s*$', prefix) else None
+    if english:
+        before_count = prefix[:english.start()]
+        if _ENGLISH_COUNT_PREFIX.search(before_count):
+            return False
+        # Do not skip a standalone sign, operator or numeric fragment to find
+        # a more convenient word farther left.  Only the nearest token counts.
+        previous = before_count.split()
+        if previous and not (previous[-1] in {'(', '（'} or previous[-1].isalpha()):
+            return False
+        count, direction = _number(english[1], calendar_version=3), english[2].lower() == 'before'
+        math_start, math_end = english.start(), value['span'][1]
+    elif chinese or comparative:
+        relation = chinese or comparative
+        count, direction = _number(relation[2], calendar_version=3), relation[1] in {'前', '早'}
+        math_start = re.search(r'比\s*$', prefix).start() if comparative else value['span'][0]
+        math_end = value['span'][1] + relation.end()
+    else:
+        return False
+    if count is None or count == 0:
+        return False
+    try:
+        anchor = date.fromisoformat(record['anchor'])
+        source_result = _calculate(anchor, record['expression'], calendar_version=3)
+        source_delta = (date.fromisoformat(option['start']) - anchor).days
+    except (ValueError, OverflowError):
+        return False
+    if source_result != option['start'] or source_delta != (-count if direction else count):
+        return False
+    for other in calendar_mentions_v1(statement.text):
+        if other['span'] == value['span'] or not _same(other, option):
+            continue
+        if other['span'][1] <= math_start:
+            opening = re.fullmatch(r'\s*([（(])\s*', statement.text[other['span'][1]:math_start])
+            closing = re.match(r'\s*([）)])', statement.text[math_end:])
+            if opening and closing and (opening[1], closing[1]) in {('(', ')'), ('（', '）')}:
+                return True
+        if math_end <= other['span'][0]:
+            bridge = statement.text[math_end:other['span'][0]]
+            if re.fullmatch(r',\s*i\.e\.\s+on\s+|[，,]\s*即(?:为|是)?\s*', bridge, re.I):
+                return True
     return False
 
 
@@ -333,7 +406,7 @@ def _record_context_temporal_residue(statement, evidence, unit, records, *, chos
         r'今天|昨天|明天|今夜|昨夜|彼时|届时', ''.join(residual), re.I) is not None
 
 
-def validate_calendar_statements_v4(statements, catalog, chosen, question, *, record_bindings, _on_invalid=None, _frozen_record_anchors=False, _calendar_version=2, _collect_invalid=False):
+def validate_calendar_statements_v4(statements, catalog, chosen, question, *, record_bindings, _on_invalid=None, _frozen_record_anchors=False, _calendar_version=2, _collect_invalid=False, _arithmetic_record_anchor=False):
     """明确记录锚不算事件日；模糊当天仍需原文独立证明，不能借锚授权。"""
     units = {unit['id']: unit for unit in catalog['units']}
     records = bind_date_provenance(catalog, chosen, calendar_version=_calendar_version)
@@ -372,7 +445,8 @@ def validate_calendar_statements_v4(statements, catalog, chosen, question, *, re
     validate_calendar_statements_v1(statements, catalog, chosen, question,
         record_bindings=record_bindings, _bound_anchor_context=True, _anchor_article_context=True,
         _record_anchor_context=True, _on_invalid=_on_invalid, _frozen_record_anchors=_frozen_record_anchors,
-        _calendar_version=_calendar_version, _collect_invalid=_collect_invalid)
+        _calendar_version=_calendar_version, _collect_invalid=_collect_invalid,
+        _arithmetic_record_anchor=_arithmetic_record_anchor)
     if invalid:
         raise ValueError('grounded_calendar_provenance_invalid')
 
@@ -388,6 +462,13 @@ def validate_calendar_statements_v6(statements, catalog, chosen, question, *, re
     return validate_calendar_statements_v4(statements, catalog, chosen, question,
         record_bindings=record_bindings, _on_invalid=_on_invalid, _frozen_record_anchors=True,
         _calendar_version=3, _collect_invalid=_collect_invalid)
+
+
+def validate_calendar_statements_v7(statements, catalog, chosen, question, *, record_bindings, _on_invalid=None, _collect_invalid=False):
+    """36 only adds a fully bound same-offset arithmetic record-anchor input."""
+    return validate_calendar_statements_v4(statements, catalog, chosen, question,
+        record_bindings=record_bindings, _on_invalid=_on_invalid, _frozen_record_anchors=True,
+        _calendar_version=3, _collect_invalid=_collect_invalid, _arithmetic_record_anchor=True)
 
 
 def build_date_ref_catalog(catalog, chosen, *, calendar_version=2):
@@ -428,11 +509,11 @@ def resolve_date_refs(statement, catalog, chosen, refs, *, compose_version='@26'
             reject(position, 'ref_requires_matching_unit_and_complete_sentence', record)
         resolved.append(record)
     # 28先完整验ref，再把普通声明视为没有计算引用；不改原件，也不授权后续精度说明。
-    if compose_version in {'@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35'} and statement.kind in {'fact', 'inference'}:
+    if compose_version in {'@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} and statement.kind in {'fact', 'inference'}:
         return [], []
     # 完整旧注释由同一冻结来源重建，模型无需也不能改写它。
     numbers = list(dict.fromkeys(record['source_number'] for record in resolved))
     notes = [] if (statement.kind == 'limitation' or compose_version == '@27' and statement.kind != 'date') else [
-        {'source_number': number, 'text': append_date_notes('', chosen[number - 1], quote_version=3, calendar_version=3 if compose_version in {'@34', '@35'} else 2).lstrip('\n')}
+        {'source_number': number, 'text': append_date_notes('', chosen[number - 1], quote_version=3, calendar_version=3 if compose_version in {'@34', '@35', '@36'} else 2).lstrip('\n')}
         for number in numbers]
     return resolved, notes

@@ -10,6 +10,7 @@ from backend.shared.runtime_logging import RuntimeLogHandler, runtime_log_scope
 @pytest.mark.parametrize(('message', 'compose', 'expected_code', 'expected_compose'), [
     ('invalid_first_fact_requires_correction', '@34', 'invalid_first_fact_requires_correction', '@34'),
     ('grounded_calendar_provenance_invalid', '@35', 'grounded_calendar_provenance_invalid', '@35'),
+    ('grounded_calendar_provenance_invalid', '@36', 'grounded_calendar_provenance_invalid', '@36'),
     ('grounded_calendar_provenance_invalid private question and quote', '@35 private model input',
      'answer_validation_failed', 'other'),
 ])

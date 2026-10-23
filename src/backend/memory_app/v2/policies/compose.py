@@ -1247,3 +1247,11 @@ def v35(entrypoint, /, *args, **kwargs):
 
 
 register('compose', '@35')(v35)
+
+
+def v36(entrypoint, /, *args, **kwargs):
+    """沿用35模型合同；仅扩展已绑定日偏移的算术参照锚守卫。"""
+    return v35(entrypoint, *args, **kwargs)
+
+
+register('compose', '@36')(v36)

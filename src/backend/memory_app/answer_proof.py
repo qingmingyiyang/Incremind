@@ -80,7 +80,7 @@ def has_raw_answer_proof(request, capsule):
     try:
         if (not isinstance(request, dict)
                 or request.get('policy_versions', {}).get('retrieve') != '@11'
-                or request.get('policy_versions', {}).get('compose') not in {'@34', '@35'}):
+                or request.get('policy_versions', {}).get('compose') not in {'@34', '@35', '@36'}):
             return False
         return 'raw_answer_proof' in _quote_plan(request, capsule)
     except (KeyError, IndexError, TypeError, ValueError, AttributeError):
@@ -92,7 +92,7 @@ def select_raw_answer_input(request, product, raw_input, raw_result, capsule):
     try:
         if (not isinstance(request, dict)
                 or request.get('policy_versions', {}).get('retrieve') != '@11'
-                or request.get('policy_versions', {}).get('compose') not in {'@34', '@35'}
+                or request.get('policy_versions', {}).get('compose') not in {'@34', '@35', '@36'}
                 or request.get('desired_outcome') != 'project.answer'
                 or request.get('operation_id') != 'answer-' + request['turn_id']
                 or any(not isinstance(value, dict) for value in (product, raw_input, raw_result))):
@@ -143,13 +143,13 @@ def select_raw_answer_input(request, product, raw_input, raw_result, capsule):
 
 def select_answer_input(request, product, canonical_input, canonical_result, review_input=None, review_result=None, capsule=None):
     """旧轮保持原选择；新合同必须闭合草稿、审核输入和公开最终内容。"""
-    if not isinstance(request, dict) or request.get('policy_versions', {}).get('compose') not in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35'}:
+    if not isinstance(request, dict) or request.get('policy_versions', {}).get('compose') not in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
         return canonical_input
     try:
         from .v2.answer_evidence import (SourceQuoteExtraction, final_response_model, render_coverage,
             EvidencePartitionOutput, build_evidence_catalog, build_partition_messages, validate_partition, render_partition, GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, FirstFactsOutput, ReviewedScopeAnswerOutput, FirstReferencedFactsOutput, ReviewedReferencedScopeOutput, FocusedReferencedFactsOutput, FocusedReviewedScopeOutput, ReconstructedReviewedOutput, first_fact_partition, validate_first_facts, reviewed_scope_answer, first_facts_output_minimum, partition_output_tokens, grounded_usage_answer, grounded_scope_answer, grounded_output_limit, render_grounded_answer)
         final_model = final_response_model(request['policy_versions']['compose'], request['input']['text'])
-        first_model = (FocusedReferencedFactsOutput if request['policy_versions']['compose'] in {'@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35'} else FirstReferencedFactsOutput if request['policy_versions']['compose'] == '@26' else FirstFactsOutput if request['policy_versions']['compose'] in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35'} else EvidencePartitionOutput if request['policy_versions']['compose'] in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35'} else
+        first_model = (FocusedReferencedFactsOutput if request['policy_versions']['compose'] in {'@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else FirstReferencedFactsOutput if request['policy_versions']['compose'] == '@26' else FirstFactsOutput if request['policy_versions']['compose'] in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else EvidencePartitionOutput if request['policy_versions']['compose'] in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else
                        SourceQuoteExtraction if request['policy_versions']['compose'] in {'@15', '@16', '@17'} else AskOutput)
         if (request.get('desired_outcome') != 'project.answer'
                 or request.get('operation_id') != 'answer-' + request['turn_id']
@@ -259,7 +259,7 @@ def read_answer_input(store, identity):
     """沿同轮不可变键读取，不恢复执行或写入数据。"""
     canonical = store.get_immutable_payload(identity, 'answer-model-input-answer')
     request = store.get_request(identity)
-    if not isinstance(request, dict) or request.get('policy_versions', {}).get('compose') not in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35'}:
+    if not isinstance(request, dict) or request.get('policy_versions', {}).get('compose') not in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
         return canonical
     if request.get('turn_id') != identity:
         return None

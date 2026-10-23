@@ -196,7 +196,7 @@ def preflight(plan):
     if not isinstance(plan, dict) or plan.get('history') or plan.get('part_context'):
         return None
     request = parse_question(plan.get('question'))
-    if request is None or plan.get('policy_versions', {}).get('compose') not in {'@34', '@35'}:
+    if request is None or plan.get('policy_versions', {}).get('compose') not in {'@34', '@35', '@36'}:
         return None
     chosen = plan.get('chosen')
     if not isinstance(chosen, (tuple, list)) or not 1 <= len(chosen) <= 16:

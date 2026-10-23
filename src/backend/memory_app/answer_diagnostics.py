@@ -7,7 +7,7 @@ _KNOWN_CODES = frozenset({
     'invalid_first_fact_requires_correction',
     'grounded_calendar_provenance_invalid',
 })
-_COMPOSE_VERSIONS = frozenset(f'@{version}' for version in range(1, 36))
+_COMPOSE_VERSIONS = frozenset(f'@{version}' for version in range(1, 37))
 
 
 def log_answer_validation_failure(error: BaseException, *, compose_version: object) -> str:

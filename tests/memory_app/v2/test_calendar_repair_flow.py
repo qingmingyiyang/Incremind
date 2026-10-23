@@ -33,6 +33,7 @@ class _CalendarTransport:
         self.contexts = []
         self.outputs = []
         self.on_review = None
+        self.empty_first_diagnostics = False
 
     def __call__(self, **request):
         messages = request['messages']
@@ -58,18 +59,30 @@ class _CalendarTransport:
             assert any(option['start'] == option['end'] == EXPECTED_DAY for option in ref['options'])
             unit = next(row for row in payload['evidence_catalog']['units'] if row['id'] == ref['unit_id'])
             assert SOURCE_LINE in unit['text']
+            stage = 'review' if 'untrusted_first_fact_plan' in payload else 'first'
             day = WRONG_DAY if self.mode == 'fallback' else EXPECTED_DAY
             fact = {'kind': 'fact', 'text': 'Nia calibrated the Aster gauge on ' + day + '.',
                     'evidence': [{'unit_id': unit['id'], 'quote': unit['text'], 'role': 'support'}],
                     'date_refs': [ref['date_ref_id']]}
-            stage = 'review' if 'untrusted_first_fact_plan' in payload else 'first'
+            anchor_mode = self.mode in {'anchor_explanation', 'anchor_event'}
+            if anchor_mode:
+                fact['kind'] = 'date'
+                fact['text'] = (
+                    f'Nia calibrated the Aster gauge on {EXPECTED_DAY} (two days before {RECORD_DATE}).'
+                    if stage == 'first' else
+                    f'Nia calibrated the Aster gauge two days before {RECORD_DATE}, i.e. on {EXPECTED_DAY}.')
+                if self.mode == 'anchor_event' and stage == 'review':
+                    fact['text'] += ' Nia calibrated it on ' + RECORD_DATE + '.'
             if stage == 'first':
                 output = {'facts': [fact], 'unreviewed': {
                     'scope': 'all_unreferenced', 'reason': 'Only the requested calibration date.'}}
             else:
                 assert payload['untrusted_first_fact_plan'] == self.outputs[0]
-                assert payload['first_fact_diagnostics']
-                fact['first_fact_uses'] = [{'fact_index': 1, 'action': 'adopt',
+                if self.empty_first_diagnostics:
+                    assert payload['first_fact_diagnostics'] == []
+                else:
+                    assert payload['first_fact_diagnostics']
+                fact['first_fact_uses'] = [{'fact_index': 1, 'action': 'correct' if anchor_mode else 'adopt',
                                           'reason': 'Retain the first statement.'}]
                 if self.mode == 'forged_ref':
                     fact['date_refs'] = [999]
@@ -239,29 +252,14 @@ def test_previous_calendar_contract_preserves_the_two_completed_call_failure(cal
     assert flow.transport.outputs[1]['statements'][0]['first_fact_uses'][0]['action'] == 'adopt'
 
 
-def test_calendar_classification_repair_keeps_raw_models_and_replays_actual_review_input(calendar_flow):
+def _proof_and_replay(flow, saved, key, store, group):
     from backend.memory_app.answer_proof import REVIEW_KEY, read_answer_input, select_answer_input
     from backend.memory_app.v2.policies import version
 
-    flow = calendar_flow
-    response = _ask(flow, 'calendar-repaired')
-    assert response.status_code == 200, response.text
-    saved = response.json()
-    answer = saved['turn']['receipt']['ask']
-    assert EXPECTED_DAY in answer['answer'] and answer['citations']
-    report = answer['trace'][0]['calendar_review']
-    assert report['route'] == 'classification_repair'
-    assert report['repaired_statements'] == 1 and report['fallback_statements'] == 0
-    assert report['codes']
-    store, group = _native(flow, compose='@35')
     identity = group['turn_id']
     review = store.get_immutable_payload(identity, 'answer-model-input-' + REVIEW_KEY)
     assert read_answer_input(store, identity) == review
     assert group['answer_input'] == review[1]
-    assert flow.transport.outputs[0]['facts'][0]['kind'] == 'fact'
-    assert flow.transport.outputs[1]['statements'][0]['kind'] == 'fact'
-    assert flow.transport.outputs[1]['statements'][0]['first_fact_uses'][0]['action'] == 'adopt'
-    assert answer['model_usage'] == {'input_tokens': 80, 'output_tokens': 80, 'total_tokens': 160}
     canonical = store.get_immutable_payload(identity, 'answer-model-input-answer')[1]
     first = store.get_immutable_payload(identity, 'answer-model-result-answer')[1]
     final = store.get_immutable_payload(identity, 'answer-model-result-' + REVIEW_KEY)[1]
@@ -271,20 +269,41 @@ def test_calendar_classification_repair_keeps_raw_models_and_replays_actual_revi
     altered['output']['statements'][0]['date_refs'] = [999]
     assert select_answer_input(store.get_request(identity), product, canonical, first, review[1], altered, capsule) is None
     before = len(flow.transport.calls), len(flow.collections)
-    assert _ask(flow, 'calendar-repaired', compose='@34').json() == saved
+    assert _ask(flow, key, compose='@34').json() == saved
     with TestClient(flow.build()) as restarted:
-        replay = _ask(flow, 'calendar-repaired', compose='@34', http=restarted)
+        replay = _ask(flow, key, compose='@34', http=restarted)
         assert replay.status_code == 200 and replay.json() == saved
     assert (len(flow.transport.calls), len(flow.collections)) == before
     assert (version('retrieve'), version('compose')) == ('@9', '@34')
 
 
-def test_unverified_calendar_value_falls_back_to_speaker_and_relative_evidence(calendar_flow):
+@pytest.mark.parametrize('compose', ['@35', '@36'])
+def test_calendar_classification_repair_keeps_raw_models_and_replays_actual_review_input(calendar_flow, compose):
+    flow = calendar_flow
+    response = _ask(flow, 'calendar-repaired', compose=compose)
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    answer = saved['turn']['receipt']['ask']
+    assert EXPECTED_DAY in answer['answer'] and answer['citations']
+    report = answer['trace'][0]['calendar_review']
+    assert report['route'] == 'classification_repair'
+    assert report['repaired_statements'] == 1 and report['fallback_statements'] == 0
+    assert report['codes']
+    store, group = _native(flow, compose=compose)
+    assert flow.transport.outputs[0]['facts'][0]['kind'] == 'fact'
+    assert flow.transport.outputs[1]['statements'][0]['kind'] == 'fact'
+    assert flow.transport.outputs[1]['statements'][0]['first_fact_uses'][0]['action'] == 'adopt'
+    assert answer['model_usage'] == {'input_tokens': 80, 'output_tokens': 80, 'total_tokens': 160}
+    _proof_and_replay(flow, saved, 'calendar-repaired', store, group)
+
+
+@pytest.mark.parametrize('compose', ['@35', '@36'])
+def test_unverified_calendar_value_falls_back_to_speaker_and_relative_evidence(calendar_flow, compose):
     from backend.memory_app.answer_proof import REVIEW_KEY, read_answer_input
 
     flow = calendar_flow
     flow.transport.mode = 'fallback'
-    response = _ask(flow, 'calendar-fallback')
+    response = _ask(flow, 'calendar-fallback', compose=compose)
     assert response.status_code == 200, response.text
     answer = response.json()['turn']['receipt']['ask']
     report = answer['trace'][0]['calendar_review']
@@ -294,29 +313,68 @@ def test_unverified_calendar_value_falls_back_to_speaker_and_relative_evidence(c
     assert '本轮换算未验证' in answer['answer'] and WRONG_DAY not in answer['answer']
     assert EXPECTED_DAY not in answer['answer']
     assert answer['citations'] and answer['model_usage']['total_tokens'] == 160
-    store, group = _native(flow, compose='@35')
+    store, group = _native(flow, compose=compose)
     assert read_answer_input(store, group['turn_id']) == store.get_immutable_payload(
         group['turn_id'], 'answer-model-input-' + REVIEW_KEY)
 
 
-def test_forged_calendar_reference_still_hard_fails_after_two_completed_generations(calendar_flow):
+@pytest.mark.parametrize('compose', ['@35', '@36'])
+def test_forged_calendar_reference_still_hard_fails_after_two_completed_generations(calendar_flow, compose):
     flow = calendar_flow
     flow.transport.mode = 'forged_ref'
-    response = _ask(flow, 'calendar-forged-ref')
+    response = _ask(flow, 'calendar-forged-ref', compose=compose)
     assert response.status_code == 502
-    store, group = _native(flow, compose='@35')
+    store, group = _native(flow, compose=compose)
     assert store.get_immutable_payload(group['turn_id'], 'product-answer-result-v2') is None
     assert flow.transport.outputs[1]['statements'][0]['date_refs'] == [999]
 
 
-def test_revoked_source_still_hard_fails_without_another_generation(calendar_flow):
+@pytest.mark.parametrize('compose', ['@35', '@36'])
+def test_revoked_source_still_hard_fails_without_another_generation(calendar_flow, compose):
     flow = calendar_flow
     flow.transport.on_review = flow.revoke
-    response = _ask(flow, 'calendar-revoked-source')
+    response = _ask(flow, 'calendar-revoked-source', compose=compose)
     assert response.status_code in {409, 502}
-    store, group = _native(flow, compose='@35', all_completed=False)
+    store, group = _native(flow, compose=compose, all_completed=False)
     assert store.get_immutable_payload(group['turn_id'], 'product-answer-result-v2') is None
     from backend.recognition import RecognitionError
 
     with pytest.raises(RecognitionError):
         flow.authority.validate_snapshot(flow.scope, flow.snapshot)
+
+
+@pytest.mark.parametrize('compose', ['@35', '@36'])
+def test_record_anchor_explanation_retains_dates_and_frozen_model_text(calendar_flow, compose):
+    flow = calendar_flow
+    flow.transport.mode = 'anchor_explanation'
+    flow.transport.empty_first_diagnostics = compose == '@36'
+    response = _ask(flow, 'calendar-record-anchor', compose=compose)
+    assert response.status_code == (200 if compose == '@36' else 502), response.text
+    store, group = _native(flow, compose=compose)
+    first = flow.transport.outputs[0]['facts'][0]
+    review = flow.transport.outputs[1]['statements'][0]
+    assert first['kind'] == review['kind'] == 'date'
+    assert first['date_refs'] == review['date_refs'] == [2]
+    assert first['text'] != review['text']
+    assert first['evidence'] == review['evidence']
+    if compose == '@35':
+        assert response.json() == {'detail': 'answer_generation_failed'}
+        assert store.get_immutable_payload(group['turn_id'], 'product-answer-result-v2') is None
+        return
+    saved = response.json()
+    answer = saved['turn']['receipt']['ask']
+    assert EXPECTED_DAY in answer['answer'] and RECORD_DATE in answer['answer']
+    assert review['text'] in answer['answer'] and answer['citations']
+    assert answer['model_usage'] == {'input_tokens': 80, 'output_tokens': 80, 'total_tokens': 160}
+    _proof_and_replay(flow, saved, 'calendar-record-anchor', store, group)
+
+
+def test_record_anchor_cannot_authorize_an_added_same_day_event(calendar_flow):
+    flow = calendar_flow
+    flow.transport.mode = 'anchor_event'
+    flow.transport.empty_first_diagnostics = True
+    response = _ask(flow, 'calendar-record-anchor-event', compose='@36')
+    assert response.status_code == 502 and response.json() == {'detail': 'answer_generation_failed'}
+    store, group = _native(flow, compose='@36')
+    assert store.get_immutable_payload(group['turn_id'], 'product-answer-result-v2') is None
+    assert 'Nia calibrated it on ' + RECORD_DATE in flow.transport.outputs[1]['statements'][0]['text']
