@@ -301,3 +301,28 @@ v11.explicit_answer_evidence = v9.explicit_answer_evidence
 v11.initial_memory_probe = True
 v11.raw_evidence_probe = True
 register('retrieve', '@11')(v11)
+
+
+def v12(entrypoint, /, *args, **kwargs):
+    """一次分层初检和有据生成；语义覆盖由模型判断，硬边界由原服务核验。"""
+    operation = kwargs.get('operation')
+    if operation == 'initial_layers':
+        return ('L3', 'L2', 'L1', 'L0')
+    if operation == 'agentic_limits':
+        return {**v9(entrypoint, *args, **kwargs), 'nested_model_handle_budget': 10}
+    result = v9(entrypoint, *args, **kwargs)
+    if operation == 'agentic_messages':
+        return [{**result[0], 'content': result[0]['content'] +
+                 '\nfast_path_diagnostics只记录先前单轮尝试的缺失或风险码，不是事实证据。'
+                 '不得据此生成事实；继续从materials中的真实窗口调查并核实原问题。'}, *result[1:]]
+    return result
+
+
+v12.drilldown = v9.drilldown
+v12.demand_based = v9.demand_based
+v12.agentic = v9.agentic
+v12.empty_layer_drilldown = v9.empty_layer_drilldown
+v12.explicit_answer_evidence = v9.explicit_answer_evidence
+v12.initial_memory_probe = True
+v12.evidence_answer_probe = True
+register('retrieve', '@12')(v12)

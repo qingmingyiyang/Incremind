@@ -1327,6 +1327,8 @@ class WorkspaceQuery:
                 "target": target, **({'answer_output_budget': answer_output_budget} if answer_output_budget is not None else {}), **planned, '_rerank_state': rerank_state, "profile": profile, **({'part_context':part_context} if part_context else {}), "overview_guard": overview_guard, "history": history, "prompt_overhead": overhead, "excluded_sources": excluded, "state": "pending",
                 "expires_monotonic": time.monotonic() + 300,
                 "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()}
+        if getattr(get('retrieve'), 'evidence_answer_probe', False):
+            plan.update(retrieval_question=retrieval_question, situation=situation)
         if _pause_after is not None:
             plan['drilldown_needed'] = get('retrieve')(None,
                 {**plan, 'policy_versions': collected.get('policy_versions') or versions_for_turn('project.answer')},
@@ -1424,6 +1426,9 @@ class WorkspaceQuery:
         if 'raw_answer_proof' in plan:
             from .v2.raw_fast_path import validate_raw_plan
             validate_raw_plan(self, plan)
+        if 'evidence_answer_proof' in plan:
+            from .v2.evidence_fast_path import validate_evidence_plan
+            validate_evidence_plan(self, plan)
 
     def _validate_ask_sources(self, plan, *, local_only=False):
         project_id = plan["project_id"]
@@ -1568,9 +1573,15 @@ class WorkspaceQuery:
                            **({"conditions": c["entry"]["conditions"]} if c["kind"] == "recognition" else {}),
                            "coordinate_space": c.get("coordinate_space", "workspace_query_content_v1")}
                           for index, c in enumerate(chosen, 1)]
-        if 'raw_answer_proof' in plan:
+        if 'evidence_answer_proof' in plan or 'raw_answer_proof' in plan:
             try:
-                from .v2.raw_fast_path import frozen_result
+                evidence_answer = 'evidence_answer_proof' in plan
+                if evidence_answer:
+                    from .v2.evidence_fast_path import frozen_result, INVOCATION
+                    from .answer_proof import select_evidence_answer_input as select_input
+                else:
+                    from .v2.raw_fast_path import frozen_result, INVOCATION
+                    from .answer_proof import select_raw_answer_input as select_input
                 output, messages, metadata = frozen_result(self, plan)
                 self.validate_ask_plan(plan)
                 result = {'answer': output.answer.strip(),
@@ -1579,16 +1590,16 @@ class WorkspaceQuery:
                     'excluded_sources': plan['excluded_sources'],
                     'context': _ask_context(chosen, format_source_texts(chosen), messages,
                         metadata.get('context_budget'))}
-                from .answer_proof import select_raw_answer_input
                 active_request, store, _, _ = ACTIVE_ANSWER.get()
                 identity = active_request['turn_id']
-                sent = store.get_immutable_payload(identity, 'answer-model-input-raw-answer-v1')
-                received = store.get_immutable_payload(identity, 'answer-model-result-raw-answer-v1')
+                sent = store.get_immutable_payload(identity, 'answer-model-input-' + INVOCATION)
+                received = store.get_immutable_payload(identity, 'answer-model-result-' + INVOCATION)
                 capsule = store.get_immutable_payload(identity, 'answer-continuation-plan-v1')
-                if select_raw_answer_input(store.get_request(identity), result,
+                if select_input(store.get_request(identity), result,
                         sent[1] if sent else None, received[1] if received else None,
                         capsule[1] if capsule else None) is None:
-                    raise ValueError('raw_answer_public_binding_changed')
+                    raise ValueError('evidence_answer_public_binding_changed' if evidence_answer
+                                     else 'raw_answer_public_binding_changed')
                 self.mark_ask_receipt(preview_id, 'completed', usage=result['model_usage'])
                 with self.ask_preview_lock:
                     plan.update(result=result, state='completed', chosen=[])

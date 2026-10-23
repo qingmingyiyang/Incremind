@@ -259,22 +259,30 @@ def validate_svg(content, report):
 
 HELDOUT_VERDICTS = ('correct', 'partial', 'wrong', 'clarify', 'failed', 'unpublished')
 TOKEN_FIELDS = ('input_tokens', 'output_tokens', 'total_tokens')
+EVIDENCE_INPUT = 'answer-model-input-evidence-answer-v1'
+EVIDENCE_RESULT = 'answer-model-result-evidence-answer-v1'
+REVIEW_INPUT = 'answer-model-input-answer-review-v1'
 
 
-def message_catalog(messages):
+def message_catalog(messages, *, json_payload=False):
     catalogs = []
     for message in messages:
         content = message.get('content')
-        if message.get('role') != 'user' or not isinstance(content, str) or not content.startswith('资料：\n{'):
+        if message.get('role') != 'user' or not isinstance(content, str):
             continue
-        data, _ = json.JSONDecoder().raw_decode(content[len('资料：\n'):])
+        if content.startswith('资料：\n{'):
+            data, _ = json.JSONDecoder().raw_decode(content[len('资料：\n'):])
+        elif json_payload and content.startswith('{'):
+            data = json.loads(content)
+        else:
+            continue
         if 'evidence_catalog' in data:
             catalogs.append(data['evidence_catalog'])
     require(len(catalogs) <= 1, '同一次模型输入出现多个证据目录')
     return catalogs[0] if catalogs else None
 
 
-def input_messages_match(actual, frozen, compose_version):
+def input_messages_match(actual, frozen, compose_version, *, response_model=None, evidence_answer=False):
     messages = frozen['messages']
     if actual == messages:
         return True
@@ -292,10 +300,59 @@ def input_messages_match(actual, frozen, compose_version):
             errors.append(error)
     if any(actual == _build_json_mode_messages(messages=messages, validation_error=error) for error in errors):
         return True
-    from backend.memory_app.v2.answer_evidence import answer_response_model
-    model = answer_response_model(compose_version, frozen_schema=frozen['response_schema'])
-    return any(actual == _build_prompt_fallback_messages(messages=messages, response_model=model, validation_error=error)
+    if response_model is None:
+        if evidence_answer:
+            from backend.memory_app.v2.evidence_answer import EvidenceAnswerOutput
+            response_model = EvidenceAnswerOutput
+        else:
+            from backend.memory_app.v2.answer_evidence import answer_response_model
+            response_model = answer_response_model(compose_version, frozen_schema=frozen['response_schema'])
+    require(response_model.model_json_schema() == frozen['response_schema'], '实际模型合同与冻结Schema不一致')
+    return any(actual == _build_prompt_fallback_messages(messages=messages, response_model=response_model, validation_error=error)
                for error in errors)
+
+
+def final_answer_candidates(native, frozen, compose_version, *, status):
+    """Keep the historical last-input boundary; a proposal is never final evidence."""
+    requests = [json.loads(turn['request_json']) for group in native for turn in group['turn']
+                if isinstance(turn.get('request_json'), str)]
+    requests = [request for request in requests if request.get('desired_outcome') == 'project.answer'
+                and request.get('policy_versions', {}).get('retrieve') == '@12']
+    if not requests and EVIDENCE_INPUT not in frozen and EVIDENCE_RESULT not in frozen:
+        return [(key, frozen[key]) for key in ('answer-model-input-answer', REVIEW_INPUT) if key in frozen], False
+    require(len(requests) == 1, '新单轮问答缺少唯一冻结Turn请求')
+    request = requests[0]
+    require(request['policy_versions'].get('compose') == compose_version, '新单轮冻结策略与报告策略不一致')
+    from backend.memory_app.answer_proof import (
+        has_evidence_answer_proof, select_answer_input, select_evidence_answer_input,
+    )
+    capsule = frozen.get('answer-continuation-plan-v1')
+    product = frozen.get('product-answer-result-v2')
+    if has_evidence_answer_proof(request, capsule):
+        selected = select_evidence_answer_input(request, product, frozen.get(EVIDENCE_INPUT),
+                                               frozen.get(EVIDENCE_RESULT), capsule)
+        if selected is None or selected is not frozen.get(EVIDENCE_INPUT):
+            return [], False
+        refs = frozen[EVIDENCE_RESULT].get('metadata', {}).get('kernel_receipt_refs', [])
+        completed = [json.loads(event['event_json']) for group in native for event in group['events']]
+        completed = [event for event in completed if event.get('type') == 'model.completed'
+                     and refs and event.get('data', {}).get('evidence_refs') == refs
+                     and event['data'].get('model_call_purpose') == 'primary']
+        require(len(completed) == 1, '单轮冻结结果缺少唯一原生完成回执')
+        model_request = completed[0]['correlation']['model_request_id']
+        require(any(attempt['model_request_id'] == model_request and attempt['terminal_status'] == 'succeeded'
+                    for group in native for attempt in group['attempts']), '单轮完成回执缺少成功物理尝试')
+        return [(EVIDENCE_INPUT, selected)], False
+    review = frozen.get(REVIEW_INPUT)
+    if review is None:
+        return [], status != 'answered'
+    if status == 'answered':
+        selected = select_answer_input(request, product,
+            frozen.get('answer-model-input-answer'), frozen.get('answer-model-result-answer'),
+            review, frozen.get('answer-model-result-answer-review-v1'), capsule=capsule)
+        if selected is not review:
+            return [], False
+    return [(REVIEW_INPUT, review)], False
 
 
 def heldout_question(reader, path, http_rows, wires, compose_version):
@@ -320,8 +377,13 @@ def heldout_question(reader, path, http_rows, wires, compose_version):
     dispatched = {event['correlation']['model_request_id'] for event in events if event['type'] == 'model.attempt.dispatched'}
     require({attempt['model_request_id'] for attempt in attempts} <= dispatched, '原生调用缺少dispatch事件')
     frozen = {item['kind']: item['payload'] for group in native for item in group['immutable']}
-    candidates = [(key, frozen[key], message_catalog(frozen[key]['messages'])) for key in
-                  ('answer-model-input-answer', 'answer-model-input-answer-review-v1') if key in frozen]
+    ask = (row.get('body') or {}).get('turn', {}).get('receipt', {}).get('ask', {})
+    status = ('failed' if row['http_status'] >= 400 or ask.get('error') else
+              'clarify' if any(trace.get('agentic', {}).get('status') == 'clarify' for trace in ask.get('trace', [])) else
+              'answered' if isinstance(ask.get('answer'), str) and ask['answer'].strip() else 'unpublished')
+    inputs, no_final = final_answer_candidates(native, frozen, compose_version, status=status)
+    candidates = [(key, payload, message_catalog(payload['messages'], json_payload=key == EVIDENCE_INPUT))
+                  for key, payload in inputs]
     candidates = [(key, payload, catalog) for key, payload, catalog in candidates if catalog is not None]
     selected, input_state, selected_rank = set(), 'missing', -1
     actual_numbers = {item['completion']['number'] for item in actual_http}
@@ -332,23 +394,22 @@ def heldout_question(reader, path, http_rows, wires, compose_version):
                 and all(item['completion']['turn_id'] == wire['turn_id'] for item in actual_http
                         if item['completion']['number'] == wire['number']), '真实HTTP与请求消息身份不一致')
         messages = reader.read(path.parent.parent / f"messages-{wire['number']}.json")
-        catalog = message_catalog(messages)
-        matches = [rank for rank, (_, frozen_payload, frozen_catalog) in enumerate(candidates)
-                   if catalog == frozen_catalog and input_messages_match(messages, frozen_payload, compose_version)]
+        catalog = message_catalog(messages, json_payload=any(key == EVIDENCE_INPUT for key, _, _ in candidates))
+        matches = [rank for rank, (key, frozen_payload, frozen_catalog) in enumerate(candidates)
+                   if catalog == frozen_catalog and input_messages_match(messages, frozen_payload, compose_version,
+                       evidence_answer=key == EVIDENCE_INPUT)]
         if catalog is not None and matches and max(matches) >= selected_rank:
             require(isinstance(catalog['units'], list), '模型证据目录缺少原话单元')
             selected = {value for unit in catalog['units'] for value in re.findall(r'\bD\d+:\d+\b', unit['text'])}
             input_state, selected_rank = 'recorded', max(matches)
+    if input_state == 'missing' and no_final:
+        input_state = 'not_reached'
     if input_state == 'missing':
         rag_requests = {value['model_request_id'] for key, value in frozen.items() if key.startswith('answer-gap-binding-rag-decision-')}
         terminal = bool(native) and all(any(json.loads(event['event_json'])['type'] in
             {'turn.completed', 'turn.failed', 'turn.cancelled'} for event in group['events']) for group in native)
         if terminal and {attempt['model_request_id'] for attempt in attempts} <= rag_requests:
             input_state = 'not_reached'
-    ask = (row.get('body') or {}).get('turn', {}).get('receipt', {}).get('ask', {})
-    status = ('failed' if row['http_status'] >= 400 or ask.get('error') else
-              'clarify' if any(trace.get('agentic', {}).get('status') == 'clarify' for trace in ask.get('trace', [])) else
-              'answered' if isinstance(ask.get('answer'), str) and ask['answer'].strip() else 'unpublished')
     return {'identity': identity, 'seconds': number(row['seconds']), 'attempts': attempts,
             'input_state': input_state, 'selected': selected, 'status': status, 'source': row['source'],
             'answer': ask.get('answer'), 'answer_ref': path.parent.name + '/' + path.name}

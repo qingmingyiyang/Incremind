@@ -246,6 +246,8 @@ def material_input(query, plan, models, *, local_only):
                'remaining_decisions': _policy(plan)(None, operation='agentic_limits')['decisions'] - state['round']}
     if getattr(_policy(plan), 'explicit_answer_evidence', False):
         context['final_evidence_ids'] = [item['id'] for item in texts if item['final_evidence']]
+    if state.get('fast_path_diagnostics'):
+        context['fast_path_diagnostics'] = state['fast_path_diagnostics']
     proof = {'privacy': privacy, 'candidates': _frozen_candidates(rows), 'skills': deepcopy(skills),
              'history': encode(state['history']), 'profile': encode(plan.get('profile')),
              'tools': tool_availability(query, plan['project_id']),
@@ -371,7 +373,25 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
     if initial_memory is not None:
         query.validate_initial_candidates(project, question, initial_memory, scene=scene)
         raw_probe = getattr(_policy(plan), 'raw_evidence_probe', False)
-        if raw_probe:
+        evidence_probe = getattr(_policy(plan), 'evidence_answer_probe', False)
+        if evidence_probe:
+            from .evidence_fast_path import attempt
+            probe = {**plan, 'chosen': list(plan['chosen'])}
+            raw_attempt = await attempt(query, probe, initial_memory, initial_route)
+            initial_complete = initial_memory
+            if raw_attempt.get('accepted'):
+                plan.update(chosen=probe['chosen'], evidence_source_basis=probe['evidence_source_basis'],
+                            evidence_answer_proof=probe['evidence_answer_proof'],
+                            evidence_retrieved_recognitions=probe['evidence_retrieved_recognitions'])
+                plan['_rag_summary'] = {'version': 1, 'status': 'skipped',
+                                       'stop': 'evidence_answer_accepted', 'steps': []}
+                plan.pop('_rag')
+                return plan, {'usage': {}, 'receipt_ids': [], 'status': 'skipped',
+                              'usage_complete': raw_attempt['usage_complete']}, {'queries': [], 'used': False}
+            if raw_attempt.get('diagnostics'):
+                plan['_rag']['fast_path_diagnostics'] = raw_attempt['diagnostics']
+            assessment = {'status': 'insufficient', 'reason': initial_route['reason']}
+        elif raw_probe:
             from .raw_fast_path import attempt
             # The raw contract has its own exact input budget. Do not require
             # the old dialogue-oriented two-draft fitter to understand it.
@@ -406,12 +426,12 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                               'usage_complete': True}, {'queries': [], 'used': False}
             initial_route['reason'] = 'answer_budget_insufficient'
         # These actual selected windows are displayed to the first real decision.
-        for row in initial_memory['candidates'] if raw_probe else plan['chosen']:
+        for row in initial_memory['candidates'] if raw_probe or evidence_probe else plan['chosen']:
             _remember_observed(plan, pool, row)
             initial_seed_ids.add(candidate_id(row))
         plan['_rag']['observed'] = list(pool.values())
         plan['_rag']['catalog'] = _catalog(list(pool.values()), limits['results'])
-        plan['_rag']['depths'] = ['summary', 'body', 'original'] if raw_probe else ['summary', 'body']
+        plan['_rag']['depths'] = ['summary', 'body', 'original'] if raw_probe or evidence_probe else ['summary', 'body']
     status, stop = 'completed', 'round_limit'
     for number in range(1, limits['decisions'] + 1):
         _checkpoint()
