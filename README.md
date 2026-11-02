@@ -25,11 +25,11 @@ Give it the material you choose. It organizes and archives it, extracts what add
 
 ## Watch the introduction
 
-A 2:45 walkthrough of adding material, confirming new insights, and asking a follow-up question. Chinese narration with Chinese and English subtitles · 1080p60.
+A 65-second introduction to Incremind, an incremental brain: add material, build layered memory, confirm insights, answer with sources, and connect external agents. Chinese visuals with English on-screen captions · 1080p30.
 
-https://github.com/user-attachments/assets/8f51499d-bbfb-47a2-9ab0-91193313f1f0
+[![Incremind incremental-brain promotional film](docs/images/incremind-promo-v7.png)](https://github.com/qingmingyiyang/Incremind/releases/download/promo-v7-20261103-r2/incremind-promo-v7-r2.mp4)
 
-[Download video](https://github.com/user-attachments/assets/8f51499d-bbfb-47a2-9ab0-91193313f1f0) · [English subtitles (SRT)](docs/media/incremind-intro.en.srt) · [English subtitles (VTT)](docs/media/incremind-intro.en.vtt)
+[Download video](https://github.com/qingmingyiyang/Incremind/releases/download/promo-v7-20261103-r2/incremind-promo-v7-r2.mp4) · [No-music version with sound effects](https://github.com/qingmingyiyang/Incremind/releases/download/promo-v7-20261103-r2/incremind-promo-v7-r2-nobgm.mp4) · [Video release](https://github.com/qingmingyiyang/Incremind/releases/tag/promo-v7-20261103-r2)
 
 ## Why I am building it
 
