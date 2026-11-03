@@ -27,7 +27,7 @@
 
 约 65 秒了解积微增量大脑：资料输入、分层提炼、人工确认、带出处回答与外部 Agent 接入。中文画面与英文字幕 · 1080p30。
 
-[![积微增量大脑宣传片](docs/images/incremind-promo-v7.png)](https://github.com/qingmingyiyang/Incremind/releases/download/promo-v7-20261103-r2/incremind-promo-v7-r2.mp4)
+https://github.com/user-attachments/assets/6eaa6736-ee29-4c55-b72c-46b52b47d058
 
 [下载配乐版](https://github.com/qingmingyiyang/Incremind/releases/download/promo-v7-20261103-r2/incremind-promo-v7-r2.mp4) · [下载无配乐版，保留拟音](https://github.com/qingmingyiyang/Incremind/releases/download/promo-v7-20261103-r2/incremind-promo-v7-r2-nobgm.mp4) · [视频发布页](https://github.com/qingmingyiyang/Incremind/releases/tag/promo-v7-20261103-r2)
 
