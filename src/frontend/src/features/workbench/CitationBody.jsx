@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
+import { AudioEvidenceClip } from '../../shared/ui/AudioEvidenceClip';
 
-// Locator offsets are Python Unicode coordinates; never search for a replacement.
-export function CitationBody({ text, coordinateSpace, citation }) {
+// Locator 使用 Python Unicode 坐标，按原文核验后才显示窗口与播放入口。
+export function CitationBody({ text, coordinateSpace, citation, projectId, sourceId, scopeKey }) {
   const mark = useRef(null), points = Array.from(text);
   const windows = citation.locator?.windows || [];
   let end = 0;
@@ -13,7 +14,10 @@ export function CitationBody({ text, coordinateSpace, citation }) {
   const parts = []; end = 0;
   if (valid) for (const [index, window] of windows.entries()) {
     parts.push(points.slice(end, window.start).join(''));
-    parts.push(<mark key={index} ref={index === 0 ? mark : null}>{points.slice(window.start, window.end).join('')}</mark>);
+    parts.push(<Fragment key={JSON.stringify([window.start, window.end, citation.quote])}>
+      <AudioEvidenceClip projectId={projectId} sourceId={sourceId} seconds={window.seconds} scopeKey={scopeKey}/>
+      <mark ref={index === 0 ? mark : null}>{points.slice(window.start, window.end).join('')}</mark>
+    </Fragment>);
     end = window.end;
   }
   parts.push(points.slice(end).join(''));

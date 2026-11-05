@@ -63,7 +63,7 @@ def ensure_document_experience(documents, service, project_id, document_id, *, p
         except ProductDraftDependencyError as error:
             raise DocumentRecognitionError(str(error)) from error
         provenance = ({'kind': 'model_generated_artifact', 'actor': 'system', 'source_refs': [
-            {'type': 'turn', 'id': draft.revisions['product_turn_id']}, source_ref]} if draft else
+            {'type': 'turn', 'id': draft.request['turn_id']}, source_ref]} if draft else
             {"kind": 'user_statement' if copied is not None else "workspace_confirmed_document",
              "actor": "local-user", "source_refs": [source_ref]})
         service.stage_experience(scope=scope, content=markdown, experience_id=experience_id,

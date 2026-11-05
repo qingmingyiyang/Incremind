@@ -279,11 +279,13 @@ class HttpReranker:
     client: JsonHttpClient
     endpoint: str
     model: str
+    max_tokens_per_doc: int | None = None
 
     def rerank(self, *, query: str, candidates: Sequence[Mapping[str, object]]) -> Mapping[str, float]:
         response = self.client.post_json(
             endpoint=self.endpoint,
-            payload={"model": self.model, "query": query, "documents": [candidate["content"] for candidate in candidates]},
+            payload={"model": self.model, "query": query, "documents": [candidate["content"] for candidate in candidates],
+                **({'max_tokens_per_doc': self.max_tokens_per_doc} if self.max_tokens_per_doc is not None else {})},
         )
         raw_scores = response.get("results")
         if not isinstance(raw_scores, Sequence) or isinstance(raw_scores, (str, bytes)):

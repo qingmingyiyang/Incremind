@@ -107,7 +107,8 @@ def create_app(
     if legacy_container is not None and Path(legacy_container.root_dir).resolve() != root:
         raise RuntimeError("legacy_recognition_runtime_root_mismatch")
     from .cache_sources import prepare_sources
-    service = recognition_service(records, cache_invalidation=prepare_sources)
+    from functools import partial
+    service = recognition_service(records, cache_invalidation=partial(prepare_sources, source_owner=records))
     from .v2.devices import DeviceRegistry
     device_registry = server_context.registry if server_context is not None else DeviceRegistry((layout.server_root or root) / 'server')
     device_auth = server_context.auth if server_context is not None else ServerDeviceAuth(device_registry)
@@ -124,7 +125,21 @@ def create_app(
         internal_provider = device_auth.internal_key_for
     server_secrets = getattr(getattr(application.state,'container',None),'secret_store',None) if server_context is not None else None
     models = model_configuration or ModelConfiguration(records, root, secrets=server_secrets, internal_local_key_provider=internal_provider,
-        local_models_root=server_context.resources.model_root if server_context is not None else None)
+        local_models_root=server_context.resources.model_root if server_context is not None else None,
+        server_model_access=server_context.models.access_for(user_id, root) if server_context is not None else None,
+        server_model_balances=server_context.model_balances if server_context is not None else None)
+    if server_context is not None:
+        if not isinstance(models, ModelConfiguration) or Path(models.root).resolve() != root:
+            raise RuntimeError('server_model_owner_invalid')
+        models.server_model_access = server_context.models.access_for(user_id, root)
+        models.server_model_balances = server_context.model_balances
+    if isinstance(models, ModelConfiguration):
+        if models.records is not records:
+            raise RuntimeError('provider_connection_owner_invalid')
+        from backend.providers import ProviderRegistry
+        providers = ProviderRegistry(root, connection_owner=models)
+        models.bind_provider_connections(providers)
+        application.state.memory_provider_registry = providers
     from .v2.embedding_settings import EmbeddingSettings, vector_policy
     embeddings = EmbeddingSettings(records, getattr(models, '_local_models_root', root / 'data' / 'models'),
         shared=server_context is not None, device=getattr(server_context, 'vector_device', 'cpu'),
@@ -158,6 +173,7 @@ def create_app(
     install_local_model_routes(
         application, runtime_root=root,
         generation_allowed=getattr(models, "local_generation_allowed", lambda: False),
+        generation_selected=getattr(models, "local_generation_selected", None),
         embedding_policy_reader=vector_policy,
     )
     ErasureService(records, root).recover_pending()
@@ -182,7 +198,10 @@ def create_app(
         async def local_origin_guard(request: Request, call_next):
             if request.url.path.startswith((_PREFIX, "/api/workspace/v1", "/api/v2")) and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
                 try:
-                    maximum = (UPLOAD_REQUEST_BYTES if request.url.path.startswith("/api/workspace/v1/items/file") or request.url.path in {"/api/v2/workbench/files", "/api/v2/workbench/share"}
+                    transfers = getattr(application.state, 'memory_backup_transfers', None)
+                    backup_limit = transfers.body_limit(request) if transfers is not None else None
+                    maximum = (backup_limit if backup_limit is not None else
+                               UPLOAD_REQUEST_BYTES if request.url.path.startswith("/api/workspace/v1/items/file") or request.url.path in {"/api/v2/workbench/files", "/api/v2/workbench/share"}
                                else _recognition_body_limit(request) if request.url.path.startswith(_PREFIX)
                                else 128 * 1024)
                     if int(request.headers.get("content-length", "0")) > maximum:
@@ -280,7 +299,7 @@ def _router(service: RecognitionService, models: ModelConfiguration, documents: 
             return operation(*args, **kwargs)
 
     install_restructure_routes(router, service.records, mutate=mutate, read_body=_body,
-                               scope_for=_scope, revision=_revision, text=_text, service=service, models=models)
+                               scope_for=_scope, revision=_revision, text=_text, service=service, models=models, documents=documents)
 
     install_graph_view_routes(router, service.records, mutate=mutate, read_body=_body, scope_for=_scope)
 
@@ -349,6 +368,9 @@ def _router(service: RecognitionService, models: ModelConfiguration, documents: 
         public = models.public().get(purpose)
         if not public or not public.get("configured"):
             return {"purpose": purpose, "status": "unconfigured", "message": "模型尚未配置，未执行请求。"}
+        require_wire = getattr(models, 'require_model_wire_owner', None)
+        if callable(require_wire):
+            require_wire(purpose, None)
         if purpose != "generation":
             if not hasattr(models, "snapshot"):
                 return {"purpose": purpose, "status": "not_verified", "message": "注入服务未提供模型连接。"}
@@ -799,7 +821,8 @@ async def _recognition_error(_request: Request, error: RecognitionError) -> JSON
 
 
 async def _model_error(_request: Request, error: ModelConfigurationError) -> JSONResponse:
-    return _error(409, str(error))
+    code = str(error)
+    return _error(403 if code in {'server_model_configuration_readonly', 'server_model_wire_owner_required'} else 409, code)
 
 
 async def _server_secret_error(_request: Request, error: ServerSecretStoreError) -> JSONResponse:
@@ -829,4 +852,5 @@ if _os.environ.get('CHRIPTMAS_DEPLOY') == 'server':
     _server_layout = resolve_deployment(Path(__file__).resolve().parents[3] / 'runtime')
     app = LazyApplication(lambda: create_server_app(layout=_server_layout))
 else:
-    app = create_app()
+    from .runtime_restore_host import RuntimeRestoreHost
+    app = RuntimeRestoreHost(root=_runtime_root(), factory=create_app)

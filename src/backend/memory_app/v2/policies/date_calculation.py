@@ -22,9 +22,19 @@ _DAY_OFFSETS = {'last night': -1, 'yesterday': -1, 'day before yesterday': -2,
                 'tomorrow': 1, 'day after tomorrow': 2,
                 '前天': -2, '昨天': -1, '昨日': -1, '昨晚': -1, '明天': 1, '后天': 2}
 _DIGITS = dict(zip('一二两三四五六七八九', (1, 2, 2, 3, 4, 5, 6, 7, 8, 9)))
+_ENGLISH_DAYS = dict(zip(('one', 'two', 'three', 'four', 'five', 'six', 'seven',
+    'eight', 'nine', 'ten', 'eleven', 'twelve'), range(1, 13)))
+_ENGLISH_DAY_COUNT = '(?:' + '|'.join(_ENGLISH_DAYS) + ')'
+_RELATIVE_V3 = re.compile(_RELATIVE.pattern + rf'|(?<![\w-])(?:{_ENGLISH_DAY_COUNT} days? ago|'
+    rf'{_ENGLISH_DAY_COUNT} days? later|in {_ENGLISH_DAY_COUNT} days?)\b', re.I)
+_ENGLISH_COUNT_PREFIX = re.compile(r'\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|'
+    r'thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|'
+    r'seventy|eighty|ninety|hundred|thousand)\s+(?:and\s+)?$', re.I)
 
 
-def _number(value):
+def _number(value, *, calendar_version=1):
+    if calendar_version == 3 and value.lower() in _ENGLISH_DAYS:
+        return _ENGLISH_DAYS[value.lower()]
     if value.isascii() and value.isdigit():
         return int(value)
     if value in _DIGITS:
@@ -59,7 +69,7 @@ def _anchor(text):
 
 
 def _calendar_version(value):
-    if type(value) is not int or value not in (1, 2):
+    if type(value) is not int or value not in (1, 2, 3):
         raise ValueError('unsupported_date_calendar_version')
 
 
@@ -70,7 +80,7 @@ def _calculate(anchor, expression, *, calendar_version=1):
         direction = -1 if value in {'last week', '上周'} else 1
         start = anchor - timedelta(days=anchor.weekday()) + timedelta(weeks=direction)
         end = start + timedelta(days=6)
-        if calendar_version == 2:
+        if calendar_version in (2, 3):
             rolling_start = anchor + timedelta(days=-7 if direction < 0 else 1)
             rolling_end = anchor + timedelta(days=-1 if direction < 0 else 7)
             week = '上一' if direction < 0 else '下一'
@@ -90,8 +100,9 @@ def _calculate(anchor, expression, *, calendar_version=1):
         return f'{start.isoformat()} 至 {end.isoformat()}（日历月约定，不能确定其中某一天）'
     offset = _DAY_OFFSETS.get(value)
     if offset is None:
-        number = re.search(r'\d+|[一二两三四五六七八九十]+', value)
-        count = _number(number.group()) if number else None
+        number = re.search(r'\d+|[一二两三四五六七八九十]+' +
+            (rf'|\b{_ENGLISH_DAY_COUNT}\b' if calendar_version == 3 else ''), value)
+        count = _number(number.group(), calendar_version=calendar_version) if number else None
         if count is None:
             return None
         offset = -count if re.search(r'ago|before|前', value) else count
@@ -150,7 +161,7 @@ def date_provenance(candidate, *, quote_version=3, calendar_version=2):
             anchor_kind = 'frozen_title' if anchor else 'unavailable'
         for segment in re.finditer(r'.+?(?:(?<=[.!?。！？])\s+|$)', line):
             sentence = segment.group()
-            relative = list(_RELATIVE.finditer(sentence))
+            relative = list((_RELATIVE_V3 if calendar_version == 3 else _RELATIVE).finditer(sentence))
             if not relative:
                 continue
             local_anchor, local_text, local_kind = anchor, anchor_text, anchor_kind
@@ -162,6 +173,10 @@ def date_provenance(candidate, *, quote_version=3, calendar_version=2):
             elif _DATE.search(sentence):
                 local_anchor, local_text, local_kind = None, '句内另有日期，参照关系未确定', 'unavailable'
             for match in relative:
+                # 有限一至十二语法不截取更长英文数词的尾部，未知数词保持不计算。
+                if (calendar_version == 3 and re.match(r'[A-Za-z]', match.group())
+                        and _ENGLISH_COUNT_PREFIX.search(sentence[:match.start()])):
+                    continue
                 # 嵌套引语的说话日期未知，不能把当前记录日期套给历史引语。
                 absolute = line_start + segment.start() + match.start()
                 quoted = any(start <= absolute < end for start, end in quotes) or bool(

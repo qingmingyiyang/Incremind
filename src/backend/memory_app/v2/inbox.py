@@ -82,13 +82,13 @@ def install_inbox_routes(router, *, records, service, read):
                     raise HTTPException(409, 'insight_not_active')
                 enlisted = TransactionRecords(tx)
                 writer = recognition_service(enlisted, cache_invalidation=service.cache_invalidation,
-                    product_draft_validator=service.product_draft_validator)
+                    product_draft_validator=service.product_draft_validator, source_owner=records)
                 from .insights import source_experiences
                 source_rows = source_experiences(tx, scope, original.payload.get('source_experience_ids', []),
                     original.payload.get('source_recognition_ids', []),
                     experience_revisions=original.payload.get('source_experience_revisions'),
-                    recognition_revisions=original.payload.get('source_recognition_revisions'))
-                authority = SourceEgressService(enlisted)
+                    recognition_revisions=original.payload.get('source_recognition_revisions'), source_owner=records)
+                authority = SourceEgressService(records, reader=tx)
                 snapshot = authority.snapshot(scope, [{'type': 'experience', 'id': row.object_id,
                     'revision': row.revision} for row in source_rows])
                 if any(not node['effective_purposes'] for node in snapshot['nodes']):

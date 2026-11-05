@@ -18,7 +18,7 @@ it('saves and clears fast choice with independent and parent revisions', async (
   fireEvent.click(screen.getByRole('button', { name: '生成' }));
   expect(screen.getByLabelText('快模型')).toHaveValue('quick');
   fireEvent.change(screen.getByLabelText('快模型'), { target: { value: '' } });
-  fireEvent.click(screen.getByRole('button', { name: '保存快模型' })); await settle();
+  fireEvent.click(screen.getByRole('button', { name: '保存', exact: true })); await settle();
   expect(service.saveFastModel).toHaveBeenCalledExactlyOnceWith({ model: null, expectedRevision: 4,
     expectedGenerationRevision: 3, expectedModeRevision: 7 });
 });

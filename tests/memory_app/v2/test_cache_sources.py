@@ -1,6 +1,7 @@
 """Write-side invalidation follows real scoped origins and current authority."""
 import sqlite3
 import json
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -140,20 +141,21 @@ def test_real_inbox_writer_inherits_application_cache_dependency(do_env, monkeyp
         records=app.recognition_records, documents=app.recognition_documents, domains=app.workspace_domains)
     model.handler = lambda *_args, **_kwargs: json.dumps({'title': '原件', 'summary': '新方法',
         'facts': [], 'topics': [], 'todos': [], 'uncertainties': [], 'people': [], 'dates': [], 'suggestions': []})
-    env.service.cache_invalidation = prepare_sources
+    hook = partial(prepare_sources, source_owner=env.records)
+    env.service.cache_invalidation = hook
     old, _, _, _ = seed(env, 'beta')
     observed = []
     original = RecognitionService.__init__
     def construct(writer, *args, **kwargs):
         original(writer, *args, **kwargs)
         observed.append(writer)
-    # Observation delegates the actual constructor and all domain operations.
+    # 观察调用继续委托原构造函数和领域操作。
     monkeypatch.setattr(RecognitionService, '__init__', construct)
     response = confirm_to(env, old, 'beta')
     assert response.status_code == 200, response.text
     writers = [writer for writer in observed if isinstance(writer.records, TransactionRecords)]
     assert len(writers) == 1
-    assert writers[0].cache_invalidation is prepare_sources
+    assert writers[0].cache_invalidation is hook
     copied = env.records.read('recognitions', response.json()['id'])
     assert copied.payload['state'] == 'active' and copied.payload['scope']['project_id'] == 'beta'
     origin = env.records.read('v2_experience_origins', copied.payload['source_experience_ids'][0])

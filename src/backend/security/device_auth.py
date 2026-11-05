@@ -95,9 +95,10 @@ class DeviceAuthenticationMiddleware:
         if scope['type'] == 'http':
             if method in {'GET', 'HEAD'} and path == '/api/health':
                 return await JSONResponse({'status': 'ok'}, headers={'Cache-Control': 'no-store'})(scope, receive, send)
-            public = method in {'GET', 'HEAD'} and (path in {'/', '/pair'}
+            public = method in {'GET', 'HEAD'} and (path in {'/', '/pair', '/login'}
                 or path in getattr(self.application.state, 'server_static_paths', ()))
             public = public or method == 'POST' and path == '/api/v2/devices/exchange'
+            public = public or method == 'POST' and path == '/api/v2/auth/login'
             if method in {'POST', 'PUT', 'PATCH', 'DELETE'} and not same_origin(connection):
                 return await JSONResponse({'detail': 'same_origin_required'}, status_code=403)(scope, receive, send)
             if public:

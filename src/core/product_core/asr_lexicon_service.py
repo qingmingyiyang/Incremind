@@ -12,6 +12,7 @@ from core.product_core.realtime_asr_lexicon import (
 )
 from core.storage_provider import JsonObjectStore
 from core.storage_provider.sqlite_uow import begin_read
+from .asr_lexicon_changes import apply_operations, LexiconChangeError
 
 MAX_IMPORT_BYTES = 256 * 1024
 _COLLECTIONS = ("realtime_asr_lexicon_state", "realtime_asr_lexicon_terms", "realtime_asr_lexicon_candidates")
@@ -112,6 +113,39 @@ class AsrLexiconService:
                 tx.commit()
             return {"revision": revision, "preview": preview, "imported_count": len(entries), **counts,
                     "terms": [_term_public(row) for row in proposed]}
+
+    def change_terms(self, *, operations, expected_revision, preview=True):
+        if type(expected_revision) is not int or expected_revision < 0 or type(preview) is not bool:
+            raise AsrLexiconError('invalid_asr_lexicon_changes')
+        with self.records.begin() as tx:
+            domain = self._domain(tx)
+            revision = domain.current_revision()
+            if revision != expected_revision:
+                raise AsrLexiconError('asr_lexicon_revision_conflict')
+            proposed = RealtimeAsrLexicon(_MemoryObjects(domain._store))
+            try:
+                changes = apply_operations(proposed, operations)
+                terms = [_term_public(row) for row in proposed.list_terms()]
+                if not preview:
+                    self._migrate(tx)
+                    domain = self._domain(tx)
+                    actual = apply_operations(domain, operations)
+                    if actual != changes:
+                        raise AsrLexiconError('asr_lexicon_preview_changed')
+                    proposed, revision = domain, domain.current_revision()
+                    terms = [_term_public(row) for row in domain.list_terms()]
+                    tx.commit()
+            except LexiconChangeError as error:
+                raise AsrLexiconError(str(error)) from error
+            except RealtimeAsrLexiconError as error:
+                if str(error) == 'super lexicon term limit exceeded':
+                    raise AsrLexiconError('asr_lexicon_capacity_exceeded') from error
+                raise AsrLexiconError('invalid_asr_lexicon_changes') from error
+            except UnicodeEncodeError as error:
+                raise AsrLexiconError('invalid_asr_lexicon_changes') from error
+            return {'revision': revision, 'preview': preview, 'maintenance': True, 'changes': changes,
+                'changed_count': sum(change['before'] != change['after'] for change in changes),
+                'terms': terms}
 
     def _read_domain(self, method, *args, **kwargs):
         with begin_read(self.records) as tx:

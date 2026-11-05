@@ -194,6 +194,7 @@ def _projection_plans(project_id: str, run: Mapping[str, object] | None, fallbac
     result: list[Mapping[str, object]] = []
     for plan in values:
         cluster_ref = getattr(plan, "expert_cluster_ref", None)
+        effective = dispatch_store.effective_snapshot(plan.plan_id,project_id=project_id)
         result.append({
             "plan_id": _string_attr(plan, "plan_id"),
             "status": _string_attr(plan, "status"),
@@ -203,6 +204,9 @@ def _projection_plans(project_id: str, run: Mapping[str, object] | None, fallbac
             "max_concurrent_assignments": _int_attr(plan, "max_concurrent_assignments", 0),
             "cluster_id": parse_canonical_dispatch_ref(cluster_ref, "cluster") if cluster_ref else None,
         })
+        if effective.steer_input_refs:
+            result[-1].update(status=effective.phase,assignment_ids=effective.assignment_ids,
+                effective_revision=effective.revision,effective_generation=effective.generation)
     return tuple(result)
 
 

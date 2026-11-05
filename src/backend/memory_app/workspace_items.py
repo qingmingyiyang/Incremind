@@ -68,16 +68,28 @@ class WorkspaceItems:
                 tx.commit()
             return {**payload, "revision": updated.revision}
 
-    def create(self, project_id: str, kind: str, title: str, source_text: str, **extra):
-        item_id = "workspace-" + uuid4().hex
+    def create(self, project_id: str, kind: str, title: str, source_text: str, *, stage_created=None, created_item_id=None, **extra):
+        from .route_original_metadata import route_original_id
+        if created_item_id is not None:
+            route_original_id(created_item_id)
+            if stage_created is None:
+                raise ValueError('route_original_creation_requires_binding')
+        item_id = created_item_id or "workspace-" + uuid4().hex
         payload = dict(id=item_id, project_id=project_id, input_kind=kind, title=title,
                        source_text=source_text, status="staged", draft=None, error=None,
                        document_id=None, created_at=_now(), **extra)
-        return self.create_upload(payload)
+        return self.create_upload(payload, stage_created=stage_created)
 
-    def create_upload(self, payload, *, images=None):
+    def create_upload(self, payload, *, images=None, stage_created=None):
         """Create an original and its ordered upload sidecar in one owner UOW."""
         item_id, project_id = payload['id'], payload['project_id']
+        from .route_original_metadata import PREFIX, route_original_id
+        if item_id.startswith(PREFIX):
+            route_original_id(item_id)
+            if stage_created is None:
+                raise ValueError('route_original_creation_requires_binding')
+        if stage_created is not None and not callable(stage_created):
+            raise TypeError('item_stage_created_must_be_callable')
         from .v2.source_sections import create_section_owner
         with self.records.begin() as tx:
             created = tx.put(_COLLECTION, item_id, payload, expected_revision=0)
@@ -87,6 +99,11 @@ class WorkspaceItems:
             if images is not None:
                 tx.put('v2_image_groups', item_id, {'item_id': item_id,
                     'project_id': project_id, 'images': images}, expected_revision=0)
+            if stage_created is not None:
+                stage_created(tx, created)
+            if item_id.startswith(PREFIX):
+                from .route_correction_originals import validate_staged_binding
+                validate_staged_binding(TransactionRecords(tx), created, records=self.records)
             tx.commit()
         return {**payload, "revision": created.revision}
 

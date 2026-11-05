@@ -14,9 +14,11 @@ from uuid import uuid4
 
 FACTS = 'record_lineage_facts'
 HEAD_COLLECTIONS = MappingProxyType({
+    'v2_projects': 'record_lineage_projects',
     'workspace_items': 'record_lineage_workspace_items',
     'recognition_experiences': 'record_lineage_experiences',
     'recognitions': 'record_lineage_recognitions',
+    'recognition_candidates': 'record_lineage_recognition_candidates',
     'documents': 'record_lineage_documents',
     'document_revisions': 'record_lineage_document_revisions',
     'document_markdown': 'record_lineage_document_markdown',
@@ -33,9 +35,11 @@ HEAD_COLLECTIONS = MappingProxyType({
     'v2_external_agent_deliveries': 'record_lineage_external_deliveries',
 })
 WITNESS_COLLECTIONS = MappingProxyType({
+    'v2_projects': 'record_lineage_first_projects',
     'workspace_items': 'record_lineage_first_workspace_items',
     'recognition_experiences': 'record_lineage_first_experiences',
     'recognitions': 'record_lineage_first_recognitions',
+    'recognition_candidates': 'record_lineage_first_recognition_candidates',
     'documents': 'record_lineage_first_documents',
     'document_revisions': 'record_lineage_first_document_revisions',
     'document_markdown': 'record_lineage_first_document_markdown',
@@ -171,4 +175,17 @@ def verify_lineage(reader, identity):
         _invalid()
     head = _head(reader, collection, object_id)
     if head is None or head.payload['fact_id'] != identity['fact_id']:
+        _invalid()
+
+
+def verify_first_created(reader, identity, *, collection, object_id):
+    """Require the first real insertion to remain the current incarnation."""
+    if (not isinstance(identity, Mapping) or identity.get('collection') != collection
+            or identity.get('object_id') != object_id):
+        _invalid()
+    verify_lineage(reader, identity)
+    fact = reader.read(FACTS, identity['fact_id'])
+    witness = reader.read(WITNESS_COLLECTIONS[collection], object_id)
+    if (fact is None or fact.payload.get('origin') != 'created' or fact.payload.get('observed_revision') != 1
+            or witness is None or witness.payload.get('first_fact_id') != identity['fact_id']):
         _invalid()

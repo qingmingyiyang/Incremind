@@ -69,23 +69,27 @@ def _cities():
 class NudgeService:
     """每个空间共享实际送达日额度，持久写入都由短事务和 CAS 负责。"""
     def __init__(self, records, *, library, query, models, signals, reminders,
-                 now, local_timezone, policy_version=None):
+                 now, local_timezone, policy_version=None, manual_reminders=False):
         self.records, self.library, self.query, self.models = records, library, query, models
         self.signals, self.reminders = signals, reminders
         self.now, self.local_timezone, self.policy_version = now, local_timezone, policy_version
+        self.manual_reminders = manual_reminders
 
     def _policy(self):
         return get('nudge', version=self.policy_version)
 
     def run(self):
         """原每日调度器的同步回调，只消费当前空间已选择的策略。"""
+        manual_only = False
         if self.policy_version is None:
             try:
                 version('nudge')
             except ValueError as error:
                 if str(error) != 'unknown_policy_interface':
                     raise
-                return
+                if not self.manual_reminders:
+                    return
+                manual_only = True
         projects = {_project(row.object_id) for row in self.records.list('v2_projects')}
         # 用户提醒不建工作项或整理稿；旧事实与提醒事实都参与只读项目发现。
         for collection in ('workspace_items', 'documents', 'recognitions', 'v2_reminders'):
@@ -99,7 +103,10 @@ class NudgeService:
 
         async def consume():
             for project in sorted(projects):
-                await self.deliver(project)
+                if manual_only:
+                    await self.deliver_reminders(project)
+                else:
+                    await self.deliver(project)
 
         # DailyJobs 在线程执行同步回调；本轮沿同一个事件循环串行复用消费服务。
         return asyncio.run(consume())
@@ -412,6 +419,25 @@ class NudgeService:
                 self._failed(item['id'])
             raise
         return self.list(project)
+
+    async def deliver_reminders(self, project_id):
+        from .policies import override
+        project = _project(project_id)
+        if is_private_project(self.records, project):
+            return []
+        # 仅用户明确定时的事实采用原选择规则，不启用日期、城市或模型管线。
+        with override(nudge='@1'):
+            now = self.now()
+            reserved = self._reserve(project, [{**row, 'kind': 'reminder'}
+                for row in self.reminders.due(project)], now=now)
+            try:
+                for item in reserved:
+                    self._finish(item, await self._render(item, now=now))
+            except BaseException:
+                for item in reserved:
+                    self._failed(item['id'])
+                raise
+            return self.list(project)
 
     def feedback(self, identity, *, project_id, action, expected_revision):
         project, identity = _project(project_id), _project(identity)

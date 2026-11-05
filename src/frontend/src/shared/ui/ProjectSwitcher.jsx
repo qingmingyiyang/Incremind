@@ -1,13 +1,14 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import './shell.css';
-export function ProjectSwitcher({ projects = [], value, onChange }) {
+import { projectScopeKind, projectScopeKey, projectScopeLabel } from '../lib/projectScope';
+export function ProjectSwitcher({ projects = [], value, scopeKind = 'personal', onChange }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const trigger = useRef(null);
   const menu = useRef(null);
-  const current = projects.find(project => project.id === value);
-  const name = current?.name || value || '收件箱';
+  const current = projects.find(project => project.id === value && projectScopeKind(project) === scopeKind);
+  const name = current ? projectScopeLabel(current, projects) : value || '收件箱';
   useLayoutEffect(() => {
     if (!open) return;
     const button = trigger.current, panel = menu.current;
@@ -87,7 +88,7 @@ export function ProjectSwitcher({ projects = [], value, onChange }) {
   return <div className="ui-project-switcher" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
     <button type="button" ref={trigger} title={name} aria-label="切换项目" aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen(!open)} onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true); } }}><span className="ui-project-dot"/><span className="ui-project-name">{name}</span><Icon name="chevron-down"/></button>
     {open && <div ref={menu} role="listbox" aria-label="项目" id={id} className="ui-project-options" onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const options = [...event.currentTarget.querySelectorAll('[role=option]')]; const index = options.indexOf(document.activeElement); options[(index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus(); } }}>
-      {projects.map(project => <button type="button" role="option" aria-selected={project.id === value} key={project.id} onClick={() => { onChange?.(project.id); close(); }}>{project.name}</button>)}
+      {projects.map(project => <button type="button" role="option" aria-selected={project.id === value && projectScopeKind(project) === scopeKind} key={projectScopeKey(project)} onClick={() => { onChange?.(project.id, project); close(); }}>{projectScopeLabel(project, projects)}</button>)}
     </div>}
   </div>;
 }

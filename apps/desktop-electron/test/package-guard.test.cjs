@@ -4,6 +4,16 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
+test("SQLite guard accepts only the selected fixed release branches", () => {
+  const { assertSqliteVersion } = require("../scripts/package-guard.cjs");
+  for (const version of ["3.50.7", "3.50.8", "3.51.3", "3.54.1"]) {
+    assert.doesNotThrow(() => assertSqliteVersion(version));
+  }
+  for (const version of ["3.44.6", "3.49.1", "3.50.6", "3.51.0", "3.51.2", "invalid", "3.54.1\n3.49.1"]) {
+    assert.throws(() => assertSqliteVersion(version), /package_sqlite_version_unsupported/);
+  }
+});
+
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "chriptmas-package-guard-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

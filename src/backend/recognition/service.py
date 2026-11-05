@@ -247,13 +247,23 @@ class RecognitionService:
     """
 
     def __init__(self, records: SQLiteStructuredRecordStore, *, cache_invalidation=None,
-                 product_draft_validator=None, _external_input_validator=None) -> None:
+                 product_draft_validator=None, _external_input_validator=None,
+                 _inspiration_validator=None, _publication_observer=None, _archive_source_validator=None) -> None:
         if product_draft_validator is not None and not callable(product_draft_validator):
             raise ValueError('product draft validator must be callable')
+        if _inspiration_validator is not None and not callable(_inspiration_validator):
+            raise ValueError('inspiration validator must be callable')
+        if _publication_observer is not None and not callable(_publication_observer):
+            raise ValueError('publication observer must be callable')
+        if _archive_source_validator is not None and not callable(_archive_source_validator):
+            raise ValueError('archive source validator must be callable')
         self._records = records
         self.cache_invalidation = cache_invalidation
         self.product_draft_validator = product_draft_validator
         self._external_input_validator = _external_input_validator
+        self._inspiration_validator = _inspiration_validator
+        self._publication_observer = _publication_observer
+        self._archive_source_validator = _archive_source_validator
 
     def _prepare_cache_invalidation(self, uow, scope, identities):
         if self.cache_invalidation is not None:
@@ -359,6 +369,35 @@ class RecognitionService:
             self._cascade_invalidate(uow, scope, changed_experience_ids={experience_id})
             apply_cache()
             uow.commit()
+
+    def invalidate_document_dependents_in_uow(self, uow, *, scope: WorkScope,
+                                             document_id: str, to_revision: int) -> tuple[str, ...]:
+        # 文稿恢复只使依赖旧正文的认识待复核，原经历与历史修订继续保留。
+        if type(to_revision) is not int or to_revision < 2:
+            raise RecognitionConflict('document revision is invalid')
+        document = uow.read('documents', document_id)
+        if (document is None or document.payload.get('project_id') != scope.project_id
+                or document.payload.get('revision') != to_revision):
+            raise RecognitionConflict('document revision changed')
+        experiences = set()
+        for record in uow.list(_EXPERIENCES):
+            payload = record.payload
+            if payload.get('scope') != _scope(scope) or payload.get('state') != 'active':
+                continue
+            provenance = payload.get('provenance')
+            refs = provenance.get('source_refs', ()) if isinstance(provenance, Mapping) else ()
+            if not isinstance(refs, (list, tuple)):
+                continue
+            if any(isinstance(ref, Mapping) and ref.get('type') == 'document'
+                   and ref.get('id') == document_id and type(ref.get('revision')) is int
+                   and 1 <= ref['revision'] < to_revision for ref in refs):
+                experiences.add(record.object_id)
+        if experiences:
+            apply_cache = self._prepare_cache_invalidation(uow, scope,
+                tuple(('experience', identity) for identity in sorted(experiences)))
+            self._cascade_invalidate(uow, scope, changed_experience_ids=experiences)
+            apply_cache()
+        return tuple(sorted(experiences))
 
     def propose(
         self,
@@ -510,6 +549,11 @@ class RecognitionService:
                 raise RecognitionConflict("candidate has already been merged")
             if candidate.payload["state"] != "pending":
                 raise RecognitionConflict("only a pending candidate can be published")
+            if self._inspiration_validator is not None:
+                additional = self._inspiration_validator(uow, scope, candidate)
+                if additional:
+                    self._assert_sources_active(uow, scope, [item['id'] for item in additional], (),
+                        experience_revisions={item['id']: item['revision'] for item in additional})
             experiences = _ids(candidate.payload["source_experience_ids"], "source_experience_ids")
             sources = _ids(candidate.payload["source_recognition_ids"], "source_recognition_ids")
             self._assert_sources_active(
@@ -540,6 +584,10 @@ class RecognitionService:
                 {**dict(candidate.payload), "state": "published", "reviewed_at": _now(), "recognition_id": recognition_id},
                 expected_revision=candidate.revision,
             )
+            if self._publication_observer is not None:
+                self._publication_observer(uow, scope, candidate, recognition)
+            elif uow.read('v2_steer_learning_candidate_sources', candidate_id) is not None:
+                raise RecognitionConflict('steer_learning_publication_owner_unavailable')
             result = self._qualified_recognition(uow, recognition)
             uow.commit()
         return result
@@ -619,12 +667,14 @@ class RecognitionService:
         source_experience_ids: Sequence[str] | None = None,
         source_recognition_ids: Sequence[str] | None = None,
         replacement_conditions: Sequence[str] | None = None,
+        reviewer: str = "user",
     ) -> Recognition:
         ids = _ids(recognition_ids, "recognition_ids")
         if len(ids) < 2 or set(ids) != set(expected_revisions):
             raise RecognitionError("merge ids and expected revisions are invalid")
         recognition_id = recognition_id or _new_id("recognition")
         _segment("recognition_id", recognition_id)
+        _segment("reviewer", reviewer)
         with self._records.begin() as uow:
             parents = [self._active_recognition(uow, item, scope, expected_revisions[item]) for item in ids]
             source_experiences = (
@@ -652,7 +702,7 @@ class RecognitionService:
                 uow, scope=scope, operation="merge", target_ids=ids, expected_revisions=expected_revisions,
                 outputs=[{"recognition_id": recognition_id, "content": content, "conditions": merged_conditions,
                           "source_experience_ids": source_experiences, "source_recognition_ids": source_recognitions}],
-                reason="manual merge",
+                reason="manual merge", reviewer=reviewer,
             )
             uow.commit()
         return result[0]
@@ -668,6 +718,7 @@ class RecognitionService:
         outputs: Sequence[Mapping[str, object]],
         reason: str,
         validate_parent_sources: bool = True,
+        reviewer: str = "user",
     ) -> tuple[Recognition, ...]:
         """Apply a reviewed restructuring without opening or committing a UoW.
 
@@ -761,6 +812,7 @@ class RecognitionService:
                  "conditions": normalize_conditions(output["conditions"])},
                 scope, child_id, _content(output["content"]), parent_ids,
             )
+            payload["published_by"] = reviewer
             try:
                 self._ensure_not_erased(uow, child_id)
                 record = uow.put(_RECOGNITIONS, child_id, payload, expected_revision=0)
@@ -868,6 +920,19 @@ class RecognitionService:
             if record is None or _as_scope(record.payload) != scope:
                 return None
             return self._qualified_recognition(reader, record)
+
+    def archive_source_history(self, *, scope: WorkScope, source_type: str, source_id: str):
+        choices = {'experience': (_EXPERIENCES, _experience), 'recognition': (_RECOGNITIONS, _recognition),
+            'candidate': (_CANDIDATES, _candidate)}
+        if source_type not in choices or self._archive_source_validator is None:
+            raise RecognitionConflict('archive source authority unavailable')
+        collection, parse = choices[source_type]
+        with self._evidence_reader() as reader:
+            record = self._require_scope(reader, collection, source_id, scope)
+            parse(record)
+            if record.payload.get('state') not in {'revoked', 'superseded', 'stale', 'rejected', 'invalidated'}:
+                raise RecognitionConflict('archive source is not stopped')
+            return self._archive_source_validator(reader._reader, scope, source_type, record)
 
     @contextmanager
     def _evidence_reader(self):
@@ -1020,6 +1085,8 @@ class RecognitionService:
                     raise RecognitionConflict(str(exc)) from exc
                 if draft is not None:
                     path = _evidence_visit_path(_evidence_path, checked, key)
+                    if draft.answer_origin is not None and self.product_draft_validator is None:
+                        raise RecognitionConflict('saved answer source authority is unavailable')
                     if self.product_draft_validator is not None:
                         # 原装配核验整条出生闭包；本机确认不取得模型外发授权。
                         self.product_draft_validator(uow._reader, scope, record)
@@ -1065,8 +1132,13 @@ class RecognitionService:
                 payload = record.payload
                 experiences = _ids(payload["source_experience_ids"], "source_experience_ids")
                 recognitions = _ids(payload["source_recognition_ids"], "source_recognition_ids")
+                experience_revisions = _revision_map(payload.get("source_experience_revisions"), experiences)
+                if self._inspiration_validator is not None:
+                    additional = self._inspiration_validator(uow._reader, scope, record)
+                    experiences = tuple(dict.fromkeys((*experiences, *(item['id'] for item in additional))))
+                    experience_revisions.update({item['id']: item['revision'] for item in additional})
                 self._assert_sources_active(uow, scope, experiences, recognitions,
-                    experience_revisions=_revision_map(payload.get("source_experience_revisions"), experiences),
+                    experience_revisions=experience_revisions,
                     recognition_revisions=_revision_map(payload.get("source_recognition_revisions"), recognitions),
                     excluded_recognition_id=excluded_recognition_id,
                     _evidence_path=path, _evidence_checked=checked, _source_evidence=_source_evidence)

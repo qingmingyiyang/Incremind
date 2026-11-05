@@ -8,7 +8,7 @@ import sys
 
 from backend.shared.deployment import DeploymentLayout
 from .external_context import ExternalContext
-from .external_host import ExecutorRegistration, HostAdmission, _local_candidate_metadata, _local_candidate_path, _local_drive_kind, _stamp
+from .external_host import ExecutorRegistration, HostAdmission, _NETWORK_ENV, _local_candidate_metadata, _local_candidate_path, _local_drive_kind, _stamp
 
 
 def _startup_environment():
@@ -240,7 +240,8 @@ def install_local_host(state, *, runtime_root, records, context, models=None):
         credentials = {key: os.environ[key] for key in ('CODEX_API_KEY', 'ANTHROPIC_API_KEY')
             if os.environ.get(key)}
         host = HostAdmission(deployment=layout, owner_id=context.owner_id, records=records,
-            registrations=registrations, models=models, secret_environment=credentials)
+            registrations=registrations, models=models, secret_environment=credentials,
+            network_environment={key: os.environ[key] for key in _NETWORK_ENV if key in os.environ})
         state.external_execution_host = host
         return host
     except (AttributeError, TypeError, ValueError, OSError):

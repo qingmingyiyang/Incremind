@@ -65,6 +65,30 @@ def capture(store, collection='documents', identity='same'):
     return result
 
 
+def test_first_created_requires_the_exact_record_and_first_witness(store):
+    collection = 'workspace_items'
+    create(store, collection, 'original')
+    create(store, collection, 'neighbor')
+    legacy(store, collection, 'legacy', revision=1)
+    original = capture(store, collection, 'original')
+    neighbor = capture(store, collection, 'neighbor')
+    anchored = capture(store, collection, 'legacy')
+    api().verify_first_created(store, original, collection=collection, object_id='original')
+    for proof, identity in ((neighbor, 'original'), (anchored, 'legacy')):
+        api().verify_lineage(store, proof)
+        with pytest.raises(api().RecordLineageError):
+            api().verify_first_created(store, proof, collection=collection, object_id=identity)
+
+    with store.begin() as tx:
+        tx.delete(collection, 'original', expected_revision=1)
+        tx.commit()
+    create(store, collection, 'original')
+    replacement = capture(store, collection, 'original')
+    api().verify_lineage(store, replacement)
+    with pytest.raises(api().RecordLineageError):
+        api().verify_first_created(store, replacement, collection=collection, object_id='original')
+
+
 @pytest.mark.parametrize('collection', tuple(HEADS))
 def test_actual_insert_update_delete_and_same_revision_recreation(store, collection):
     first = create(store, collection)

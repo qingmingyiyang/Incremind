@@ -155,6 +155,27 @@ class RealtimeAsrLexicon:
             previous_terms[normalized] = payload
         return tuple(_term_record(previous_terms[normalized]) for _term_text, normalized, _weight_value, _existing in normalized_entries)
 
+    def rename(self, term: str, new_term: str, *, weight: int | None = None) -> RealtimeAsrLexiconTerm:
+        _clean, normalized = _term(term)
+        clean_target, target_key = _term(new_term)
+        existing = self._find_term(normalized)
+        if existing is None:
+            raise RealtimeAsrLexiconError('lexicon term not found')
+        target = self._find_term(target_key)
+        if target is not None and target['id'] != existing['id']:
+            raise RealtimeAsrLexiconError('lexicon rename target already exists')
+        clean_weight = existing['weight'] if weight is None else _weight(weight, is_super=weight == SUPER_WEIGHT)
+        # 停用词的改名保留停用状态，不临时占用启用词或优先热词额度。
+        if existing['status'] == 'active':
+            self._assert_super_capacity(new_is_super=clean_weight == SUPER_WEIGHT, replacing=existing)
+        if existing['term'] == clean_target and existing['weight'] == clean_weight:
+            return _term_record(existing)
+        revision = self._advance_revision()
+        payload = dict(existing) | {'term': clean_target, 'normalized_term': target_key,
+            'weight': clean_weight, 'origin': 'manual', 'revision': revision, 'updated_at': self._now()}
+        self._store.write(_TERM_COLLECTION, str(payload['id']), payload, expected_revision=None)
+        return _term_record(payload)
+
     def retire(self, term: str) -> RealtimeAsrLexiconTerm:
         """Retire an active term; it will no longer appear in sessions."""
 

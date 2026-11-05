@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from backend.memory_app.v2.intent import parse_scope_tag, route_intent
-from backend.memory_app.v2.policies import get, override, parse_overrides
+from backend.memory_app.v2.policies import get, override, parse_overrides, version
 
 INTENTS = {"remember", "ask", "do", "inspiration"}
 DEFAULT_CASES = ROOT / "tests" / "fixtures" / "workbench_route" / "cases.json"
@@ -105,7 +105,9 @@ def _rows(document, *, gold):
             if not isinstance(deps, list) or any(type(dep) is not int or dep < 0 or dep >= len(parts) for dep in deps) or len(set(deps)) != len(deps):
                 raise ValueError(f"{key}: invalid dependency indices")
             if gold:
-                if part["span"] not in row["text"] or (not part["span"] and not (row["text"] == "" and row["has_files"])):
+                attachment = (row['has_files'] and part['intent'] == 'remember' and any(
+                    other.get('intent') in {'ask', 'do'} and index in other.get('depends_on', []) for other in parts))
+                if part["span"] not in row["text"] or (not part["span"] and not ((row["text"] == "" and row["has_files"]) or attachment)):
                     raise ValueError(f"{key}: gold span must be an original substring")
                 if part["instruction"] is not None and (part["intent"] not in {"ask", "do"} or len(part["instruction"]) > 200):
                     raise ValueError(f"{key}: invalid gold instruction")
@@ -196,23 +198,45 @@ def evaluate(fixture, predictions=None):
             for category in sorted({row["category"] for row in results})}, "cases": results}
 
 
+def replay_contract(fixture):
+    from backend.memory_app.v2.route import validate_route_output
+    rows = _rows(fixture, gold=True)
+    results = []
+    for key, row in rows.items():
+        try:
+            validate_route_output(row['text'], {'parts': row['parts']}, has_files=row['has_files'])
+        except ValueError as error:
+            results.append({'id': key, 'accepted': False, 'error': str(error)})
+        else:
+            results.append({'id': key, 'accepted': True})
+    return {'mode': 'contract_replay', 'route_policy': version('route'), 'case_count': len(results),
+            'accepted': sum(row['accepted'] for row in results), 'cases': results,
+            'prompt': get('route').prompt, 'model_sends': 0}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     parser.add_argument("--predictions", type=Path)
     parser.add_argument("--output", type=Path, default=ROOT / "work" / "qa" / "T13.0" / "baseline.json")
     parser.add_argument("--policy", action="append", default=[], metavar="INTERFACE=VERSION")
+    parser.add_argument('--additional-cases', type=Path, action='append', default=[])
+    parser.add_argument('--replay-contract', action='store_true')
     args = parser.parse_args(argv)
     try:
         fixture = json.loads(args.cases.read_text(encoding="utf-8-sig"))
+        for path in args.additional_cases:
+            addition = json.loads(path.read_text(encoding='utf-8-sig'))
+            _rows(addition, gold=True)
+            fixture['cases'].extend({**row, 'id': path.stem + ':' + row['id']} for row in addition['cases'])
         predictions = json.loads(args.predictions.read_text(encoding="utf-8-sig")) if args.predictions else None
         with override(**parse_overrides(args.policy)):
-            report = evaluate(fixture, predictions)
+            report = replay_contract(fixture) if args.replay_contract else evaluate(fixture, predictions)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"mode": report["mode"], "case_count": report["case_count"], "metrics": report["metrics"]}))
+    print(json.dumps({key: report[key] for key in ('mode', 'case_count', 'metrics', 'accepted', 'route_policy') if key in report}))
     return 0
 
 

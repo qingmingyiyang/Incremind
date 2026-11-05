@@ -10,8 +10,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+import httpx
 
 from backend.api.local_audio_chunking import split_local_audio_chunk
 from backend.shared.server_resources import RESOURCE_POOL
@@ -51,6 +50,38 @@ class TokenHubAsrError(ValueError):
     pass
 
 
+def server_asr_access(runtime_root):
+    pool = RESOURCE_POOL.get()
+    factory = getattr(pool, 'server_model_access_for', None)
+    if factory is None and os.environ.get('CHRIPTMAS_DEPLOY') == 'server':
+        raise TokenHubAsrError('server_asr_identity_required')
+    return factory(runtime_root) if factory is not None else None
+
+
+def shared_cloud_asr_status(runtime_root):
+    access = server_asr_access(runtime_root)
+    if access is None or access.public_selection('asr')['mode'] != 'shared':
+        return {'shared': False, 'available': True, 'reason': None, 'credential_generation': 0}
+    try:
+        from backend.memory_app.v2.shared_asr import shared_asr_configuration
+        _records, _models, selection = shared_asr_configuration(runtime_root)
+    except ValueError as error:
+        code = str(error)
+        reason = code if code.startswith(('server_asr_', 'server_model_')) else 'server_asr_unavailable'
+        return {'shared': True, 'available': False, 'reason': reason, 'credential_generation': 0}
+    return {'shared': True, 'available': True, 'reason': None,
+        'credential_generation': selection['server_model_binding']['credential_generation']}
+
+
+def _check_server_asr(access):
+    if access is not None and access.public_selection('asr')['mode'] == 'shared':
+        status = shared_cloud_asr_status(access.user_root)
+        if not status['available']:
+            raise TokenHubAsrError(status['reason'])
+        return status
+    return None
+
+
 def tokenhub_egress_manifest(root_dir: Path):
     return ProviderEgressPolicyStore(root_dir).manifest(
         provider_id=TOKENHUB_ASR_PROVIDER_ID,
@@ -69,7 +100,16 @@ def freeze_workbench_asr_binding(
     source_id: str,
     project_id: str,
     secret_store: SecretStore | None = None,
+    registered_sample=None,
 ) -> str:
+    if registered_sample is not None:
+        from backend.memory_app.v2.purpose_samples import RegisteredPurposeSample
+        if (type(registered_sample) is not RegisteredPurposeSample or registered_sample.purpose != 'asr'
+                or registered_sample.root != Path(runtime_root).resolve() or registered_sample.project_id != project_id
+                or source_id != 'model-sample-' + registered_sample.command_id
+                or job_id != 'model-check-' + registered_sample.command_id):
+            raise TokenHubAsrError('purpose_test_sample_invalid')
+        registered_sample.validate()
     settings = GetCloudAsrProviderSettings(object_store).execute()
     binding_id = f"workbench-asr-{job_id}-{source_id}"
     if len(binding_id) > 128:
@@ -100,10 +140,18 @@ def freeze_workbench_asr_binding(
             },
         }
     else:
-        secrets = secret_store or build_secret_store(runtime_root)
-        generation = secrets.get_generation(TOKENHUB_ASR_SECRET_REF)
-        if generation < 1 or not secrets.has_secret(TOKENHUB_ASR_SECRET_REF):
-            raise TokenHubAsrError("Hy-ASR is enabled but its API Key is unavailable")
+        existing = object_store.read('workbench_asr_bindings', binding_id)
+        if existing is not None and server_asr_access(runtime_root) is not None:
+            from backend.memory_app.v2.shared_asr import frozen_asr_mode
+            frozen_asr_mode(runtime_root, binding_id)
+        shared = _check_server_asr(server_asr_access(runtime_root))
+        if shared is not None:
+            generation = shared['credential_generation']
+        else:
+            secrets = secret_store or build_secret_store(runtime_root)
+            generation = secrets.get_generation(TOKENHUB_ASR_SECRET_REF)
+            if generation < 1 or not secrets.has_secret(TOKENHUB_ASR_SECRET_REF):
+                raise TokenHubAsrError("Hy-ASR is enabled but its API Key is unavailable")
         manifest = tokenhub_egress_manifest(runtime_root)
         if not ProviderEgressPolicyStore(runtime_root).is_consented(manifest):
             raise TokenHubAsrError("Hy-ASR audio egress consent is required")
@@ -119,6 +167,18 @@ def freeze_workbench_asr_binding(
             "egress_manifest_id": manifest.manifest_id,
             "remote_processing": True,
         }
+        if registered_sample is not None:
+            record['registered_sample'] = registered_sample.descriptor
+        if shared is not None:
+            if registered_sample is None:
+                from backend.memory_app.v2.shared_asr import freeze_shared_asr_binding
+                freeze_shared_asr_binding(runtime_root, object_store, binding_id=binding_id,
+                    source_id=source_id, project_id=project_id, job_id=job_id, manifest_id=manifest.manifest_id)
+            else:
+                from backend.memory_app.v2.shared_asr import freeze_shared_asr_sample
+                freeze_shared_asr_sample(runtime_root, object_store, binding_id=binding_id,
+                    source_id=source_id, project_id=project_id, manifest_id=manifest.manifest_id,
+                    registered_sample=registered_sample)
     existing = object_store.read("workbench_asr_bindings", binding_id)
     if (isinstance(existing, Mapping) and "asr_lexicon" not in existing
             and record.get("asr_lexicon") == {"revision": 0, "terms": []}):
@@ -211,6 +271,7 @@ class TokenHubAudioAssetTranscriber:
         http_caller: HttpCaller | None = None,
         validate_wire: Callable[[], None] | None = None,
         now: str = "2026-09-04T00:00:00Z",
+        registered_sample=None,
     ) -> None:
         self._runtime_root = runtime_root
         self._object_store = object_store
@@ -219,8 +280,28 @@ class TokenHubAudioAssetTranscriber:
         self._http = http_caller or _http_call
         self._validate_wire = validate_wire
         self._now = now
+        self._server_model_access = server_asr_access(runtime_root)
+        self._active_binding_id = None
+        self._registered_sample = registered_sample
+
+    def _check_server_model(self):
+        access = server_asr_access(self._runtime_root)
+        fixed = self._server_model_access
+        if ((fixed is None) != (access is None) or fixed is not None
+                and (access.user_id != fixed.user_id or access.user_root != fixed.user_root)):
+            raise TokenHubAsrError('server_asr_identity_changed')
+        if access is not None and self._active_binding_id is not None:
+            from backend.memory_app.v2.shared_asr import frozen_asr_mode
+            frozen_asr_mode(self._runtime_root, self._active_binding_id)
+        _check_server_asr(access)
 
     def _check_wire_consent(self) -> None:
+        self._check_server_model()
+        if self._registered_sample is not None:
+            from backend.memory_app.v2.purpose_samples import RegisteredPurposeSample
+            if type(self._registered_sample) is not RegisteredPurposeSample:
+                raise TokenHubAsrError('purpose_test_sample_invalid')
+            self._registered_sample.validate()
         if self._validate_wire is None:
             return
         try:
@@ -235,14 +316,18 @@ class TokenHubAudioAssetTranscriber:
         execution_ref: str,
         binding_id: str,
     ) -> AudioAssetTranscriptionResult:
+        self._active_binding_id = binding_id
+        self._check_server_model()
         binding = self._object_store.read("workbench_asr_bindings", binding_id)
         if not isinstance(binding, Mapping) or binding.get("provider") != TOKENHUB_ASR_PROVIDER_ID:
             raise TokenHubAsrError("Hy-ASR binding is unavailable")
         settings = GetCloudAsrProviderSettings(self._object_store).execute()
+        shared = _check_server_asr(server_asr_access(self._runtime_root))
+        generation = shared['credential_generation'] if shared is not None else self._secrets.get_generation(TOKENHUB_ASR_SECRET_REF)
         if (
             not settings.enabled
             or settings.settings_revision != binding.get("settings_revision")
-            or self._secrets.get_generation(TOKENHUB_ASR_SECRET_REF) != binding.get("secret_generation")
+            or generation != binding.get("secret_generation")
         ):
             raise TokenHubAsrError("Hy-ASR settings or credential changed after admission")
         asset = self._object_store.read("audio_asset_refs", audio_asset_id)
@@ -264,6 +349,14 @@ class TokenHubAudioAssetTranscriber:
                 "Hy-ASR short-audio limit exceeded; use local faster-whisper for this file"
             )
         audio = audio_path.read_bytes()
+        if self._registered_sample is not None:
+            sample = self._registered_sample
+            sample.validate()
+            if (binding.get('registered_sample') != sample.descriptor
+                    or audio_asset_id != 'sample-audio-' + sample.command_id
+                    or source_id != 'model-sample-' + sample.command_id
+                    or audio_path != sample.path.resolve(strict=True) or audio != sample.raw):
+                raise TokenHubAsrError('purpose_test_sample_changed')
         request_body = json.dumps(
             {
                 "model": TOKENHUB_ASR_MODEL,
@@ -335,7 +428,7 @@ class TokenHubAudioAssetTranscriber:
             payload_categories=("audio_data", "audio_chunks", "provider_metadata"),
             payload_bytes=len(request_body),
         )
-        broker = SecretEgressBroker(
+        broker = None if shared is not None else SecretEgressBroker(
             self._secrets,
             boundary_revision_reader=lambda _project: _BOUNDARY_REVISION,
         )
@@ -346,7 +439,7 @@ class TokenHubAudioAssetTranscriber:
             allowed_hosts=("tokenhub.tencentmaas.com",),
             boundary_revision=_BOUNDARY_REVISION,
             ttl_seconds=300,
-        )
+        ) if broker is not None else None
         dispatch = {
             "schema_version": "1.0.0",
             "id": dispatch_id,
@@ -359,29 +452,62 @@ class TokenHubAudioAssetTranscriber:
             "binding_id": binding_id,
             "execution_ref": execution_ref,
             "request_bytes": len(request_body),
-            "secret_generation": secret_lease.secret_revision,
+            "secret_generation": secret_lease.secret_revision if secret_lease is not None else generation,
             "egress_manifest_id": manifest.manifest_id,
             "created_at": self._now,
             "output_id": None,
         }
-        self._object_store.write("cloud_asr_dispatches", dispatch_id, dispatch, expected_revision=None)
+        http_started = False
+
+        def start_http(before_http=None):
+            nonlocal http_started
+            self._object_store.write('cloud_asr_dispatches', dispatch_id, dispatch, expected_revision=None)
+            if before_http is not None:
+                before_http()
+            http_started = True
+
+        def confirmed_none(error):
+            raw = getattr(error, 'public_code', str(error))
+            code = raw if isinstance(raw, str) and raw.startswith(('server_model_', 'server_asr_')) else 'asr_request_not_sent'
+            dispatch.update(status='failed', transmission='confirmed_none', error_code=code)
+            self._object_store.write('cloud_asr_dispatches', dispatch_id, dispatch, expected_revision=None)
+            egress_lease.finish('failed', error_code=code)
+            return code
+
         try:
-            headers = {
-                "Content-Type": "application/json",
-                **broker.inject_header(
-                    secret_lease,
-                    project_id=str(binding["project_id"]),
-                    purpose="video_processing",
-                    boundary_revision=_BOUNDARY_REVISION,
-                    url=TOKENHUB_ASR_ENDPOINT,
-                    header_name="Authorization",
-                    prefix="Bearer ",
-                ),
-            }
-            self._check_wire_consent()
-            status, response = self._http(
-                TOKENHUB_ASR_ENDPOINT, headers, request_body, settings.timeout_seconds,
-            )
+            if shared is not None:
+                from backend.memory_app.v2.shared_asr import asr_wire_owner, run_shared_asr_wire
+                records, models = asr_wire_owner(self._runtime_root)
+                def invoke(credential, before_http):
+                    self._check_wire_consent()
+                    start_http(before_http)
+                    return self._http(TOKENHUB_ASR_ENDPOINT,
+                        {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + credential},
+                        request_body, settings.timeout_seconds)
+                status, response = run_shared_asr_wire(runtime_root=self._runtime_root,
+                    records=records, models=models, project_id=str(binding['project_id']),
+                    source_id=source_id, asset_id=audio_asset_id, binding_id=binding_id,
+                    object_store=self._object_store, dispatch_id=dispatch_id,
+                    request={'method': 'POST', 'endpoint': TOKENHUB_ASR_ENDPOINT, 'payload': json.loads(request_body)},
+                    validate_wire=self._check_wire_consent, invoke=invoke, registered_sample=self._registered_sample)
+            else:
+                headers = {
+                    "Content-Type": "application/json",
+                    **broker.inject_header(
+                        secret_lease,
+                        project_id=str(binding["project_id"]),
+                        purpose="video_processing",
+                        boundary_revision=_BOUNDARY_REVISION,
+                        url=TOKENHUB_ASR_ENDPOINT,
+                        header_name="Authorization",
+                        prefix="Bearer ",
+                    ),
+                }
+                self._check_wire_consent()
+                start_http()
+                status, response = self._http(
+                    TOKENHUB_ASR_ENDPOINT, headers, request_body, settings.timeout_seconds,
+                )
             if status < 200 or status >= 300:
                 dispatch["status"] = "failed"
                 self._object_store.write("cloud_asr_dispatches", dispatch_id, dispatch, expected_revision=None)
@@ -439,6 +565,9 @@ class TokenHubAudioAssetTranscriber:
             egress_lease.finish("completed")
             return self._result(output, audio_asset_id=audio_asset_id)
         except TokenHubAsrError as error:
+            if not http_started:
+                confirmed_none(error)
+                raise
             if dispatch.get("status") == "sending":
                 dispatch["status"] = "failed"
                 self._object_store.write(
@@ -452,12 +581,16 @@ class TokenHubAudioAssetTranscriber:
                 egress_lease.finish("failed", error_code=error_code)
             raise
         except Exception as error:
+            if not http_started:
+                code = confirmed_none(error)
+                raise TokenHubAsrError(code) from None
             dispatch["status"] = "unknown"
             self._object_store.write("cloud_asr_dispatches", dispatch_id, dispatch, expected_revision=None)
             egress_lease.finish("unknown", error_code="provider_outcome_unknown")
             raise TokenHubAsrError("Hy-ASR provider outcome is unknown; automatic replay was stopped") from error
         finally:
-            broker.revoke(secret_lease.lease_id)
+            if broker is not None:
+                broker.revoke(secret_lease.lease_id)
 
     def _replay(
         self,
@@ -608,6 +741,7 @@ class TokenHubChunkedAudioAssetTranscriber:
         execution_ref: str,
         binding_id: str,
     ) -> AudioAssetTranscriptionResult:
+        self._single._check_server_model()
         asset = self._object_store.read("audio_asset_refs", audio_asset_id)
         if not isinstance(asset, Mapping) or asset.get("status") != "available":
             raise TokenHubAsrError("audio asset is unavailable")
@@ -893,15 +1027,21 @@ def _parse_response(response: object) -> dict[str, object]:
 
 
 def _http_call(url: str, headers: Mapping[str, str], body: bytes, timeout: float) -> tuple[int, object]:
-    request = Request(url, data=body, headers=dict(headers), method="POST")
     try:
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - endpoint is fixed above.
-            payload = json.loads(response.read().decode("utf-8"))
-            return int(response.status), payload
-    except HTTPError as error:
-        return int(error.code), {}
-    except (URLError, OSError, TimeoutError) as error:
-        raise OSError("Hy-ASR network request did not complete") from error
+        with httpx.Client(trust_env=False, follow_redirects=False, timeout=timeout) as client:
+            with client.stream('POST', url, content=body, headers=dict(headers)) as response:
+                if not 200 <= response.status_code < 300:
+                    return response.status_code, {}
+                content = bytearray()
+                for chunk in response.iter_bytes():
+                    if len(content) + len(chunk) > 8 * 1024 * 1024:
+                        raise ValueError('Hy-ASR response exceeds the payload limit')
+                    content.extend(chunk)
+                return response.status_code, json.loads(content)
+    except (httpx.HTTPError, OSError, TimeoutError):
+        raise OSError('Hy-ASR network request did not complete') from None
+    except ValueError:
+        raise TokenHubAsrError('Hy-ASR response is invalid') from None
 
 
 def _tokenhub_output_id(

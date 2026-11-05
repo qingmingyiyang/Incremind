@@ -4,6 +4,7 @@ from contextvars import ContextVar
 from dataclasses import replace
 
 from ..v2.policies import get
+from ..v2.policies.compose import evidence_contract_version
 
 _BUDGET = ContextVar('product_answer_handle_budget', default=3)
 _TIMEOUT = ContextVar('product_answer_timeout_ms', default=240_000)
@@ -21,7 +22,7 @@ def answer_contract_scope(request):
     budget = 3
     timeout = 240_000
     if (isinstance(request, dict) and request.get('desired_outcome') == 'project.answer'
-            and (request.get('policy_versions') or {}).get('compose') in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}):
+            and evidence_contract_version((request.get('policy_versions') or {}).get('compose')) in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}):
         budget = get('compose', version=request['policy_versions']['compose'])(None, operation='answer_contract')['nested_model_handle_budget']
     if isinstance(request, dict) and request.get('desired_outcome') == 'project.answer':
         timeout = answer_lifecycle(request)['tool_timeout_ms']

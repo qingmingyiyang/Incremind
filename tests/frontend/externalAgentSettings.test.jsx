@@ -103,7 +103,7 @@ it.each([
 it('saves a numeric daily limit while preserving both clients and authorization', async () => {
   await page(); expand();
   fireEvent.change(screen.getByRole('spinbutton', { name: '每日上限' }), { target: { value: '321' } });
-  fireEvent.click(screen.getByRole('button', { name: '保存每日上限' })); await settle();
+  fireEvent.click(screen.getByRole('button', { name: '保存', exact: true })); await settle();
   const { revision, ...fields } = defaults();
   expect(writes).toEqual([{ ...fields, daily_limit: 321, expected_revision: revision }]);
   expect(screen.getByRole('spinbutton', { name: '每日上限' })).toHaveValue(321);
@@ -113,8 +113,8 @@ it('disables invalid daily limits without sending a replacement', async () => {
   await page(); expand();
   for (const invalid of ['', '0', '-1', '1.5']) {
     fireEvent.change(screen.getByRole('spinbutton', { name: '每日上限' }), { target: { value: invalid } });
-    expect(screen.getByRole('button', { name: '保存每日上限' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: '保存每日上限' }));
+    expect(screen.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '保存', exact: true }));
   }
   expect(writes).toEqual([]);
 });

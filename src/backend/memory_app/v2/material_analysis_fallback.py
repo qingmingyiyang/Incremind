@@ -384,7 +384,9 @@ def run_fallback(organize, episode, *, input_limit, output, workers):
             tx.commit()
         owner = OrganizeTurns(root=organize.store._path.parent.parent, records=organize.records,
             models=organize.models, item_id=organize.item_id, project_id=organize.project_id,
-            source=organize.source, validate_current=validate, lease=organize.lease, run_id=organize.run_id)
+            source=organize.source, validate_current=validate, lease=organize.lease, run_id=organize.run_id,
+            generation_requests=organize.generation_requests)
+        owner.input_limit = organize.input_limit
         with override(**episode['policy_versions']):
             raw, meta = owner.complete(messages, stage=key, max_tokens=output,
                 validate_current=validate, validate_output=parser)

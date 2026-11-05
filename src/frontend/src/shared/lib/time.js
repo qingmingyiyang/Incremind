@@ -25,6 +25,15 @@ export function formatLocalShortDate(value) {
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+export function compareDateValues(left, right) {
+  const leftTime = typeof left === 'string' && left.trim() ? Date.parse(left) : NaN;
+  const rightTime = typeof right === 'string' && right.trim() ? Date.parse(right) : NaN;
+  if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) return leftTime - rightTime;
+  if (Number.isFinite(leftTime)) return 1;
+  if (Number.isFinite(rightTime)) return -1;
+  return 0;
+}
+
 export function formatLocalDate(value) {
   if (!value) return '—';
   // 只有日期的事实保持原年月日，时间点使用浏览器本地日期。

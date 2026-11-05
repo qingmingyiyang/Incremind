@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 from pathlib import Path
 import re
+import sqlite3
 import stat
 from threading import RLock
 from time import monotonic
@@ -207,6 +208,10 @@ class _RuntimeLoggingMiddleware:
         self.app, self.root, self.access = app, root, access
         self.leases = weakref.WeakSet()
 
+    def close(self):
+        for owned in tuple(self.leases):
+            owned.close()
+
     async def __call__(self, scope, receive, send):
         kind = scope['type']
         if kind not in {'http', 'lifespan', 'websocket'}:
@@ -216,6 +221,8 @@ class _RuntimeLoggingMiddleware:
         request_id = uuid4().hex if kind == 'http' else '-'
         started, status = monotonic(), 500
         with runtime_log_scope(self.root, request_id=request_id, lease=lease, correlation=scope if kind == 'http' else None):
+            if kind == 'lifespan':
+                self.access.info('sqlite_version=%s', sqlite3.sqlite_version)
             async def correlated_send(message):
                 nonlocal status
                 if message['type'] == 'http.response.start':
@@ -240,8 +247,14 @@ class _RuntimeLoggingMiddleware:
                         self.access.info('http method=%s path=%s status=%s duration_ms=%s',
                             scope['method'], scope['path'], status, int((monotonic()-started)*1000))
                 elif kind == 'lifespan':
-                    for owned in tuple(self.leases):
-                        owned.close()
+                    self.close()
+
+
+def close_runtime_logging(application):
+    """路由寿命由宿主关闭后，释放该应用已结束工作的日志资源。"""
+    middleware = application.middleware_stack
+    if isinstance(middleware, _RuntimeLoggingMiddleware):
+        middleware.close()
 
 
 

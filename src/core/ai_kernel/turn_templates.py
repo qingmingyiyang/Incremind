@@ -97,7 +97,7 @@ def validate_execution_policy(request):
         args = exact.get("arguments")
         scope = args.get("scope") if isinstance(args, Mapping) else None
         if (not isinstance(args, Mapping) or set(args) != {"client", "tool", "query", "scope", "budget"}
-                or not isinstance(args.get("client"), str) or args["client"] not in {"claude", "codex", "deepseek-harness"}
+                or not isinstance(args.get("client"), str) or args["client"] not in {"claude", "codex", "deepseek-harness", "chatgpt"}
                 or not isinstance(args.get("tool"), str) or args["tool"] not in {"projects", "recall", "methods", "read"}
                 or not isinstance(args.get("query"), str) or '\x00' in args["query"]
                 or type(args.get("budget")) is not int or not 1 <= args["budget"] <= 12000

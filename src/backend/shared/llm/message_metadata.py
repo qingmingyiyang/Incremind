@@ -42,9 +42,10 @@ def _build_prompt_fallback_messages(
     validation_error: str | None,
 ) -> list[dict[str, Any]]:
     schema = response_model.model_json_schema()
+    output = 'JSON 对象' if schema.get('type') == 'object' else 'JSON 值'
     instruction = (
-        "这是结构化输出请求。只输出一个 JSON 对象，不要输出 Markdown、解释、代码块、引用清单或额外文本。\n"
-        f"JSON 对象必须匹配 {response_model.__name__} 的 JSON Schema：\n"
+        f"这是结构化输出请求。只输出一个 {output}，不要输出 Markdown、解释、代码块、引用清单或额外文本。\n"
+        f"{output}必须匹配 {response_model.__name__} 的 JSON Schema：\n"
         f"{json.dumps(schema, ensure_ascii=False)}"
     )
     structured_messages = [
@@ -55,17 +56,17 @@ def _build_prompt_fallback_messages(
         *_dump_messages(messages),
     ]
     if validation_error:
-        structured_messages.append(_build_validation_retry_message(validation_error))
+        structured_messages.append(_build_validation_retry_message(validation_error, output=output))
     return structured_messages
 
 
-def _build_validation_retry_message(validation_error: str) -> dict[str, str]:
+def _build_validation_retry_message(validation_error: str, *, output='JSON 对象') -> dict[str, str]:
     return {
         "role": "user",
         "content": (
             "上一轮结构化输出没有通过本地校验，请修正后重新输出。\n"
             f"校验错误：{validation_error}\n"
-            "仍然只输出一个 JSON 对象，不要输出任何额外文本。"
+            f"仍然只输出一个 {output}，不要输出任何额外文本。"
         ),
     }
 

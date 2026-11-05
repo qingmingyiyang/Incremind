@@ -50,12 +50,10 @@ def consumer(env, *, before=None, after=None, failure=False, enabled=True, local
     config = env.models.public()['generation']
     env.models.update('generation', {'enabled': enabled, 'expected_revision': config['revision']})
     if local:
-        model = env.models.root / 'data/models/qwen2.5-1.5b-instruct/model.safetensors'
-        model.parent.mkdir(parents=True, exist_ok=True)
-        model.write_bytes(b'installed-model-test')
-        env.models.update_generation_mode(mode='local', local_enabled=True,
-            local_base_url='http://127.0.0.1:8001/local-model/v1', expected_revision=0)
-    choose(env.models, 'qwen2.5-1.5b-instruct' if local else 'quick')
+        current = env.models.public()['generation']
+        env.models.update('generation', {'model': 'local-qa', 'base_url': 'http://127.0.0.1:8765/v1',
+            'allow_remote': False, 'expected_revision': current['revision']})
+    choose(env.models, 'local-qa' if local else 'quick')
     fact = next((row for row in env.records.list('v2_outcome_corrections')
         if row.payload['kind'] == 'outcome_edit'), None)
     now = _time(fact.payload['last_saved_at']) + timedelta(seconds=601) if fact else None
@@ -179,7 +177,7 @@ def test_real_parentless_division_keeps_empty_refs_and_requires_confirmation(sce
     auxiliary_completed(env)
     assert receipt['status'] == 'succeeded' and receipt['usage']['total_tokens'] == 6
     assert receipt['execution_location'] == ('local_loopback' if private else 'remote')
-    assert receipt['model_id'] == ('qwen2.5-1.5b-instruct' if private else 'quick')
+    assert receipt['model_id'] == ('local-qa' if private else 'quick')
 
 
 def test_disabled_real_configuration_blocks_parentless_feedback_without_wire(scenario):
@@ -213,7 +211,7 @@ def test_parentful_division_without_root_defers_without_fabricating_experience(s
     assert env.records.list('v2_consolidation_inputs') == ()
 
 
-def test_birth_artifact_preserves_private_me_closure_after_actual_local_wire_and_confirmation(scenario):
+def test_birth_artifact_preserves_private_me_closure_after_generic_loopback_wire_and_confirmation(scenario):
     env = scenario
     parent = parent_profile(env)
     _, turn = completed(env)
@@ -242,8 +240,8 @@ def test_birth_artifact_preserves_private_me_closure_after_actual_local_wire_and
     with pytest.raises(RecognitionError):
         authority.require(snapshot, 'generation')
     own_wire, = [wire for wire in wires if '"outcomes"' in wire['messages'][-1]['content']]
-    assert own_wire['model'] == 'openai/qwen2.5-1.5b-instruct'
-    assert own_wire['base_url'] == 'http://127.0.0.1:8001/local-model/v1'
+    assert own_wire['model'] == 'openai/local-qa'
+    assert own_wire['base_url'] == 'http://127.0.0.1:8765/v1'
     receipt, = wire_receipts(env.records)
     auxiliary_completed(env)
     assert receipt['status'] == 'succeeded' and receipt['execution_location'] == 'local_loopback'
@@ -453,7 +451,7 @@ def test_private_me_parent_support_keeps_original_source_guard_and_public_target
         and node['scope']['project_id'] == 'me' and node['effective_purposes'] == [] for node in graph.result()['nodes'])
     with pytest.raises(RecognitionError):
         SourceEgressService(env.records).require(own_snapshot, 'generation')
-    assert len(wires) == 1 and wires[0]['model'] == 'openai/qwen2.5-1.5b-instruct'
+    assert len(wires) == 1 and wires[0]['model'] == 'openai/local-qa'
     response = env.client.post('/api/v2/library/evidence-support/' + support.object_id + '/accept',
         json={'project_id': PROJECT, 'expected_revision': support.revision})
     assert response.status_code == 200, response.text

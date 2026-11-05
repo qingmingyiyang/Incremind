@@ -1,19 +1,23 @@
 """Bind domain question orchestration to the application's existing Turn runner."""
 from core.storage_provider.connection_scope import with_connection_scope
 import asyncio
+from contextlib import nullcontext
 from copy import deepcopy
 from contextvars import ContextVar
 from dataclasses import replace
+from hashlib import sha256
+import json
 from threading import RLock
 from time import monotonic
 from types import SimpleNamespace
 
 from fastapi import HTTPException
 
-from core.ai_kernel import CapabilityDefinition, validate_turn_request
+from core.ai_kernel import CapabilityDefinition, ToolProviderFailure, validate_turn_request
 from .turn_requests import freeze_turn_request
 from core.ai_tooling import tool_from_capability
 from ..workspace_contracts import _now
+from ..model_billing_errors import model_billing_code, model_billing_status
 from .ai_execution_control import begin_nested_model_call, execution_control_from
 from .policy_runtime import retry_policy_for
 
@@ -60,6 +64,43 @@ class _AnswerCall:
                     "Late answer model result discarded", model_request_id=self.model_request_id,
                     model_call_purpose=self.handle.control.purpose)
                 self.discarded = True
+
+
+class _AnswerSourceSink:
+    def __init__(self, sink, validate, on_dispatched=None):
+        self.sink, self.validate, self.on_dispatched = sink, validate, on_dispatched
+
+    def __getattr__(self, name):
+        return getattr(self.sink, name)
+
+    def begin_model_wire_attempt(self):
+        self.validate()
+        wire = self.sink.begin_model_wire_attempt()
+        try:
+            if self.on_dispatched is not None:
+                self.on_dispatched()
+        except BaseException:
+            wire.invoke_wire(lambda: wire.failed_transport(error_code='ai.answer_input_owner_changed'))
+            raise
+        return _AnswerSourceWire(wire, self.validate)
+
+
+class _AnswerSourceWire:
+    def __init__(self, wire, validate):
+        self.wire, self.validate = wire, validate
+
+    def __getattr__(self, name):
+        return getattr(self.wire, name)
+
+    def invoke_wire(self, handler):
+        def guarded():
+            try:
+                self.validate()
+            except BaseException:
+                self.wire.failed_transport(error_code='ai.answer_input_proof_changed')
+                raise
+            return handler()
+        return self.wire.invoke_wire(guarded)
 
 
 def abandon_answer_model(invocation_key):
@@ -133,6 +174,13 @@ class ProductAnswerCapability:
                 execution["error"] = error
                 if not isinstance(error, AnswerInterrupted):
                     execution_control_from(request).checkpoint()
+                from ..model_config import ModelConfigurationError
+                code = model_billing_code(error, ModelConfigurationError)
+                if type(error) is HTTPException and model_billing_status(error.detail) is not None:
+                    code = error.detail
+                if code is not None:
+                    # 只读回答未发布结果；原模型尝试和消费回执仍由原 owner 保留。
+                    raise ToolProviderFailure(code, effect_certainty='confirmed_none') from None
                 raise ValueError("product answer execution failed") from None
             finally:
                 ACTIVE_ANSWER.reset(token)
@@ -349,6 +397,10 @@ class ProductAnswerTurns:
             executing = identity in self.active
         return not executing and self.query.records.read(COLLECTION, identity) is not None
 
+    def freeze_phase_source(self, action, row):
+        from ..answer_effective import freeze_answer_phase_source
+        return freeze_answer_phase_source(self.application.state.ai_turn_store, action, row)
+
     def admit_continuation(self, action, row):
         from .answer_continuations import COLLECTION
         with self.lock:
@@ -460,11 +512,14 @@ class ProductAnswerTurns:
             return None
         dispatched = {event['data']['payload_ref'] for event in events if event['type'] == 'model.attempt.dispatched'}
         terminals = [store.get(event['data']['receipt_ref']) for event in events if event['type'] == 'model.attempt.terminal']
+        from ..answer_effective import closed_steer_attempt_receipts
+        steer_requests = {store.get(reference)['model_request_id']
+            for reference in closed_steer_attempt_receipts(store, identity)}
         if len(dispatched) != len(terminals) or any(value['status'] == 'consumer_cancelled'
-                and value['model_request_id'] not in requests for value in terminals):
+                and value['model_request_id'] not in requests | steer_requests for value in terminals):
             return None
         completed = {event['correlation']['model_request_id'] for event in events if event['type'] == 'model.completed'}
-        if any(value['status'] != 'succeeded' and value['model_request_id'] not in requests | completed | auxiliary_requests for value in terminals):
+        if any(value['status'] != 'succeeded' and value['model_request_id'] not in requests | completed | auxiliary_requests | steer_requests for value in terminals):
             return None
         return row
 
@@ -540,7 +595,8 @@ class ProductAnswerTurns:
 
     @with_connection_scope
     async def run(self, *, turn_id, project, question, operation, policy_versions=None,
-                  situation=None, part_context=None):
+                  situation=None, part_context=None, workbench_identity=None, admission_prepare=None,
+                  privacy_prepare=None, validate_cached=None):
         if ACTIVE_ANSWER.get() is not None:
             return await operation()
         runtime = await asyncio.to_thread(self._runtime)
@@ -552,10 +608,23 @@ class ProductAnswerTurns:
                 raise HTTPException(409, "idempotency_key_conflict")
             result = store.get_immutable_payload(turn_id, RESULT_KIND)
             if result is not None and runtime.receipt_for(turn_id).status == "completed":
+                from core.ai_kernel.product_admission import MANIFEST_KIND
+                origin = store.get_immutable_payload(turn_id,'material-origin-v1')
+                manifest = store.get_immutable_payload(turn_id,MANIFEST_KIND)
+                manifest_ref = {'kind':'session_event','object_id':turn_id,
+                    'uri':f'crp://session/{turn_id}/{MANIFEST_KIND}'}
+                bundle = (store.restore_admission(existing) if origin is not None or manifest is not None
+                    or manifest_ref in existing['input']['refs'] else None)
+                qualified = bundle is not None and any(item.kind == 'material-origin-v1' for item in bundle.items)
+                if qualified or privacy_prepare is not None or validate_cached is not None:
+                    self._validate_cached_origin(store,existing,result[1],admission_prepare,validate_cached)
                 return result[1]
             raise HTTPException(409, "turn_interrupted")
         target = self.query.ask_target()
-        privacy = self.query.freeze_answer_privacy(project, local_only=target["execution_location"] == "local")
+        if privacy_prepare is not None and (not callable(privacy_prepare) or not callable(admission_prepare)):
+            raise ValueError('answer_origin_privacy_requires_admission')
+        privacy = deepcopy(privacy_prepare(project,local_only=target['execution_location'] == 'local')
+            if privacy_prepare is not None else self.query.freeze_answer_privacy(project,local_only=target['execution_location'] == 'local'))
         request = freeze_turn_request("project.answer", turn_id=turn_id, session_id="session-" + turn_id,
             operation_id="answer-" + turn_id, idempotency_key="answer-" + turn_id,
             project_id=project, created_at=_now(), text=question, privacy=privacy,
@@ -563,10 +632,19 @@ class ProductAnswerTurns:
         if policy_versions is not None:
             request['policy_versions'] = dict(policy_versions)
         request["context_policy"].update(include_memory=False)
-        from ..part_context_binding import bind_context
-        bind_context(self.query.records, request, part_context)
+        from ..part_context_binding import bind_context, prepare_context_refs
+        prepare_context_refs(request,part_context)
         request["capability_request"] = {"mode": "execute_exact_v1",
             "capability_id": "workbench.answer.execute", "arguments": {"query": question}}
+        binding = None
+        if (workbench_identity is not None or admission_prepare is not None
+                or getattr(state, 'project_constraint_input', None) is not None):
+            from ..workbench_identity_binding import prepare_admission
+            binding = prepare_admission(self.application,request,workbench_identity,store,
+                admission_prepare=admission_prepare)
+        if privacy_prepare is not None and (binding is None or not any(item.kind == 'material-origin-v1' for item in binding.items)):
+            raise ValueError('answer_origin_privacy_requires_admission')
+        bind_context(self.query.records,request,part_context)
         validate_turn_request(request)
         execution = {"operation": operation}
         with self.lock:
@@ -574,7 +652,11 @@ class ProductAnswerTurns:
                 raise HTTPException(409, "turn_in_progress")
             self.active[turn_id] = execution
         try:
-            await asyncio.to_thread(runner.accept_and_submit, request)
+            from .route_admission_guard import correction_admission_guard
+            admit_guard = correction_admission_guard(self.query.records, request, workbench_identity, binding)
+            await asyncio.to_thread(runner.accept_and_submit,request,
+                **({'admission_bundle':binding} if binding is not None else {}),
+                **({'admission_guard': admit_guard} if admit_guard is not None else {}))
             from .answer_contract import answer_lifecycle
             deadline = monotonic() + answer_lifecycle(request)['wait_timeout_seconds']
             receipt = None
@@ -601,9 +683,262 @@ class ProductAnswerTurns:
             with self.lock:
                 self.active.pop(turn_id, None)
 
+    def _validate_cached_origin(self, store, request, result, prepare, validate):
+        from core.ai_kernel.product_admission import ProductAdmissionItem
+        from ..workbench_identity_binding import execution_owner
+        if not callable(prepare) or not callable(validate):
+            raise ValueError('answer_origin_cached_validation_unavailable')
+        bundle = store.restore_admission(request)
+        original = {item.kind:item for item in bundle.items}
+        if 'material-origin-v1' not in original:
+            raise ValueError('answer_origin_cached_admission_unavailable')
+        owner = execution_owner(self.application,self.application.state.recognition_records,
+            self.application.state.recognition_documents)
+        expected = {**owner,'turn_id':request['turn_id'],'project_id':request['scope']['project_id']}
+        if any(item.scope != expected for item in bundle.items):
+            raise ValueError('answer_origin_cached_owner_changed')
+        identity = deepcopy(original['workbench-steer-binding-v1'].payload) if 'workbench-steer-binding-v1' in original else None
+        if identity is not None:
+            if identity.pop('turn_id',None) != request['turn_id']:
+                raise ValueError('answer_origin_cached_identity_changed')
+        callback_request,callback_identity = deepcopy(request),deepcopy(identity)
+        items = prepare(callback_request,callback_identity)
+        if callback_request != request or callback_identity != identity:
+            raise ValueError('answer_origin_cached_adapter_changed_input')
+        if (not isinstance(items,(tuple,list)) or not items or any(not isinstance(item,ProductAdmissionItem) for item in items)
+                or len({item.kind for item in items}) != len(items)
+                or 'material-origin-v1' not in {item.kind for item in items}
+                or any(original.get(item.kind) != item for item in items)):
+            raise ValueError('answer_origin_cached_admission_changed')
+        copied_request,copied_result = deepcopy(request),deepcopy(result)
+        checked = validate(copied_request,copied_result)
+        if checked is not None or copied_request != request or copied_result != result:
+            raise ValueError('answer_origin_cached_validator_changed_input')
+
+
+def _answer_failure_classification(error):
+    """Only finite local facts cross the diagnostic boundary; never error text."""
+    from backend.recognition import RecognitionError
+    from backend.shared.llm.model_transport import ModelInterrupted
+    from core.ai_kernel.event_store import RunLeaseRevoked
+    from ..model_config import ModelConfigurationError, ModelResponseDecodeError
+
+    if (type(error) is ModelResponseDecodeError and error.completed_wire is True
+            and type(error.decode_code) is str
+            and error.decode_code in {'json_empty', 'json_object_required', 'json_invalid', 'schema_invalid'}):
+        return 'decode', error.decode_code, True
+    if isinstance(error, RecognitionError):
+        return 'source', 'recognition_error', None
+    if isinstance(error, RunLeaseRevoked):
+        return 'control', 'lease_revoked', None
+    if isinstance(error, ModelInterrupted):
+        return 'control', 'interrupted', None
+    if isinstance(error, asyncio.CancelledError):
+        return 'control', 'cancelled', None
+    if isinstance(error, TimeoutError):
+        return 'deadline', 'timeout', None
+    if (type(error) is ModelConfigurationError and len(error.args) == 1
+            and type(error.args[0]) is str):
+        code = error.args[0]
+        if model_billing_status(code) is not None:
+            return 'server_model', code, None
+        if code in {'model_output_incomplete', 'model_output_missing_content', 'model_response_invalid'}:
+            return 'provider_output', code, None
+        if code in {'model_configuration_changed_before_request', 'model_configuration_changed_during_request',
+                    'model_egress_not_configured', 'model_egress_endpoint_invalid', 'model_egress_remote_not_consented'}:
+            return 'configuration', code, None
+        if code == 'model_request_failed: check endpoint, model and credentials':
+            # This wrapper can also hide an older non-stream decode rejection.
+            return 'model', 'model_request_failed', None
+    return 'other', 'unclassified_failure', None
+
+
+def _answer_failure_usage(value):
+    if not isinstance(value, dict):
+        return {}
+    return {key: value[key] for key in ('input_tokens', 'output_tokens', 'total_tokens')
+            if type(value.get(key)) is int and value[key] >= 0}
+
+
+def _record_answer_failure(store, request, invocation, handle, input_ref, schema, error):
+    """A diagnostic snapshot, never a generated result or answer evidence.
+
+    A pending attempt keeps its dispatch reference.  Later terminal/usage facts
+    remain in the normal attempt ledger; this immutable snapshot is not revised.
+    """
+    category, code, completed = _answer_failure_classification(error)
+    observed = answer_observation(invocation)
+    payload = {'version': 'answer-model-failure-v1', 'turn_id': request['turn_id'],
+        'invocation': invocation, 'model_request_id': handle.model_request_id, 'input_ref': input_ref,
+        'response_schema_sha256': sha256(json.dumps(schema, ensure_ascii=False, sort_keys=True,
+            separators=(',', ':')).encode('utf-8')).hexdigest(),
+        'category': category, 'code': code, 'completed_wire': completed,
+        'usage': _answer_failure_usage(error.usage) if completed is True else {},
+        'observations': [_answer_failure_usage(item) for item in observed['observations']],
+        'receipt_ids': list(observed['receipt_ids']), 'usage_complete': observed['complete'] is True}
+    store.get_or_create_immutable_payload(request['turn_id'], 'answer-model-failure-' + invocation, payload)
+
+
+class SteerBeforeDispatch(BaseException):
+    pass
+
 
 def generate_answer(models, messages, *, response_model, max_tokens, validate_current,
-                    on_delta=None, purpose="primary", invocation_key="answer", timeout_seconds=None, gap_plan=None, on_retry=None, **unused):
+                    on_delta=None, purpose='primary', invocation_key='answer', timeout_seconds=None,
+                    gap_plan=None, on_retry=None, failure_diagnostics=False, phase=None, phase_logical=None,
+                    material_proof=None, **unused):
+    if phase is not None and (purpose != 'primary' or phase not in {'single', 'first', 'final-review'}):
+        raise ValueError('answer_invocation_phase_invalid')
+    phase_logical = (phase_logical or invocation_key) if phase is not None else None
+    if phase_logical is not None and (not isinstance(phase_logical, str) or not phase_logical or len(phase_logical) > 128):
+        raise ValueError('answer_invocation_phase_logical_invalid')
+    active = ACTIVE_ANSWER.get()
+    if active is None:
+        raise RuntimeError('answer model call requires an active kernel Turn')
+    request, store, query, handles = active
+    native = store.get_request(request['turn_id'])
+    if purpose == 'primary':
+        actual_proof = query.prepare_model_material_proof(models, native, phase_logical or invocation_key, messages,
+            invocation_key=invocation_key)
+        if material_proof is not None and material_proof != actual_proof:
+            raise ValueError('answer_material_proof_changed')
+        material_proof = actual_proof
+    constraints = getattr(query, 'project_constraint_input', None)
+    if constraints is not None and purpose == 'primary' and constraints.validate(native) is not None:
+        messages = constraints.messages(native, messages)
+        constraints.input_budget(models, messages, revision=query.ask_target()['revision'],
+            max_tokens=max_tokens, response_model=response_model, limit=query.ask_budget()[1])
+    runtime = query.answer_turns.application.state.ai_runtime
+    service = getattr(runtime, 'product_steers', None)
+    arguments = dict(response_model=response_model, max_tokens=max_tokens, validate_current=validate_current,
+        on_delta=on_delta, purpose=purpose, timeout_seconds=timeout_seconds, gap_plan=gap_plan, on_retry=on_retry,
+        failure_diagnostics=failure_diagnostics, phase=phase, phase_logical=phase_logical,
+        material_proof=material_proof)
+    if purpose != 'primary' or gap_plan is not None or service is None or not service.registered(request['turn_id']):
+        return _generate_answer_once(models, messages, invocation_key=invocation_key, **arguments)
+    from ..answer_effective import (
+        recover_effective_answer, prepare_answer_inheritance, resolve_answer_invocation,
+        resolve_answer_phase, complete_answer_phase,
+    )
+    from backend.shared.llm.model_transport import ModelSteerInterrupt
+    from core.ai_kernel.product_admission import admission_identity
+    execution = query.answer_turns.active[request['turn_id']]
+    lease = runtime._run_lease_context.get()
+    legacy = None
+    if phase is None and execution.get('continuation') is not None:
+        from ..answer_legacy import prepare_legacy_input
+        legacy = prepare_legacy_input(store, native, invocation_key, messages, response_model.model_json_schema(),
+            lease=lease, action=execution.get('action'), row=execution['continuation'], material_proof=material_proof)
+
+    def finish(output, metadata):
+        if legacy is not None:
+            from ..answer_legacy import complete_legacy_answer
+            complete_legacy_answer(store, request['turn_id'], invocation_key, lease=lease, action=execution.get('action'))
+        else:
+            complete_answer_phase(store, request['turn_id'], invocation_key, lease=lease, action=execution.get('action'))
+        return output, metadata
+
+    resumed = resolve_answer_phase(store, request['turn_id'], invocation_key)
+    if resumed is not None:
+        validate_current()
+        query.validate_answer_request(models, native)
+        return response_model.model_validate(resumed['result'][1]['output']), resumed['metadata']
+    selected = recover_effective_answer(store, request['turn_id'], invocation_key)
+    if selected is not None:
+        validate_current()
+        query.validate_answer_request(models, native)
+        resolved = resolve_answer_invocation(store, request['turn_id'], invocation_key)
+        return finish(response_model.model_validate(resolved['result'][1]['output']), resolved['metadata'])
+    if store.get_immutable_payload(request['turn_id'], 'answer-model-result-' + invocation_key) is not None:
+        if store.get_immutable_payload(request['turn_id'], 'answer-inherited-input-' + invocation_key) is not None:
+            resolved = resolve_answer_invocation(store, request['turn_id'], invocation_key)
+            validate_current()
+            query.validate_answer_request(models, native)
+            return finish(response_model.model_validate(resolved['result'][1]['output']), resolved['metadata'])
+        return _generate_answer_once(models, messages, invocation_key=invocation_key, **arguments)
+    base = {'messages': deepcopy(messages), 'purpose': purpose, 'response_schema': response_model.model_json_schema(),
+        **({'material_proof': deepcopy(material_proof)} if material_proof is not None else {}),
+        **({'phase': phase, 'phase_logical': phase_logical} if phase is not None else {})}
+    base = prepare_answer_inheritance(store, native, invocation_key, base, lease=lease,
+        adopted=service.adopted(request['turn_id']), continuation=execution.get('continuation'),
+        resume=execution.get('continuation') is not None and invocation_key == execution['invocation_key'],
+        action=execution.get('action'))
+    base_ref = store.get_or_create_immutable_payload(request['turn_id'], 'answer-base-input-' + invocation_key, base)
+    arguments['material_proof'] = deepcopy(base.get('material_proof'))
+    common = {'turn_id': request['turn_id'], 'origin_invocation': invocation_key, 'base_ref': base_ref,
+        'run_generation': lease.generation, 'run_owner_id': lease.owner_id, 'request_identity': admission_identity(native)}
+    current_messages, current_key = base['messages'], invocation_key
+    grant, batches, requests, continuation_inputs, all_inputs = None, [], [], [], []
+    while True:
+        try:
+            output, metadata = _generate_answer_once(models, current_messages, invocation_key=current_key,
+                _steer_service=service, _steer_grant=grant, _steer_origin=invocation_key, **arguments)
+        except (ModelSteerInterrupt, SteerBeforeDispatch) as error:
+            runtime.product_stops.checkpoint(request['turn_id'])
+            pending = service.pending(request['turn_id'])
+            if not pending:
+                raise RuntimeError('steer_recovery_required') from error
+            before_dispatch = isinstance(error, SteerBeforeDispatch)
+            preflight = before_dispatch and grant is None
+            handle = handles.get(current_key)
+            if not before_dispatch and handle is None:
+                raise RuntimeError('steer_recovery_required') from error
+            if before_dispatch and grant is not None:
+                # 尚未分配下一次实际调用时合并新补充，沿同一份真实关闭证明授予一次。
+                interruption_ref = grant['interruption_ref']
+                continuation_inputs.pop()
+            else:
+                interruption_ref = None if preflight else service.interruption_proof(request['turn_id'], handle, error)
+            if not before_dispatch:
+                requests.append(handle.model_request_id)
+            next_messages = service.policy.answer_messages(current_messages, [row['payload'] for row in pending])
+            next_key = pending[-1]['payload']['id']
+            model_key = next_key + '-' + execution['invocation_key'] if execution.get('continuation') is not None else next_key
+            next_batches = [*batches, [row['payload_ref'] for row in pending]]
+            frozen = service.freeze_input(request['turn_id'], kind='turn-steer-input-' + next_key,
+                steer_ids=[row['payload']['id'] for row in pending], payload={**base, **common, 'messages': next_messages,
+                    'invocation': next_key, 'model_invocation_key': model_key, 'preflight': preflight,
+                    'interruption_ref': interruption_ref, 'batches': next_batches,
+                    'prior_inputs': list(continuation_inputs), 'prior_request_ids': list(requests)})
+            reset = execution.get('steer_reset')
+            if not callable(reset):
+                raise RuntimeError('steer_stream_reset_unavailable')
+            reset()
+            batches = next_batches
+            all_inputs.append(frozen['input_ref'])
+            if preflight:
+                grant = None
+            else:
+                continuation_inputs.append(frozen['input_ref'])
+                grant = {'input_ref': frozen['input_ref'], 'steer_ref': pending[-1]['payload_ref'],
+                    'interruption_ref': interruption_ref}
+            current_messages, current_key = next_messages, next_key
+            continue
+        if not batches:
+            if store.get_immutable_payload(request['turn_id'], 'answer-inherited-input-' + invocation_key) is not None:
+                resolved = resolve_answer_invocation(store, request['turn_id'], invocation_key)
+                return finish(output, resolved['metadata'])
+            return finish(output, metadata)
+        final = handles.get(current_key)
+        actual_result = store.get_immutable_payload(request['turn_id'], 'answer-model-result-' + current_key)
+        if final is None or actual_result is None:
+            raise RuntimeError('steer_final_invocation_unavailable')
+        for index, reference in enumerate(all_inputs):
+            decision = store.get_or_create_immutable_payload(request['turn_id'],
+                'turn-steer-answer-decision-' + current_key + '-' + str(index),
+                {'turn_id': request['turn_id'], 'steer_input_ref': reference, 'result_ref': actual_result[0],
+                 'model_request_id': final.model_request_id})
+            store.release_steer_input(request['turn_id'], run_lease=lease, input_ref=reference, decision_ref=decision)
+        selected = recover_effective_answer(store, request['turn_id'], invocation_key)
+        if selected is None:
+            raise RuntimeError('steer_final_selector_unavailable')
+        return finish(output, resolve_answer_invocation(store, request['turn_id'], invocation_key)['metadata'])
+
+
+def _generate_answer_once(models, messages, *, response_model, max_tokens, validate_current,
+                    on_delta=None, purpose="primary", invocation_key="answer", timeout_seconds=None, gap_plan=None, on_retry=None,
+                    failure_diagnostics=False, phase=None, phase_logical=None, material_proof=None,
+                    _steer_service=None, _steer_grant=None, _steer_origin=None, **unused):
     """Use the tool-owned model lifecycle; domain code never owns a wire call."""
     active = ACTIVE_ANSWER.get()
     if active is None:
@@ -617,17 +952,45 @@ def generate_answer(models, messages, *, response_model, max_tokens, validate_cu
             validate_current=validate_current, on_delta=on_delta, timeout_seconds=timeout_seconds, plan=gap_plan,
             invocation=invocation_key)
     request, store, query, handles = active
+    freshness = getattr(query, 'outcome_freshness', None)
+    source_preparation = None
+    bound_input = False
+    constraints = getattr(query, 'project_constraint_input', None)
+    if (constraints is not None and purpose == 'primary'
+            and constraints.validate(store.get_request(request['turn_id'])) is not None):
+        messages = constraints.messages(store.get_request(request['turn_id']), messages)
+        constraints.input_budget(models, messages, revision=query.ask_target()['revision'],
+            max_tokens=max_tokens, response_model=response_model, limit=query.ask_budget()[1])
     def validate_wire():
         validate_current()
         query.validate_answer_request(models, store.get_request(request["turn_id"]))
+        if material_proof is not None:
+            query.validate_model_material_proof(models, material_proof,
+                native_request=store.get_request(request['turn_id']), messages=messages,
+                logical_invocation=phase_logical or _steer_origin or invocation_key,
+                input_ref=input_ref if bound_input else None, invocation_key=invocation_key)
+        if source_preparation is not None:
+            freshness.validate_input_preparation(request=store.get_request(request['turn_id']),
+                input_kind='answer-model-input-' + invocation_key, preparation_ref=source_preparation, input_ref=input_ref)
     validate_wire()
     kind = "answer-model-result-" + invocation_key
     existing = store.get_immutable_payload(request["turn_id"], kind)
     if existing is not None:
         payload = existing[1]
         return response_model.model_validate(payload["output"]), payload["metadata"]
-    store.get_or_create_immutable_payload(request["turn_id"], "answer-model-input-" + invocation_key,
-        {"messages": messages, "purpose": purpose, "response_schema": response_model.model_json_schema()})
+    schema = response_model.model_json_schema()
+    input_ref = store.get_or_create_immutable_payload(request["turn_id"], "answer-model-input-" + invocation_key,
+        {"messages": deepcopy(messages), "purpose": purpose, "response_schema": schema,
+         **({'material_proof': deepcopy(material_proof)} if material_proof is not None else {}),
+         **({'phase': phase, 'phase_logical': phase_logical} if phase is not None else {})})
+    if freshness is not None and purpose == 'primary':
+        source_preparation = freshness.prepare_input_basis(request=store.get_request(request['turn_id']),
+            input_kind='answer-model-input-' + invocation_key, messages=messages)
+    if phase is not None:
+        from core.ai_kernel.product_admission import admission_identity
+        store.get_or_create_immutable_payload(request['turn_id'], 'answer-phase-protocol-v1',
+            {'schema_version': '1.0.0', 'turn_id': request['turn_id'],
+             'request_identity': admission_identity(store.get_request(request['turn_id']))})
     execution = query.answer_turns.active[request['turn_id']]
     call_key = (invocation_key + '-' + execution['invocation_key']
         if execution.get('continuation') is not None else invocation_key)
@@ -643,23 +1006,58 @@ def generate_answer(models, messages, *, response_model, max_tokens, validate_cu
     activation = None
     if purpose == 'primary':
         from .provider_store_binding import main_provider_store_activation
-        activation = main_provider_store_activation(models, query.records,
+        activation = main_provider_store_activation(models, query.receipt_records,
             store.get_request(request['turn_id']), frozen[1])
     elif purpose == 'aux':
         from .provider_store_binding import auxiliary_provider_store_activation
-        activation = auxiliary_provider_store_activation(main_models, models, query.records,
+        activation = auxiliary_provider_store_activation(main_models, models, query.receipt_records,
             store, store.get_request(request['turn_id']), frozen[1], route)
-    inner = begin_nested_model_call(request, invocation_key=call_key, purpose=purpose)
+    if _steer_service is not None and _steer_service.pending(request['turn_id']):
+        raise SteerBeforeDispatch()
+    inner = begin_nested_model_call(request, invocation_key=call_key, purpose=purpose, steer_grant=_steer_grant)
     handle = _AnswerCall(inner, inner.runtime, request["turn_id"])
+    handle.logical_invocation = _steer_origin or invocation_key
     handles[invocation_key] = handle
+    lease = handle.runtime._run_lease_context.get()
+    interruption = None
+    if _steer_service is not None:
+        from backend.shared.llm.model_transport import OwnedAttemptInterruption
+        interruption = OwnedAttemptInterruption(turn_id=request['turn_id'], invocation_id=call_key,
+            attempt_id=handle.model_request_id)
+        handle.steer_control = interruption
     try:
-        output, metadata = models.complete_governed(messages, routing_snapshot=route,
-            execution_control=execution_control_from(request), metadata_sink=handle, wire_attempt_sink=handle,
-            response_model=response_model, max_tokens=max_tokens, validate_current=validate_wire,
-            on_delta=on_delta, purpose=purpose, timeout_seconds=timeout_seconds, retry_policy=retry_policy_for(),
-            stop_requested=lambda: handle.runtime.product_stops.checkpoint(request['turn_id']),
-            **({'provider_store_activation': activation} if activation is not None else {}),
-            **({'on_retry': on_retry} if on_retry is not None else {}))
+        if source_preparation is not None:
+            freshness.capture_input_basis(request=store.get_request(request['turn_id']),
+                input_kind='answer-model-input-' + invocation_key, input_ref=input_ref,
+                preparation_ref=source_preparation, model_request_id=handle.model_request_id)
+            validate_wire()
+        if purpose == 'primary' and lease is not None:
+            from core.ai_kernel.product_admission import admission_identity
+            store.get_or_create_immutable_payload(request['turn_id'], 'answer-invocation-binding-' + handle.model_request_id,
+                {'turn_id': request['turn_id'], 'project_id': request['scope']['project_id'],
+                 'model_request_id': handle.model_request_id, 'invocation_key': invocation_key,
+                 'logical_invocation': handle.logical_invocation, 'tool_call_id': handle.tool_call_id, 'input_ref': input_ref,
+                 'run_owner_id': lease.owner_id, 'run_generation': lease.generation,
+                 'request_identity': admission_identity(store.get_request(request['turn_id'])),
+                 **({'phase': phase, 'phase_logical': phase_logical} if phase is not None else {})})
+            bound_input = True
+        if material_proof is not None:
+            if purpose != 'primary' or not bound_input:
+                raise ValueError('answer_material_input_binding_unavailable')
+            validate_wire()
+        with (_steer_service.attempt_scope(request['turn_id'], interruption) if _steer_service is not None else nullcontext()):
+            output, metadata = models.complete_governed(messages, routing_snapshot=route,
+                execution_control=execution_control_from(request), metadata_sink=handle,
+                wire_attempt_sink=_AnswerSourceSink(handle, validate_wire,
+                    (lambda: _steer_service.bind_model_context(request['turn_id'], input_ref,
+                        input_kind='answer-model-input-' + invocation_key)) if _steer_service is not None else None)
+                    if source_preparation is not None or material_proof is not None or _steer_service is not None else handle,
+                response_model=response_model, max_tokens=max_tokens, validate_current=validate_wire,
+                on_delta=on_delta, purpose=purpose, timeout_seconds=timeout_seconds, retry_policy=retry_policy_for(),
+                stop_requested=lambda: handle.runtime.product_stops.checkpoint(request['turn_id']),
+                **({'attempt_interruption': interruption} if interruption is not None else {}),
+                **({'provider_store_activation': activation} if activation is not None else {}),
+                **({'on_retry': on_retry} if on_retry is not None else {}))
         validate_wire()
         with handle.lock:
             if handle.terminal == "failed":
@@ -678,6 +1076,13 @@ def generate_answer(models, messages, *, response_model, max_tokens, validate_cu
         if handle.terminal is not None:
             handle.discard()
         handle.finalize(error_code="ai.answer_model_failed")
+        if failure_diagnostics is True:
+            try:
+                _record_answer_failure(store, request, invocation_key, handle, input_ref, schema, error)
+            except Exception:
+                # Optional archival must never replace the original failure or
+                # trigger a different model retry/fallback decision.
+                pass
         raise
 
 
@@ -711,6 +1116,44 @@ def gap_answer_input(models, plan):
     return selected, route, {'messages': materials['messages'], 'material_proof': proof, 'policy_versions': dict(plan['policy_versions'])}
 
 
+def _gap_binding_matches(fact, expected):
+    return (isinstance(fact, dict) and set(fact) == {*expected, 'model_request_id'}
+            and type(fact['version']) is int and all(fact[key] == value for key, value in expected.items())
+            and isinstance(fact['model_request_id'], str) and bool(fact['model_request_id']))
+
+
+def _completed_gap_result(store, turn_id, events, binding_kind, fact, expected, result):
+    from core.ai_kernel.contracts import validate_turn_action
+    from ..answer_effective import _completed_results
+
+    completed = _completed_results(store, events, result)
+    if len(completed) != 1 or completed[0]['turn_id'] != turn_id:
+        raise ValueError('gap_invocation_result_unbound')
+    terminal = completed[0]
+    model_id = terminal['correlation']['model_request_id']
+    requested = [event for event in events if event['type'] == 'model.requested'
+        and event['turn_id'] == turn_id and event['correlation'] == terminal['correlation']
+        and event['data'].get('model_call_purpose') == 'aux' and event['sequence'] < terminal['sequence']]
+    if len(requested) != 1 or terminal['data'].get('model_call_purpose') != 'aux':
+        raise ValueError('gap_invocation_result_unbound')
+    if fact['model_request_id'] != model_id:
+        # 继续调用的键来自模型请求前实际接纳的操作。
+        resumed = [event for event in events if event['type'] == 'turn.resumed'
+            and event['sequence'] < requested[0]['sequence']]
+        if not resumed:
+            raise ValueError('gap_invocation_result_unbound')
+        boundary = resumed[-1]
+        action = validate_turn_action(store.get(boundary['data']['payload_ref']))
+        if (action['turn_id'] != turn_id or action['type'] != 'resume'
+                or action['expected_sequence'] + 1 != boundary['sequence']):
+            raise ValueError('gap_invocation_result_unbound')
+        resumed_binding = store.get_immutable_payload(turn_id,
+            binding_kind + '-answer-continue-' + action['action_id'])
+        if (resumed_binding is None or not _gap_binding_matches(resumed_binding[1], expected)
+                or resumed_binding[1]['model_request_id'] != model_id):
+            raise ValueError('gap_invocation_result_unbound')
+
+
 def _generate_gap_answer(models, messages, *, response_model, max_tokens, validate_current, on_delta, timeout_seconds, plan, invocation='gap-drilldown'):
     request, store, query, handles = ACTIVE_ANSWER.get()
     turn_id = request['turn_id']
@@ -741,21 +1184,14 @@ def _generate_gap_answer(models, messages, *, response_model, max_tokens, valida
             expected = {'version': 1, 'turn_id': turn_id, 'invocation_key': invocation, 'purpose': 'aux',
                 'input_ref': saved_input[0], 'route_ref': route['payload_ref'], 'route_revision': route['revision']}
             fact = binding[1]
-            if (not isinstance(fact, dict) or set(fact) != {*expected, 'model_request_id'}
-                    or type(fact['version']) is not int
-                    or any(fact[key] != value for key, value in expected.items())
-                    or not isinstance(fact['model_request_id'], str) or not fact['model_request_id']):
+            if not _gap_binding_matches(fact, expected):
                 raise ValueError('gap_invocation_binding_invalid')
-            events = [event for event in store.events_after(turn_id)
-                if event.get('correlation', {}).get('model_request_id') == fact['model_request_id']]
+            events = tuple(store.events_after(turn_id))
             if not any(event['type'] == 'model.requested' and event['data'].get('model_call_purpose') == 'aux'
-                    for event in events):
+                    and event['correlation'].get('model_request_id') == fact['model_request_id'] for event in events):
                 raise ValueError('gap_invocation_call_unavailable')
             if result is not None:
-                receipts = result[1]['metadata'].get('kernel_receipt_refs', [])
-                if not any(event['type'] == 'model.completed' and event['data']['receipt_ref'] in receipts
-                        for event in store.events_after(turn_id)):
-                    raise ValueError('gap_invocation_result_unbound')
+                _completed_gap_result(store, turn_id, events, binding_kind, fact, expected, result[1])
                 return response_model.model_validate(result[1]['output']), result[1]['metadata']
             execution = query.answer_turns.active[turn_id]
             row = execution.get('continuation')
@@ -825,11 +1261,10 @@ def answer_observation(invocation_key):
     request, store, _, handles = active
     handle = handles.get(invocation_key)
     if handle is None:
+        from ..answer_effective import _completed_results
         saved = store.get_immutable_payload(request['turn_id'], 'answer-model-result-' + invocation_key)
-        refs = saved[1]['metadata'].get('kernel_receipt_refs', []) if saved is not None else []
-        completed = [event for event in store.events_after(request['turn_id'])
-            if event['type'] == 'model.completed' and event['data']['receipt_ref'] in refs]
-        if len(completed) != 1:
+        completed = _completed_results(store, tuple(store.events_after(request['turn_id'])), saved[1]) if saved is not None else []
+        if len(completed) != 1 or completed[0]['turn_id'] != request['turn_id']:
             return {'receipt_ids': [], 'observations': [], 'complete': False}
         identity = completed[0]['correlation']['model_request_id']
     else:

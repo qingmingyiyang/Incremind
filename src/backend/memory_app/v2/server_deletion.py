@@ -13,9 +13,14 @@ from core.storage_provider import SQLiteUnitOfWorkConflict
 from core.storage_provider.vault_backup_restore import _native_io_path
 from .devices import DEVICES, PAIRINGS, PRESENCE
 from .server_users import DELETIONS, USERS
+from .server_credentials import CREDENTIALS, NAMES, LOGIN_DEVICES, ATTEMPTS
+from .server_models import ALLOCATIONS, PROFILES, METERING_PRICES
+from .server_model_balance import BALANCES, ENTRIES, RESERVATIONS, METERING, NO_WIRE
 
 
-_KNOWN = {USERS, DEVICES, PAIRINGS, PRESENCE, DELETIONS, 'server_job_usage', 'admin_audit'}
+_MODEL_ACCOUNT_RECORDS = (ALLOCATIONS, BALANCES, ENTRIES, RESERVATIONS, METERING, NO_WIRE)
+_KNOWN = {USERS, DEVICES, PAIRINGS, PRESENCE, DELETIONS, 'server_job_usage', 'admin_audit',
+          CREDENTIALS, NAMES, LOGIN_DEVICES, ATTEMPTS, PROFILES, METERING_PRICES, *_MODEL_ACCOUNT_RECORDS}
 LOGGER = logging.getLogger(__name__)
 
 
@@ -266,13 +271,26 @@ def _references(value, identities):
     return False
 
 
-def _check_related(tx, user_id):
+def _check_related(tx, user_id, related_owners=()):
     devices = {row.object_id for row in tx.list(DEVICES) if row.payload['user_id'] == user_id}
+    owned = set()
+    for owner in related_owners:
+        if (not isinstance(owner.collections, frozenset) or not owner.collections
+                or any(not isinstance(name, str) or not name for name in owner.collections)
+                or owner.collections.intersection(_KNOWN | owned)):
+            raise ValueError('server_deletion_related_owner_invalid')
+        owner.validate_related(tx, user_id=user_id, device_ids=frozenset(devices))
+        owned.update(owner.collections)
+    for collection in (METERING, NO_WIRE):
+        for row in tx.list(collection):
+            reservation = tx.read(RESERVATIONS, row.object_id)
+            if (reservation is None or row.payload.get('user_id') not in {None, reservation.payload['user_id']}):
+                raise UserError('user_delete_related_data')
     identities = {user_id, *devices}
     # 未登记的中央关联必须明确处理，不能把遗留数据隐藏成已彻底删除。
     collections = [row[0] for row in tx.connection.execute('SELECT DISTINCT collection FROM crp_structured_records')]
     for collection in collections:
-        if collection in _KNOWN:
+        if collection in _KNOWN or collection in owned:
             continue
         for row in tx.list(collection):
             if row.object_id in identities or _references(row.payload, identities):
@@ -281,8 +299,9 @@ def _check_related(tx, user_id):
 
 
 class ServerUserDeletion:
-    def __init__(self, users, pool, jobs):
+    def __init__(self, users, pool, jobs, *, related_owners=()):
         self.users, self.pool, self.jobs = users, pool, jobs
+        self.related_owners = tuple(related_owners)
 
     def _validate(self, tx, actor, user_id, expected_revision, confirmation):
         self.users._admin(tx, actor)
@@ -297,7 +316,7 @@ class ServerUserDeletion:
             raise UserError('user_revision_conflict')
         if row.payload.get('disabled_at') is None:
             raise UserError('user_delete_requires_disabled')
-        _check_related(tx, user_id)
+        _check_related(tx, user_id, self.related_owners)
         return row
 
     def _prepare(self, actor, user_id, expected_revision, confirmation):
@@ -334,8 +353,22 @@ class ServerUserDeletion:
             _, identity = _target(self.users, user_id)
             if identity is not None:
                 raise UserError('user_delete_incomplete')
-            devices = _check_related(tx, user_id)
+            devices = _check_related(tx, user_id, self.related_owners)
+            for owner in self.related_owners:
+                owner.cleanup_related(tx, user_id=user_id, device_ids=frozenset(devices))
+            reservation_ids = {row.object_id for row in tx.list(RESERVATIONS) if row.payload['user_id'] == user_id}
             intent_removed = False
+            credential = tx.read(CREDENTIALS, user_id)
+            if credential is not None:
+                attempt = tx.read(ATTEMPTS, 'name-' + credential.payload['login_name'])
+                if attempt is not None:
+                    tx.delete(ATTEMPTS, attempt.object_id, expected_revision=attempt.revision)
+                tx.delete(CREDENTIALS, user_id, expected_revision=credential.revision)
+            for collection in (NAMES, LOGIN_DEVICES, *_MODEL_ACCOUNT_RECORDS):
+                for row in tx.list(collection):
+                    selected = row.object_id in reservation_ids if collection in {METERING, NO_WIRE} else row.payload['user_id'] == user_id
+                    if selected:
+                        tx.delete(collection, row.object_id, expected_revision=row.revision)
             for collection in (PAIRINGS, PRESENCE, 'server_job_usage', 'admin_audit', DEVICES):
                 for row in tx.list(collection):
                     value = row.payload

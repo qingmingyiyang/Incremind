@@ -193,8 +193,63 @@ class ProductStops:
                 break
             if self.runtime.receipt_for(member).status not in {'completed', 'failed', 'cancelled'}:
                 if not runner.request_turn_cancel(member, reason='user stopped product turn'):
-                    self.park_idle(member)
+                    bound = self.product(member)
+                    if bound is None:
+                        continue
+                    product = self.records.read('v2_turns', bound[0])
+                    if product is not None and product.payload.get('receipt', {}).get('do', {}).get('executor'):
+                        # 尚未领取的外部任务沿原执行入口读取持久停止标记，避免启动 CLI。
+                        runner.accept_and_submit(self.store.get_request(member))
+                    else:
+                        self.park_idle(member)
         return self.state(identity, persist=True) or 'stopped', generation
+
+    def external_stop_closed(self, identity):
+        """只把原进程 owner 已提交的取消事实投影为产品停止。"""
+        from ..v2.external_execution import RESULT_KIND, RECEIPT_KIND
+        from ..v2.external_runs import ExternalRuns
+        from core.ai_kernel.tool_invocation import intent_from_payload, outcome_from_payload
+        stop = self.current(identity)
+        if stop is None or stop.payload['state'] not in {'requested', 'paused'}:
+            return False
+        product = self.records.read('v2_turns', stop.object_id)
+        receipt = product.payload.get('receipt', {}).get('do', {}) if product is not None else {}
+        if (not receipt.get('executor') or receipt.get('kernel_turn_id') != identity
+                or self.runtime.receipt_for(identity).status not in {'failed', 'cancelled'}):
+            return False
+        archive = self.store.get_immutable_payload(identity, 'external-task-run-v1')
+        if archive is None or archive[1].get('request') != self.store.get_request(identity):
+            return False
+        owner_id = archive[1]['owner_id']
+        result = self.store.get_immutable_payload(identity, RESULT_KIND)
+        proof = self.store.get_immutable_payload(identity, RECEIPT_KIND)
+        if self.records.read('v2_external_runs', identity) is None:
+            # 原内核须证明同一调用在 provider 启动之前取消，缺记录本身不证明关闭。
+            events = tuple(self.store.events_after(identity))
+            intents = [event for event in events if event['type'] == 'tool.intent.recorded']
+            outcomes = [event for event in events if event['type'] == 'tool.outcome.recorded']
+            start = stop.payload['members'].get(identity)
+            if (result is not None or proof is not None or len(intents) != 1 or len(outcomes) != 1
+                    or start is None or not any(event['type'] == 'turn.cancel.requested' for event in events[start:])
+                    or not events or events[-1]['type'] != 'turn.cancelled'):
+                return False
+            intent = intent_from_payload(self.store.get(intents[0]['data']['payload_ref']))
+            outcome = outcome_from_payload(self.store.get(outcomes[0]['data']['payload_ref']))
+            return (intent.turn_id == outcome.turn_id == identity
+                and intent.capability_id == outcome.capability_id == 'external.task.execute'
+                and intent.invocation_id == outcome.invocation_id and outcome.status == 'cancelled'
+                and outcome.effect_certainty == 'confirmed_none' and outcome.error_code == 'ai.tool_cancelled')
+        run = ExternalRuns(self.records).read(identity, owner_id=owner_id)
+        if (run['status'] != 'cancelled' or run['ended_at'] is None
+                or run['executor'] != receipt['executor'] or result is None or proof is None):
+            return False
+        body = result[1]
+        return (body.get('turn_id') == identity and body.get('owner_id') == owner_id
+            and body.get('status') == 'cancelled' and body.get('exit_code') == run['exit_code']
+            and body.get('usage') == run['usage'] and proof[1] == {
+                'turn_id': identity, 'owner_id': owner_id, 'payload_ref': result[0],
+                'run_revision': run['revision'], 'status': 'cancelled',
+                'effect_certainty': 'unknown' if run['started_at'] is not None else 'confirmed_none'})
 
     def _request(self, product_id, project, runner):
         product = self.records.read('v2_turns', product_id)
@@ -203,7 +258,7 @@ class ProductStops:
         identity = (product.payload['receipt']['do']['kernel_turn_id']
             if product is not None and product.payload['intent'] == 'do' else product_id)
         bound = self.product(identity)
-        if bound is None or bound[1]['scope']['project_id'] != project:
+        if bound is None or bound[0] != product_id or bound[1]['scope']['project_id'] != project:
             raise ValueError('workbench_not_found')
         root = bound[1]
         with self.records.begin() as tx:
@@ -225,8 +280,14 @@ class ProductStops:
         return identity, members, payload['generation']
 
     def park_idle(self, identity):
+        request = self.store.get_request(identity)
+        provider = self.runtime._answer_provider(identity)
         tasks = self.runtime.task_continuations
-        if tasks is None or tasks.paused(identity, self.store.get_request(identity)['scope']['project_id']) is not None:
+        if (request is None or self.runtime.receipt_for(identity).status in {'completed', 'failed', 'cancelled'}
+                or provider is None and tasks is None):
+            return
+        if (provider.service.paused(identity) if provider is not None else
+                tasks.paused(identity, request['scope']['project_id'])) is not None:
             return
         now = datetime.now(timezone.utc)
         lease = self.runtime.try_acquire_run_lease(identity, 'product-stop-' + uuid4().hex,
@@ -235,7 +296,10 @@ class ProductStops:
             return
         scope = self.runtime._bind_run_lease(identity, lease)
         try:
-            tasks.pause_boundary(self.runtime, identity)
+            if provider is not None:
+                provider.service.pause_boundary(identity)
+            else:
+                tasks.pause_boundary(self.runtime, identity)
         finally:
             self.runtime._run_lease_context.reset(scope)
             self.runtime.release_run_lease(identity, lease.owner_id, lease.generation)
@@ -274,6 +338,8 @@ class ProductStops:
             return None
         def ready_member(key):
             if self.runtime.receipt_for(key).status == 'completed':
+                return True
+            if self.external_stop_closed(key):
                 return True
             saved = row.payload['pauses'].get(key)
             if saved is None:

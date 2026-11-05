@@ -7,13 +7,14 @@ import time
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
-from backend.recognition import WorkScope, RecognitionError
+from backend.recognition import WorkScope, RecognitionConflict, RecognitionError
 from backend.shared.llm.model_transport import ModelInterrupted
 from backend.shared.llm.message_metadata import (_extract_normalized_usage, _estimate_input_tokens,
     _build_prompt_fallback_messages, _build_json_mode_messages)
 from ..model_config import ModelConfigurationError
 from ..recall_state import COLLECTION as RECALL
 from ..source_egress import SourceEgressService
+from ..transaction_records import TransactionRecords
 from ..kernel.answer_turns import generate_answer, answer_observation, abandon_answer_model, auxiliary_answer_models, gap_answer_input
 from .budget import history_tokens, input_tokens, text_tokens
 from .insights import source_documents
@@ -197,19 +198,45 @@ def _dependencies(query, project, row, visited, memo):
     return dependency
 
 
+def scoped_history_rows(query, records, project, thread, *, excluded_turn=None):
+    if query is None:
+        rows = [row for row in records.list_matching('v2_turns', project_id=project, thread_id=thread)
+            if row.object_id != excluded_turn]
+    else:
+        from .turn_logical_scope import TurnLogicalScope
+        owner = query.execution_owner
+        logical = TurnLogicalScope(owner.answer_turns.application)
+        if records is not owner.records or records is not logical.records:
+            raise RecognitionConflict('thread_history_owner_changed')
+        kind = 'shared' if query.origin_admission is not None else 'personal'
+        # 轮次选择和父子范围使用同一份 Actor 读取事务，避免并行分项更新父轮修订。
+        with records.begin_read() as transaction:
+            reader = TransactionRecords(transaction)
+            identities = reader.connection.execute('SELECT object_id FROM crp_structured_records WHERE collection = ? '
+                "AND json_extract(payload_json, '$.project_id') = ? AND json_extract(payload_json, '$.thread_id') = ?",
+                ('v2_turns', project, thread)).fetchall()
+            rows = [row for (identity,) in identities if identity != excluded_turn
+                and logical.read(row := reader.read('v2_turns', identity), reader=reader) == kind]
+    return sorted(rows, key=lambda row: (row.payload.get('created_at', ''), row.object_id))
+
+
 def read_history(records, project, thread, question, *, budget=4000, prompt_overhead=0, excluded_turn=None, query=None):
+    scope_rows = scoped_history_rows(query, records, project, thread, excluded_turn=excluded_turn)
     rows = [
         row
-        for row in records.list_matching("v2_turns", project_id=project, thread_id=thread)
-        if row.object_id != excluded_turn
-        and row.payload.get("intent") == "ask"
+        for row in scope_rows
+        if row.payload.get("intent") == "ask"
         and isinstance(row.payload.get("receipt", {}).get("ask", {}).get("answer"), str)
     ]
-    rows.sort(key=lambda row: (row.payload.get("created_at", ""), row.object_id))
     dependencies, memo = {}, {}
     if query is not None:
         eligible = []
         for row in rows[-3:]:
+            if query.origin_admission is not None:
+                from .shared_history import history_dependency
+                dependencies[row.object_id] = history_dependency(query, row)
+                eligible.append(row)
+                continue
             try:
                 dependencies[row.object_id] = _dependencies(query, project, row, set(), memo)
             except Exception:
@@ -229,10 +256,18 @@ def read_history(records, project, thread, question, *, budget=4000, prompt_over
     bounded = bound_history(turns, question, budget=budget, prompt_overhead=prompt_overhead)
     selected_dependencies = [dependencies[turn['id']] for turn in bounded['turns'] if turn['id'] in dependencies]
     from .agentic_rag import pending_clarification
-    pending = pending_clarification(query, records, project, thread) if query is not None else None
-    if pending and dependencies[rows[-1].object_id] not in selected_dependencies:
+    pending = pending_clarification(query, records, project, thread, rows=scope_rows) if query is not None else None
+    if pending:
         # 追问是控制事实；即使普通历史预算删掉旧气泡，也必须完整复验其原条件闭包。
-        selected_dependencies.append(dependencies[rows[-1].object_id])
+        row = scope_rows[-1]
+        if row.object_id not in dependencies:
+            if query.origin_admission is not None:
+                from .shared_history import history_dependency
+                dependencies[row.object_id] = history_dependency(query, row)
+            else:
+                dependencies[row.object_id] = _dependencies(query, project, row, set(), memo)
+        if dependencies[row.object_id] not in selected_dependencies:
+            selected_dependencies.append(dependencies[row.object_id])
     return {
         **bounded,
         "privacy_revision": privacy_revision(records),
@@ -250,6 +285,9 @@ def bound_history(turns, question, *, budget=4000, prompt_overhead=0):
 
 
 def validate_history(query, project, history, target):
+    if query.origin_admission is not None:
+        from .shared_history import validate_model_history
+        return validate_model_history(query, project, history, target)
     if privacy_revision(query.records) != history["privacy_revision"]:
         raise RecognitionError("history_authority_changed")
     if target["execution_location"] == "remote" and not egress_allowed(
@@ -319,13 +357,14 @@ def validate_history(query, project, history, target):
 
 def sum_usage(*observations):
     """Aggregate observed counters; unknown wire calls are separately marked."""
+    observed_only = any(isinstance(value, dict) and value.get('observed_only') is True for value in observations)
     observations = [_extract_normalized_usage({"usage": value}) for value in observations]
     keys = {key for value in observations for key in value}
     return {
         key: sum(value[key] for value in observations if key in value)
         for key in keys
         if all(type(value[key]) is int and value[key] >= 0 for value in observations if key in value)
-    }
+    } | ({'observed_only': True} if observed_only else {})
 
 
 async def condense(query, project, question, history, *, turn_id):

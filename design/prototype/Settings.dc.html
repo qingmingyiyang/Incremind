@@ -21,19 +21,82 @@ input{font:inherit;color:var(--ink);background:transparent;border:0;outline:none
 input::placeholder{color:var(--muted)}
 button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--red);outline-offset:2px}
 a{color:inherit;text-decoration:none}
-.grp{color:var(--muted);border-left:2px solid transparent}
-.grp.on{color:var(--ink);border-left-color:var(--red)}
-.sw{width:40px;height:22px;border-radius:11px;background:var(--line2);position:relative;flex-shrink:0}
+
+/* settings nav */
+.grp{display:flex;align-items:center;gap:12px;height:40px;padding:0 12px;border-radius:4px;color:var(--muted);font-size:15px}
+.grp:hover{color:var(--ink)}
+.grp.on{background:var(--sunk);color:var(--ink);font-weight:500}
+.grp.on .ic{color:var(--red)}
+.thm{display:flex;gap:2px;padding:2px;background:var(--sunk);border-radius:4px;width:max-content}
+.thm button{width:36px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:var(--muted)}
+.thm button.on{background:var(--panel);color:var(--ink)}
+
+/* grouped lists */
+.cap{margin:36px 0 10px 4px;font-size:12px;letter-spacing:.06em;color:var(--muted)}
+.cap:first-child{margin-top:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.item+.item{border-top:1px solid var(--line)}
+.row{display:flex;align-items:center;gap:12px;min-height:60px;padding:0 12px 0 14px}
+.rowbtn{flex-grow:1;display:flex;align-items:center;gap:14px;min-height:60px;min-width:0}
+.ico{width:32px;height:32px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:4px;background:var(--sunk);color:var(--ink2)}
+.tt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.t1{font-size:15px}
+.t2{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ink);flex-shrink:0}
+.dot.off{background:transparent;box-shadow:inset 0 0 0 1.5px var(--line2)}
+.dot.red{background:var(--red)}
+.chevb{width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--muted);flex-shrink:0}
+.chev{transition:transform .18s}
+.chev.on{transform:rotate(180deg)}
+.link{height:30px;padding:0 10px;border-radius:4px;font-size:13px;color:var(--ink);background:var(--sunk)}
+.num{font-family:var(--mono);font-size:13px;color:var(--ink2)}
+
+/* switch */
+.sw{width:38px;height:22px;border-radius:11px;background:var(--line2);position:relative;flex-shrink:0;transition:background .15s}
 .sw::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--panel);transition:left .15s}
 .sw.on{background:var(--red)}
-.sw.on::after{left:21px}
-.seg{color:var(--muted);border-bottom:2px solid transparent}
-.seg.on{color:var(--ink);border-bottom-color:var(--red)}
-.chev{transition:transform .15s}
-.chev.on{transform:rotate(90deg)}
-.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--line2);flex-shrink:0}
-.dot.on{background:var(--ink)}
-.dot.red{background:var(--red)}
+.sw.on::after{left:19px}
+
+/* expansion panel */
+.exp{background:var(--paper);border-top:1px solid var(--line);padding:18px 20px 18px 60px;display:flex;flex-direction:column;gap:16px;animation:drop .18s ease-out}
+@keyframes drop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.seg2{display:flex;gap:2px;padding:2px;background:var(--sunk);border-radius:4px;width:max-content}
+.seg2 button{height:30px;padding:0 14px;border-radius:4px;font-size:13px;color:var(--muted)}
+.seg2 button.on{background:var(--panel);color:var(--ink);font-weight:500}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.f{display:flex;flex-direction:column;gap:6px;min-width:0}
+.f>span{font-size:12px;color:var(--muted)}
+.inp{height:36px;padding:0 10px;background:var(--panel);border:1px solid var(--line2);border-radius:4px;font-size:14px;display:flex;align-items:center;gap:8px;min-width:0}
+.inp input{flex-grow:1;height:34px}
+.kvs{display:flex;gap:10px;flex-wrap:wrap}
+.kv{display:flex;flex-direction:column;gap:2px;padding:8px 12px;background:var(--panel);border:1px solid var(--line);border-radius:4px;min-width:96px}
+.kv span{font-size:12px;color:var(--muted)}
+.kv b{font-weight:500;font-size:14px}
+.line{display:flex;align-items:center;gap:12px;min-height:36px;font-size:14px}
+.line .lb{flex-grow:1;min-width:0}
+.sub{font-size:12px;color:var(--muted);letter-spacing:.04em}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;background:var(--panel);border:1px solid var(--line);border-radius:4px;font-size:13px}
+.chip button{color:var(--muted);display:flex}
+.chip.add{color:var(--muted);border-style:dashed}
+.foot{display:flex;align-items:center;gap:12px;padding-top:2px}
+.btn{height:32px;padding:0 14px;border:1px solid var(--line2);border-radius:4px;font-size:13px;background:var(--panel)}
+.btn.pri{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.btn.warn{background:var(--red);border-color:var(--red);color:var(--onred)}
+.btn.danger{color:var(--red)}
+.res{font-family:var(--mono);font-size:12px;color:var(--ink2)}
+.bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden;flex-grow:1}
+.bar>i{display:block;height:3px;background:var(--ink)}
+.code{position:relative;background:var(--sunk);border-radius:4px;padding:12px 64px 12px 12px;font-family:var(--mono);font-size:12px;line-height:1.7;color:var(--ink2);white-space:pre-wrap}
+.code .btn{position:absolute;top:8px;right:8px;height:26px;padding:0 10px;font-size:12px}
+.tbl{display:grid;grid-template-columns:92px 44px minmax(0,1fr) 40px 96px 56px;gap:10px;align-items:center}
+.stat{display:flex;flex-direction:column;gap:4px;padding:18px 20px}
+.stat+.stat{border-left:1px solid var(--line)}
+.stat b{font-family:var(--serif);font-size:28px;font-weight:700;line-height:1.1}
+.stat span{font-size:12px;color:var(--muted)}
+.qr{width:132px;height:132px;background:var(--panel);border:1px solid var(--line);border-radius:4px;display:flex;align-items:center;justify-content:center}
+.drop{height:96px;border:1px dashed var(--line2);border-radius:4px;display:flex;align-items:center;justify-content:center;gap:10px;color:var(--muted);font-size:13px;background:var(--panel)}
 </style>
 </helmet>
 <div class="app {{themeClass}}" style="width:1440px;height:900px;position:relative;overflow:hidden;display:grid;grid-template-columns:64px minmax(0,1fr);background:var(--paper);color:var(--ink);font-family:var(--sans)">
@@ -55,234 +118,384 @@ a{color:inherit;text-decoration:none}
 <svg class="ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
 <span style="font-size:11px;color:var(--ink)">设置</span>
 </a>
-<div style="flex-grow:1"></div>
-<button aria-label="切换明暗" title="明暗" onClick="{{toggleTheme}}" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:var(--muted)">
-<svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg>
-</button>
 </nav>
 
-<div style="display:grid;grid-template-columns:240px minmax(0,1fr);min-width:0;min-height:0">
-<div style="border-right:1px solid var(--line);padding:92px 0 24px 28px;display:flex;flex-direction:column;gap:2px">
-<sc-for list="{{groups}}" as="g" hint-placeholder-count="4">
-<button class="grp {{g.cls}}" onClick="{{g.pick}}" style="height:44px;padding-left:14px;font-size:15px">{{g.label}}</button>
+<div style="display:grid;grid-template-columns:232px minmax(0,1fr);min-width:0;min-height:0">
+
+<div style="border-right:1px solid var(--line);padding:56px 16px 24px 20px;display:flex;flex-direction:column;gap:2px">
+<sc-for list="{{groups}}" as="g" hint-placeholder-count="6">
+<button class="grp {{g.cls}}" aria-current="{{g.current}}" onClick="{{g.pick}}">
+<svg class="ic" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="{{g.icon}}"></path></svg>
+<span>{{g.label}}</span>
+</button>
+</sc-for>
+<div style="flex-grow:1"></div>
+<div class="thm" role="group" aria-label="主题">
+<sc-for list="{{themes}}" as="th" hint-placeholder-count="3">
+<button class="{{th.cls}}" aria-pressed="{{th.on}}" aria-label="{{th.label}}" title="{{th.label}}" onClick="{{th.pick}}"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="{{th.icon}}"></path></svg></button>
 </sc-for>
 </div>
+</div>
 
-<div style="padding:64px 72px 48px;overflow:auto;min-width:0;min-height:0">
-<div style="max-width:760px;display:flex;flex-direction:column">
-<h1 style="margin:0 0 28px;font-family:var(--serif);font-size:32px;font-weight:700">{{title}}</h1>
+<div style="padding:56px 64px 64px;overflow:auto;min-width:0;min-height:0">
+<div style="max-width:720px;margin:0 auto;display:flex;flex-direction:column">
 
+<!-- 模型 -->
 <sc-if value="{{isModel}}" hint-placeholder-val="{{ true }}">
-<div style="display:flex;flex-direction:column;border-bottom:1px solid var(--line)">
-<sc-for list="{{models}}" as="m" hint-placeholder-count="4">
-<div style="border-top:1px solid var(--line)">
-<div style="display:flex;align-items:center;gap:16px;min-height:64px">
-<button aria-expanded="{{m.open}}" onClick="{{m.expand}}" style="flex-grow:1;display:flex;align-items:center;gap:16px;min-height:64px;min-width:0">
-<svg class="ic chev {{m.chev}}" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color:var(--muted)"><path d="M9 6l6 6-6 6"></path></svg>
-<span style="width:72px;font-size:15px">{{m.label}}</span>
-<span style="flex-grow:1;font-size:14px;color:var(--ink2);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{m.value}}</span>
-<span class="dot {{m.dot}}" title="{{m.dotTitle}}"></span>
+<sc-for list="{{modelCards}}" as="c" hint-placeholder-count="3">
+<div class="cap">{{c.cap}}</div>
+<div class="card">
+<sc-for list="{{c.items}}" as="m" hint-placeholder-count="3">
+<div class="item">
+<div class="row">
+<button class="rowbtn" aria-expanded="{{m.open}}" onClick="{{m.expand}}">
+<span class="ico"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="{{m.icon}}"></path></svg></span>
+<span class="tt"><span class="t1">{{m.label}}</span><span class="t2"><span class="dot {{m.dot}}"></span>{{m.sub}}</span></span>
 </button>
-<button role="switch" aria-checked="{{m.on}}" aria-label="{{m.switchLabel}}" title="外发" onClick="{{m.toggle}}" class="sw {{m.cls}}"></button>
+<sc-if value="{{m.needSetup}}" hint-placeholder-val="{{ false }}"><button class="link" onClick="{{m.expand}}">接入</button></sc-if>
+<sc-if value="{{m.hasSwitch}}" hint-placeholder-val="{{ true }}"><button role="switch" aria-checked="{{m.on}}" aria-label="{{m.switchLabel}}" title="外发" onClick="{{m.toggle}}" class="sw {{m.cls}}"></button></sc-if>
+<button class="chevb" aria-label="展开" onClick="{{m.expand}}"><svg class="ic chev {{m.chev}}" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
 </div>
 
 <sc-if value="{{m.open}}" hint-placeholder-val="{{ false }}">
-<div style="padding:4px 0 24px 30px;display:flex;flex-direction:column;gap:2px">
+<div class="exp">
 
-<sc-if value="{{m.isGen}}" hint-placeholder-val="{{ false }}">
-<div role="group" aria-label="方式" style="display:flex;gap:22px;height:40px;align-items:center;margin-bottom:6px">
-<sc-for list="{{genModes}}" as="gm" hint-placeholder-count="3">
-<button class="seg {{gm.cls}}" aria-pressed="{{gm.pressed}}" onClick="{{gm.pick}}" style="height:32px;font-size:14px">{{gm.label}}</button>
+<sc-if value="{{m.hasModes}}" hint-placeholder-val="{{ false }}">
+<div class="seg2" role="group" aria-label="方式">
+<sc-for list="{{m.modes}}" as="md" hint-placeholder-count="3">
+<button class="{{md.cls}}" aria-pressed="{{md.on}}" onClick="{{md.pick}}">{{md.label}}</button>
 </sc-for>
 </div>
 </sc-if>
 
-<sc-if value="{{m.isSub}}" hint-placeholder-val="{{ false }}">
-<div style="display:flex;align-items:center;gap:16px;height:48px;border-top:1px solid var(--line)">
-<span style="width:72px;font-size:13px;color:var(--muted)">账号</span>
-<span style="flex-grow:1;font-family:var(--mono);font-size:14px">me@example.com</span>
-<button style="height:32px;font-size:13px;color:var(--muted)">退出</button>
-</div>
-<div style="display:flex;align-items:center;gap:16px;height:48px;border-top:1px solid var(--line)">
-<span style="width:72px;font-size:13px;color:var(--muted)">模型</span>
-<button style="flex-grow:1;display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:14px">gpt-5<svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color:var(--muted)"><path d="M6 9l6 6 6-6"></path></svg></button>
-</div>
-</sc-if>
-
-<sc-if value="{{m.isLocal}}" hint-placeholder-val="{{ false }}">
-<div style="display:flex;align-items:center;gap:16px;height:48px;border-top:1px solid var(--line)">
-<span style="width:72px;font-size:13px;color:var(--muted)">模型</span>
-<span style="flex-grow:1;font-family:var(--mono);font-size:14px">qwen2.5-1.5b-instruct</span>
-<span style="font-family:var(--mono);font-size:13px;color:var(--ink2)">已安装</span>
-</div>
-</sc-if>
-
-<sc-if value="{{m.isApi}}" hint-placeholder-val="{{ true }}">
-<sc-for list="{{m.fields}}" as="f" hint-placeholder-count="3">
-<label style="display:flex;align-items:center;gap:16px;height:48px;border-top:1px solid var(--line)">
-<span style="width:72px;font-size:13px;color:var(--muted)">{{f.label}}</span>
-<input aria-label="{{f.label}}" type="{{f.type}}" value="{{f.value}}" placeholder="{{f.ph}}" style="flex-grow:1;font-family:var(--mono);font-size:14px;height:40px">
-</label>
-</sc-for>
-</sc-if>
-
-<sc-for list="{{m.facts}}" as="x" hint-placeholder-count="0">
-<div style="display:flex;align-items:center;gap:16px;height:48px;border-top:1px solid var(--line)">
-<span style="width:72px;font-size:13px;color:var(--muted)">{{x.label}}</span>
-<span style="flex-grow:1;font-family:var(--mono);font-size:14px;color:var(--ink2)">{{x.value}}</span>
-</div>
-</sc-for>
-
-<div style="display:flex;align-items:center;gap:14px;padding-top:14px">
-<button onClick="{{m.test}}" style="height:34px;padding:0 14px;border:1px solid var(--line2);border-radius:4px;font-size:14px">测试</button>
-<span style="font-family:var(--mono);font-size:13px;color:var(--ink2)">{{m.testResult}}</span>
-<div style="flex-grow:1"></div>
-<span style="font-family:var(--mono);font-size:12px;color:var(--muted)">r{{m.rev}}</span>
-</div>
-</div>
-</sc-if>
-</div>
+<sc-if value="{{m.hasFacts}}" hint-placeholder-val="{{ false }}">
+<div class="kvs">
+<sc-for list="{{m.facts}}" as="x" hint-placeholder-count="2">
+<div class="kv"><span>{{x.label}}</span><b>{{x.value}}</b></div>
 </sc-for>
 </div>
 </sc-if>
 
-<sc-if value="{{isPrivacy}}" hint-placeholder-val="{{ false }}">
+<sc-if value="{{m.hasLocalModel}}" hint-placeholder-val="{{ false }}">
+<div class="line" style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px 12px">
+<span class="lb"><span style="display:block;font-size:14px">{{m.localName}}</span><span style="font-size:12px;color:var(--muted)">{{m.localMeta}}</span></span>
+<sc-if value="{{m.localAct}}" hint-placeholder-val="{{ false }}"><button class="btn" onClick="{{m.localToggle}}">{{m.localAct}}</button></sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{m.hasIndex}}" hint-placeholder-val="{{ false }}">
+<div class="line"><span class="sub" style="width:48px">索引</span><span class="bar"><i style="width:{{m.indexPct}}"></i></span><span class="num">{{m.indexText}}</span></div>
+</sc-if>
+
+<sc-if value="{{m.hasFields}}" hint-placeholder-val="{{ true }}">
+<div class="grid2">
+<sc-for list="{{m.fields}}" as="f" hint-placeholder-count="4">
+<label class="f" style="grid-column:{{f.span}}"><span>{{f.label}}</span><span class="inp"><input aria-label="{{f.label}}" type="{{f.type}}" value="{{f.value}}" placeholder="{{f.ph}}" style="font-family:{{f.font}}"></span></label>
+</sc-for>
+</div>
+</sc-if>
+
+<sc-if value="{{m.hasPrices}}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-direction:column;gap:8px">
+<span class="sub">单价 · ¥ / 百万 token</span>
+<div class="grid3">
+<sc-for list="{{m.prices}}" as="pr" hint-placeholder-count="3">
+<label class="inp" style="font-size:13px"><span style="color:var(--muted);white-space:nowrap">{{pr.label}}</span><input aria-label="{{pr.label}}单价" value="{{pr.value}}" placeholder="—" style="font-family:var(--mono);text-align:right"></label>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{m.hasToggles}}" hint-placeholder-val="{{ false }}">
 <div style="display:flex;flex-direction:column">
-<div style="display:flex;align-items:center;gap:16px;min-height:64px;border-top:1px solid var(--line)">
-<span style="width:96px;font-size:15px">私密项目</span>
-<span style="flex-grow:1;display:flex;gap:8px;flex-wrap:wrap">
-<sc-for list="{{privateProjects}}" as="p" hint-placeholder-count="1">
-<span style="display:inline-flex;align-items:center;gap:4px;height:30px;padding:0 4px 0 10px;border:1px solid var(--line2);border-radius:4px;font-size:14px">{{p.name}}
-<button aria-label="移除 {{p.name}}" onClick="{{p.remove}}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
-</span>
+<sc-for list="{{m.toggles}}" as="tg" hint-placeholder-count="1">
+<div class="line"><span class="lb" title="{{tg.hint}}">{{tg.label}}</span><button role="switch" aria-checked="{{tg.on}}" aria-label="{{tg.label}}" onClick="{{tg.toggle}}" class="sw {{tg.cls}}"></button></div>
 </sc-for>
-</span>
-<button aria-label="添加私密项目" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
 </div>
+</sc-if>
 
-<div style="border-top:1px solid var(--line)">
-<button aria-expanded="{{privSrcOpen}}" onClick="{{togglePrivSrc}}" style="width:100%;display:flex;align-items:center;gap:16px;min-height:64px">
-<svg class="ic chev {{privSrcChev}}" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color:var(--muted)"><path d="M9 6l6 6-6 6"></path></svg>
-<span style="flex-grow:1;font-size:15px">私密资料</span>
-<span style="font-family:var(--mono);font-size:14px;color:var(--ink2)">{{privSrcCount}}</span>
+<sc-if value="{{m.hasTerms}}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:8px">
+<span class="sub">热词 · {{m.termCount}}</span>
+<div class="chips">
+<sc-for list="{{m.terms}}" as="tm" hint-placeholder-count="4"><span class="chip">{{tm.t}}</span></sc-for>
+<button class="chip add">＋ 导入</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{m.isAgent}}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:6px">
+<sc-for list="{{agentClients}}" as="ac" hint-placeholder-count="3">
+<div class="line" style="background:var(--panel);border:1px solid {{ac.line}};border-radius:4px;padding:6px 8px 6px 12px">
+<button class="lb" onClick="{{ac.pick}}" style="display:flex;align-items:center;gap:10px"><span style="font-size:14px">{{ac.label}}</span><span style="font-size:12px;color:var(--muted)">{{ac.state}}</span></button>
+<sc-if value="{{ac.fix}}" hint-placeholder-val="{{ false }}"><button class="link" onClick="{{ac.goFix}}">{{ac.fix}}</button></sc-if>
+<button role="switch" aria-checked="{{ac.on}}" aria-label="{{ac.label}}启用" onClick="{{ac.toggle}}" class="sw {{ac.cls}}"></button>
+</div>
+</sc-for>
+</div>
+<div class="code">{{agentCommand}}<button class="btn" onClick="{{copyCmd}}">{{copyLabel}}</button></div>
+<div class="line"><span class="lb">代理接入</span><span class="num">127.0.0.1:8765</span></div>
+</sc-if>
+
+<sc-if value="{{m.hasFoot}}" hint-placeholder-val="{{ true }}">
+<div class="foot">
+<sc-if value="{{m.canTest}}" hint-placeholder-val="{{ true }}"><button class="btn" onClick="{{m.test}}">测试</button></sc-if>
+<span class="res">{{m.testResult}}</span>
+<div style="flex-grow:1"></div>
+<sc-if value="{{m.canSave}}" hint-placeholder-val="{{ true }}"><button class="btn pri" title="r{{m.rev}}" onClick="{{m.save}}">{{m.saveLabel}}</button></sc-if>
+</div>
+</sc-if>
+
+</div>
+</sc-if>
+</div>
+</sc-for>
+</div>
+</sc-for>
+</sc-if>
+
+<!-- 隐私 -->
+<sc-if value="{{isPrivacy}}" hint-placeholder-val="{{ false }}">
+<div class="card" style="display:grid;grid-template-columns:repeat(3,1fr)">
+<sc-for list="{{privStats}}" as="st" hint-placeholder-count="3"><div class="stat"><b>{{st.value}}</b><span>{{st.label}}</span></div></sc-for>
+</div>
+<div class="cap">范围</div>
+<div class="card">
+<div class="item">
+<div class="row" style="min-height:64px">
+<span class="ico"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M3 7h6l2 2h10v10H3z"></path></svg></span>
+<span class="t1" style="width:80px;flex-shrink:0">私密项目</span>
+<span class="chips" style="flex-grow:1;justify-content:flex-end">
+<sc-for list="{{privateProjects}}" as="p" hint-placeholder-count="1">
+<span class="chip">{{p.name}}<button aria-label="移除 {{p.name}}" onClick="{{p.remove}}"><svg class="ic" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></span>
+</sc-for>
+<button class="chip add" aria-label="添加私密项目" onClick="{{addPrivate}}">＋</button>
+</span>
+</div>
+</div>
+<div class="item">
+<div class="row">
+<button class="rowbtn" aria-expanded="{{privSrcOpen}}" onClick="{{togglePrivSrc}}">
+<span class="ico"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3"></path></svg></span>
+<span class="t1" style="flex-grow:1">私密资料</span>
+<span class="num">{{privSrcCount}}</span>
 </button>
+<button class="chevb" aria-label="展开" onClick="{{togglePrivSrc}}"><svg class="ic chev {{privSrcChev}}" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+</div>
 <sc-if value="{{privSrcOpen}}" hint-placeholder-val="{{ true }}">
-<div style="padding:0 0 16px 30px">
+<div class="exp" style="gap:0;padding-top:6px;padding-bottom:6px">
 <sc-for list="{{privSources}}" as="ps" hint-placeholder-count="2">
-<div style="display:flex;align-items:center;gap:14px;height:48px;border-top:1px solid var(--line)">
-<span style="font-family:var(--mono);font-size:12px;color:var(--muted);width:40px">{{ps.type}}</span>
-<span style="flex-grow:1;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ps.title}}</span>
-<span style="font-family:var(--mono);font-size:12px;color:var(--muted)">{{ps.project}}</span>
-<button onClick="{{ps.unset}}" style="height:32px;padding:0 8px;font-size:13px;color:var(--red)">取消私密</button>
+<div class="line" style="min-height:44px">
+<span class="chip" style="height:22px;font-size:12px;color:var(--muted)">{{ps.type}}</span>
+<span class="lb" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ps.title}}</span>
+<span style="font-size:12px;color:var(--muted)">{{ps.project}}</span>
+<sc-if value="{{ps.canUnset}}" hint-placeholder-val="{{ true }}"><button class="link" onClick="{{ps.unset}}">取消私密</button></sc-if>
+<sc-if value="{{ps.inherited}}" hint-placeholder-val="{{ false }}"><span title="随项目私密" style="color:var(--muted);display:flex;width:62px;justify-content:center"><svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M3 7h6l2 2h10v10H3z"></path></svg></span></sc-if>
 </div>
 </sc-for>
 </div>
 </sc-if>
 </div>
-
-<div style="border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
-<button aria-expanded="{{receiptOpen}}" onClick="{{toggleReceipt}}" style="width:100%;display:flex;align-items:center;gap:16px;min-height:64px">
-<svg class="ic chev {{receiptChev}}" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color:var(--muted)"><path d="M9 6l6 6-6 6"></path></svg>
-<span style="flex-grow:1;font-size:15px">外发记录</span>
-<span style="font-family:var(--mono);font-size:14px;color:var(--ink2)">128</span>
-</button>
-<sc-if value="{{receiptOpen}}" hint-placeholder-val="{{ true }}">
-<div style="padding:0 0 16px 30px">
-<div style="display:grid;grid-template-columns:96px 52px minmax(0,1fr) 64px 92px;gap:12px;align-items:center;height:32px;font-size:12px;color:var(--muted)">
-<span>时间</span><span>用途</span><span>模型</span><span style="text-align:right">条目</span><span style="text-align:right">入 / 出</span>
+</div>
+<div class="cap">外发记录</div>
+<div class="card">
+<div style="padding:4px 16px 8px">
+<div class="tbl" style="height:36px;font-size:12px;color:var(--muted)">
+<span>时间</span><span>用途</span><span>模型</span><span style="text-align:right">条目</span><span style="text-align:right">入 / 出</span><span style="text-align:right">¥</span>
 </div>
 <sc-for list="{{receipts}}" as="rc" hint-placeholder-count="5">
-<div style="display:grid;grid-template-columns:96px 52px minmax(0,1fr) 64px 92px;gap:12px;align-items:center;height:44px;border-top:1px solid var(--line);font-family:var(--mono);font-size:13px">
+<div class="tbl" style="height:44px;border-top:1px solid var(--line);font-family:var(--mono);font-size:12px">
 <span style="color:var(--muted)">{{rc.at}}</span>
-<span style="font-family:var(--sans);font-size:14px">{{rc.purpose}}</span>
-<span style="color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{rc.model}}</span>
+<span style="font-family:var(--sans);font-size:13px">{{rc.purpose}}</span>
+<span style="color:var(--ink2);font-family:var(--sans);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{rc.model}}</span>
 <span style="text-align:right">{{rc.items}}</span>
 <span style="text-align:right;color:var(--ink2)">{{rc.tokens}}</span>
+<span style="text-align:right;color:var(--ink2)">{{rc.cost}}</span>
 </div>
 </sc-for>
-</div>
-</sc-if>
 </div>
 </div>
 </sc-if>
 
+<!-- 项目 -->
 <sc-if value="{{isProjects}}" hint-placeholder-val="{{ false }}">
-<div style="display:flex;flex-direction:column;border-bottom:1px solid var(--line)">
+<div class="card">
 <sc-for list="{{projects}}" as="p" hint-placeholder-count="4">
-<div style="border-top:1px solid var(--line)">
-<button aria-expanded="{{p.open}}" onClick="{{p.expand}}" style="width:100%;display:flex;align-items:center;gap:16px;min-height:64px">
-<svg class="ic chev {{p.chev}}" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color:var(--muted)"><path d="M9 6l6 6-6 6"></path></svg>
-<span style="font-size:15px;width:120px">{{p.name}}</span>
-<span style="flex-grow:1;font-size:14px;color:var(--muted)">{{p.scenesText}}</span>
-<span style="font-size:12px;color:var(--muted);font-family:var(--mono)">{{p.tag}}</span>
+<div class="item">
+<div class="row">
+<button class="rowbtn" aria-expanded="{{p.open}}" onClick="{{p.expand}}">
+<span class="ico" style="font-family:var(--serif);font-size:15px;font-weight:700;color:var(--ink)">{{p.initial}}</span>
+<span class="tt"><span class="t1">{{p.name}}</span><span class="t2">{{p.sub}}</span></span>
 </button>
+<sc-if value="{{p.private}}" hint-placeholder-val="{{ false }}"><span title="私密" style="color:var(--muted);display:flex"><svg class="ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3"></path></svg></span></sc-if>
+<button class="chevb" aria-label="展开" onClick="{{p.expand}}"><svg class="ic chev {{p.chev}}" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+</div>
 <sc-if value="{{p.open}}" hint-placeholder-val="{{ false }}">
-<div style="padding:0 0 20px 30px;display:flex;flex-direction:column">
+<div class="exp">
 <sc-if value="{{p.editable}}" hint-placeholder-val="{{ true }}">
-<label style="display:flex;align-items:center;gap:16px;height:48px;border-top:1px solid var(--line)">
-<span style="width:72px;font-size:13px;color:var(--muted)">名称</span>
-<input aria-label="名称" value="{{p.name}}" style="flex-grow:1;font-size:14px;height:40px">
-</label>
-<div style="display:flex;align-items:center;gap:16px;min-height:48px;border-top:1px solid var(--line)">
-<span style="width:72px;font-size:13px;color:var(--muted)">场景</span>
-<span style="flex-grow:1;display:flex;gap:8px;flex-wrap:wrap;padding:8px 0">
-<sc-for list="{{p.scenes}}" as="sc" hint-placeholder-count="2">
-<span style="display:inline-flex;align-items:center;height:28px;padding:0 10px;border:1px solid var(--line2);border-radius:4px;font-size:13px">{{sc.name}}</span>
-</sc-for>
-<button aria-label="添加场景" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg class="ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
-</span>
+<label class="f"><span>名称</span><span class="inp"><input aria-label="名称" value="{{p.name}}"></span></label>
+<div class="f"><span>场景</span>
+<div class="chips">
+<sc-for list="{{p.scenes}}" as="sc" hint-placeholder-count="2"><span class="chip">{{sc.t}}</span></sc-for>
+<button class="chip add" aria-label="添加场景">＋</button>
 </div>
-<div style="display:flex;align-items:center;gap:16px;height:48px;border-top:1px solid var(--line)">
-<span style="flex-grow:1;font-size:13px;color:var(--muted)">私密</span>
-<button role="switch" aria-checked="{{p.private}}" aria-label="私密" onClick="{{p.togglePrivate}}" class="sw {{p.privCls}}"></button>
 </div>
+<div class="line"><span class="lb">私密</span><button role="switch" aria-checked="{{p.private}}" aria-label="私密" onClick="{{p.togglePrivate}}" class="sw {{p.privCls}}"></button></div>
 </sc-if>
 <sc-if value="{{p.hasRules}}" hint-placeholder-val="{{ true }}">
-<div style="display:flex;align-items:center;gap:16px;height:44px;border-top:1px solid var(--line);font-size:13px;color:var(--muted)">
-<span style="flex-grow:1">约束</span>
-<span style="font-family:var(--mono);font-size:12px">{{p.rulesOn}}/{{p.rulesTotal}}</span>
-</div>
+<div style="display:flex;flex-direction:column;gap:6px">
+<span class="sub">约束 · {{p.rulesOn}} / {{p.rulesTotal}}</span>
+<div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:0 10px 0 12px">
 <sc-for list="{{p.rules}}" as="ru" hint-placeholder-count="2">
-<div style="display:flex;align-items:center;gap:16px;min-height:48px;border-top:1px solid var(--line)">
-<span style="flex-grow:1;font-size:14px;color:{{ru.fg}}">{{ru.text}}</span>
-<span style="font-family:var(--mono);font-size:12px;color:var(--muted)">{{ru.until}}</span>
+<div class="line" style="min-height:44px;border-bottom:1px solid var(--line)">
+<span class="lb" style="color:{{ru.fg}}">{{ru.text}}</span>
+<span class="num" style="font-size:12px;color:var(--muted)">{{ru.until}}</span>
 <button role="switch" aria-checked="{{ru.on}}" aria-label="{{ru.text}}" onClick="{{ru.toggle}}" class="sw {{ru.cls}}"></button>
 </div>
 </sc-for>
-<label style="display:flex;align-items:center;gap:12px;height:48px;border-top:1px solid var(--line);color:var(--muted)">
-<svg class="ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
-<input aria-label="新约束" placeholder="新约束" value="{{p.draft}}" onChange="{{p.onDraft}}" onKeyDown="{{p.onDraftKey}}" style="flex-grow:1;font-size:14px;height:40px">
+<label class="line" style="min-height:44px;color:var(--muted)">
+<svg class="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+<input aria-label="新约束" placeholder="新约束" value="{{p.draft}}" onChange="{{p.onDraft}}" onKeyDown="{{p.onDraftKey}}" style="flex-grow:1;height:40px;font-size:14px">
 </label>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:6px">
+<span class="sub">导出为 skill · {{p.skillCount}}</span>
+<div class="chips">
+<sc-for list="{{p.skills}}" as="sk" hint-placeholder-count="1"><span class="chip">{{sk.name}}<span class="num" style="font-size:11px;color:{{sk.fg}}">{{sk.ver}}</span></span></sc-for>
+<button class="chip add">＋ 草稿</button>
+</div>
+</div>
+</sc-if>
+<sc-if value="{{p.editable}}" hint-placeholder-val="{{ true }}">
+<div class="foot"><div style="flex-grow:1"></div><button class="btn pri" onClick="{{p.save}}">{{p.saveLabel}}</button></div>
 </sc-if>
 </div>
 </sc-if>
 </div>
 </sc-for>
+<div class="item">
+<label class="row" style="color:var(--muted)">
+<span class="ico" style="background:transparent;border:1px dashed var(--line2)"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span>
+<input aria-label="新建项目" placeholder="新建项目" style="flex-grow:1;height:44px;font-size:15px">
+</label>
 </div>
-<button style="align-self:flex-start;margin-top:18px;height:36px;padding:0 14px;border:1px solid var(--line2);border-radius:4px;font-size:14px">新建项目</button>
+</div>
 </sc-if>
 
+<!-- 数据 -->
 <sc-if value="{{isData}}" hint-placeholder-val="{{ false }}">
-<div style="display:flex;flex-direction:column;border-bottom:1px solid var(--line)">
-<sc-for list="{{dataRows}}" as="d" hint-placeholder-count="4">
-<div style="border-top:1px solid var(--line)">
-<button aria-expanded="{{d.open}}" onClick="{{d.expand}}" style="width:100%;display:flex;align-items:center;gap:16px;min-height:64px">
-<svg class="ic chev {{d.chev}}" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color:var(--muted)"><path d="M9 6l6 6-6 6"></path></svg>
-<span style="flex-grow:1;font-size:15px">{{d.label}}</span>
-<span style="font-size:13px;color:var(--muted);font-family:var(--mono)">{{d.meta}}</span>
+<div class="card">
+<div class="item">
+<div class="row">
+<button class="rowbtn" aria-expanded="{{backupOpen}}" onClick="{{toggleBackup}}">
+<span class="ico"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 6c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3zM5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"></path></svg></span>
+<span class="tt"><span class="t1">备份</span><span class="t2"><span class="dot"></span>{{backupSub}}</span></span>
 </button>
-<sc-if value="{{d.open}}" hint-placeholder-val="{{ false }}">
-<div style="padding:0 0 20px 30px;display:flex;flex-direction:column">
-<sc-for list="{{d.lines}}" as="ln" hint-placeholder-count="3">
-<div style="display:flex;align-items:center;gap:16px;height:44px;border-top:1px solid var(--line)">
-<span style="flex-grow:1;font-size:14px;color:{{ln.fg}}">{{ln.label}}</span>
-<span style="font-family:var(--mono);font-size:13px;color:var(--ink2)">{{ln.value}}</span>
+<button class="chevb" aria-label="展开" onClick="{{toggleBackup}}"><svg class="ic chev {{backupChev}}" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+</div>
+<sc-if value="{{backupOpen}}" hint-placeholder-val="{{ true }}">
+<div class="exp">
+<div style="background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:0 12px">
+<sc-for list="{{backups}}" as="bk" hint-placeholder-count="3">
+<div class="line" style="min-height:42px;border-bottom:1px solid var(--line)">
+<span class="lb num" style="color:var(--ink)">{{bk.at}}</span><span class="num">{{bk.size}}</span>
+<span title="{{bk.title}}" style="width:16px;text-align:center;color:{{bk.fg}}">{{bk.mark}}</span>
 </div>
 </sc-for>
-<div style="display:flex;align-items:center;gap:12px;padding-top:14px">
-<button onClick="{{d.act}}" style="height:34px;padding:0 16px;border-radius:4px;font-size:14px;background:{{d.actBg}};color:{{d.actFg}};border:1px solid {{d.actLine}}">{{d.actLabel}}</button>
-<span style="font-family:var(--mono);font-size:13px;color:var(--ink2)">{{d.result}}</span>
 </div>
+<div class="foot"><span class="res">{{backupResult}}</span><div style="flex-grow:1"></div><button class="btn pri" onClick="{{backupNow}}">立即备份</button></div>
+</div>
+</sc-if>
+</div>
+<div class="item">
+<div class="row">
+<span class="ico"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6zM9 12l2 2 4-4"></path></svg></span>
+<span class="tt" style="flex-grow:1"><span class="t1">检查</span><span class="t2">{{checkSub}}</span></span>
+<button class="btn" onClick="{{runCheck}}">检查</button>
+</div>
+</div>
+<div class="item">
+<div class="row">
+<span class="ico"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 19h16M7 16V9M12 16V5M17 16v-4"></path></svg></span>
+<span class="tt" style="flex-grow:1" title="保留 180 天"><span class="t1">使用记录</span><span class="t2">{{signalSub}}</span></span>
+<button class="btn {{clearCls}}" onClick="{{clearSignals}}">{{clearLabel}}</button>
+<button role="switch" aria-checked="{{signalOn}}" aria-label="使用记录" onClick="{{toggleSignals}}" class="sw {{signalCls}}"></button>
+</div>
+</div>
+</div>
+</sc-if>
+
+<!-- 设备 -->
+<sc-if value="{{isDevices}}" hint-placeholder-val="{{ false }}">
+<div class="cap">设备</div>
+<div class="card">
+<sc-for list="{{devices}}" as="dv" hint-placeholder-count="3">
+<div class="item">
+<div class="row">
+<span class="ico"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="{{dv.icon}}"></path></svg></span>
+<span class="tt" style="flex-grow:1"><span class="t1" style="color:{{dv.fg}}">{{dv.name}}</span><span class="t2"><span class="dot {{dv.dot}}"></span>{{dv.sub}}</span></span>
+<sc-if value="{{dv.act}}" hint-placeholder-val="{{ false }}"><button class="btn {{dv.actCls}}" onClick="{{dv.do}}">{{dv.act}}</button></sc-if>
+</div>
+</div>
+</sc-for>
+<div class="item">
+<div class="row">
+<button class="rowbtn" onClick="{{togglePair}}" style="color:var(--muted)">
+<span class="ico" style="background:transparent;border:1px dashed var(--line2)"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span>
+<span class="t1">添加设备</span>
+</button>
+</div>
+<sc-if value="{{pairOpen}}" hint-placeholder-val="{{ false }}">
+<div class="exp" style="flex-direction:row;align-items:center;gap:20px">
+<span class="qr"><svg viewBox="0 0 21 21" width="108" height="108" aria-label="配对码" style="fill:var(--ink)"><path d="M0 0h7v7H0zM2 2v3h3V2zM14 0h7v7h-7zM16 2v3h3V2zM0 14h7v7H0zM2 16v3h3v-3zM9 0h2v2H9zM9 4h3v3H9zM8 9h4v2H8zM14 9h2v3h-2zM18 9h3v2h-3zM9 13h2v3H9zM13 14h3v2h-3zM17 13h4v3h-4zM12 18h3v3h-3zM17 18h2v3h-2zM0 9h3v2H0zM4 10h2v3H4z"></path></svg></span>
+<span style="display:flex;flex-direction:column;gap:6px"><span class="num" style="font-size:20px;color:var(--ink)">04:52</span><button class="link" style="width:max-content" onClick="{{togglePair}}">重新生成</button></span>
+</div>
+</sc-if>
+</div>
+</div>
+<div class="cap">用户</div>
+<div class="card">
+<sc-for list="{{users}}" as="us" hint-placeholder-count="2">
+<div class="item">
+<div class="row">
+<span class="ico" style="border-radius:50%;font-size:13px;color:var(--ink)">{{us.initial}}</span>
+<span class="tt" style="flex-grow:1"><span class="t1">{{us.name}}</span><span class="t2">{{us.sub}}</span></span>
+<span style="width:96px" title="空间"><span class="bar" style="display:block"><i style="width:{{us.pct}}"></i></span></span>
+<button class="link">{{us.act}}</button>
+</div>
+</div>
+</sc-for>
+</div>
+</sc-if>
+
+<!-- 网站 -->
+<sc-if value="{{isSites}}" hint-placeholder-val="{{ false }}">
+<div class="card">
+<sc-for list="{{sites}}" as="si" hint-placeholder-count="2">
+<div class="item">
+<div class="row">
+<button class="rowbtn" aria-expanded="{{si.open}}" onClick="{{si.expand}}">
+<span class="ico" style="font-size:12px;font-weight:500;color:var(--ink)">{{si.initial}}</span>
+<span class="tt"><span class="t1">{{si.name}}</span><span class="t2"><span class="dot {{si.dot}}"></span>{{si.sub}}</span></span>
+</button>
+<button class="chevb" aria-label="展开" onClick="{{si.expand}}"><svg class="ic chev {{si.chev}}" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+</div>
+<sc-if value="{{si.open}}" hint-placeholder-val="{{ false }}">
+<div class="exp">
+<div class="seg2" role="group" aria-label="登录方式">
+<sc-for list="{{si.modes}}" as="sm" hint-placeholder-count="2"><button class="{{sm.cls}}" aria-pressed="{{sm.on}}" onClick="{{sm.pick}}">{{sm.label}}</button></sc-for>
+</div>
+<sc-if value="{{si.isQr}}" hint-placeholder-val="{{ true }}">
+<span class="qr"><svg viewBox="0 0 21 21" width="108" height="108" aria-label="登录码" style="fill:var(--ink)"><path d="M0 0h7v7H0zM2 2v3h3V2zM14 0h7v7h-7zM16 2v3h3V2zM0 14h7v7H0zM2 16v3h3v-3zM9 1h3v3H9zM8 8h5v2H8zM15 9h2v3h-2zM9 12h2v4H9zM13 13h4v2h-4zM18 12h3v4h-3zM12 17h4v4h-4zM18 18h3v3h-3zM1 9h4v2H1z"></path></svg></span>
+</sc-if>
+<sc-if value="{{si.isFile}}" hint-placeholder-val="{{ false }}">
+<div class="drop"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 15V4M7 9l5-5 5 5M5 20h14"></path></svg>cookies.txt · JSON</div>
+</sc-if>
+<sc-if value="{{si.logged}}" hint-placeholder-val="{{ true }}">
+<div class="foot"><div style="flex-grow:1"></div><button class="btn" style="color:var(--red)" onClick="{{si.logout}}">删除登录</button></div>
+</sc-if>
 </div>
 </sc-if>
 </div>
@@ -295,22 +508,24 @@ a{color:inherit;text-decoration:none}
 </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"initialGroup":{"editor":"enum","options":["model","privacy","projects","data"],"default":"model"},"initialOpen":{"editor":"text","default":""},"$preview":{"width":1440,"height":900}}'>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"initialGroup":{"editor":"enum","options":["model","privacy","projects","data","devices","sites"],"default":"model"},"initialOpen":{"editor":"text","default":""},"$preview":{"width":1440,"height":900}}'>
 class Component extends DCLogic {
   constructor(props) {
     super(props);
     const open = props.initialOpen || '';
     this.state = {
-      darkOverride: null,
+      theme: props.dark ? 'dark' : 'system',
       group: props.initialGroup || 'model',
       open: open,
-      // switch = that purpose's own allow_remote (generation/embedding/rerank) or ASR enabled + consent
-      sw: { gen: true, asr: true, vec: false, rerank: false },
-      genMode: 'api', tested: {},
+      // model switch = that purpose's own allow_remote; ASR = enabled + egress consent
+      sw: { gen: true, vision: false, asr: true, vec: false, rerank: false, search: false, agent: true, store: false, profile: true },
+      modes: { gen: 'api', vision: 'local', vec: 'local' },
+      vecLoaded: true,
+      clients: { cc: true, codex: false, ds: false }, client: 'cc', copied: false,
+      tested: {}, saved: {},
       privateProjects: ['求职'],
-      privSrcOpen: open === 'sources' || open === 'all', receiptOpen: open === 'receipts' || open === 'all',
+      privSrcOpen: open === 'sources' || open === 'all',
       unsetSrc: {},
-      projOpen: open.indexOf('p:') === 0 ? open.slice(2) : '',
       rules: {
         p1: [
           { id: 'r1', text: '选题不碰时政', on: true, until: '' },
@@ -321,82 +536,203 @@ class Component extends DCLogic {
         me: [{ id: 'r5', text: '回答先给结论', on: true, until: '' }]
       },
       drafts: {},
-      dataOpen: open.indexOf('d:') === 0 ? open.slice(2) : '',
-      done: {}
+      backupDone: false, check: '', signalOn: true, signalCount: 1284, armed: false,
+      pairOpen: false, devRevoked: {}, devDeleted: {},
+      siteMode: { bili: 'qr', xhs: 'qr' }, siteLogged: { bili: true, xhs: false }
     };
   }
   renderVals() {
     const s = this.state;
-    const dark = s.darkOverride === null ? !!this.props.dark : s.darkOverride;
     const set = (p) => this.setState(p);
-    const groupDefs = [['model', '模型'], ['privacy', '隐私'], ['projects', '项目'], ['data', '数据']];
-    const titles = { model: '模型', privacy: '隐私', projects: '项目', data: '数据' };
+    const merge = (key, patch) => this.setState({ [key]: Object.assign({}, this.state[key], patch) });
+    const sysDark = !!this.props.dark;
+    const dark = s.theme === 'dark' || (s.theme === 'system' && sysDark);
     const flip = (key) => () => this.setState({ open: this.state.open === key ? '' : key });
-    const testOf = (key, ok) => () => {
-      this.setState({ tested: Object.assign({}, this.state.tested, { [key]: '…' }) });
-      setTimeout(() => this.setState({ tested: Object.assign({}, this.state.tested, { [key]: ok }) }), 700);
+    const flash = (key) => {
+      merge('saved', { [key]: true });
+      setTimeout(() => merge('saved', { [key]: false }), 1400);
     };
-    const genValue = { api: 'DeepSeek · deepseek-chat', sub: 'ChatGPT · gpt-5', local: '本机 · qwen2.5-1.5b' }[s.genMode];
-    const apiFields = (host, model, keySet) => [
-      { label: '地址', type: 'text', value: host, ph: 'https://' },
-      { label: '模型', type: 'text', value: model, ph: '' },
-      { label: '密钥', type: 'password', value: '', ph: keySet ? '已设置' : '未设置' }
-    ];
-    const modelDefs = [
-      { key: 'gen', label: '生成', value: genValue, ready: true, rev: 7,
-        isGen: true, isApi: s.genMode === 'api', isSub: s.genMode === 'sub', isLocal: s.genMode === 'local',
-        fields: apiFields('https://api.deepseek.com', 'deepseek-chat', true), facts: [], ok: '✓ 820ms' },
-      { key: 'asr', label: '转写', value: 'Hy-ASR', ready: true, rev: 3, isApi: true,
-        fields: apiFields('https://tokenhub.tencent.com', 'hy-asr', true),
-        facts: [{ label: '长音频', value: '60s · 重叠 5s' }, { label: '上限', value: '25 MB' }], ok: '✓ 1.4s' },
-      { key: 'vec', label: '向量', value: '—', ready: false, rev: 0, isApi: true,
-        fields: apiFields('', '', false), facts: [], ok: '✕ 未配置' },
-      { key: 'rerank', label: '重排', value: '—', ready: false, rev: 0, isApi: true,
-        fields: apiFields('', '', false), facts: [], ok: '✕ 未配置' }
-    ];
-    const genModes = [['api', 'API'], ['sub', '订阅'], ['local', '本机']].map((g) => ({
-      label: g[1], cls: s.genMode === g[0] ? 'on' : '', pressed: s.genMode === g[0], pick: () => set({ genMode: g[0] })
+    const testOf = (key, ok) => () => {
+      merge('tested', { [key]: '…' });
+      setTimeout(() => merge('tested', { [key]: ok }), 700);
+    };
+    const I = {
+      model: 'M7 7h10v10H7zM10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4',
+      privacy: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3',
+      projects: 'M3 7h6l2 2h10v10H3z',
+      data: 'M5 6c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3zM5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3',
+      devices: 'M7 3h10v18H7zM11 18h2',
+      sites: 'M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18',
+      gen: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z',
+      vision: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0',
+      asr: 'M9 6a3 3 0 0 1 6 0v5a3 3 0 0 1-6 0zM5 11a7 7 0 0 0 14 0M12 18v3',
+      vec: 'M4 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M16 8a2 2 0 1 0 4 0a2 2 0 1 0-4 0M8 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M8 6.5l8 1.2M7 8l2.5 8M17 10l-6 7',
+      rerank: 'M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4',
+      search: 'M5 11a6 6 0 1 0 12 0a6 6 0 1 0-12 0M20 20l-4.2-4.2',
+      agent: 'M3 6h18v12H3zM7 10l3 2-3 2M12 14h4',
+      desk: 'M3 5h18v11H3zM8 20h8M12 16v4',
+      phone: 'M7 3h10v18H7zM11 18h2',
+      sun: 'M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
+      auto: 'M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 3v18M12 7l4.5-2.5M12 11.5l6.5-3.5M12 16l7-4',
+      moon: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z'
+    };
+    const groupDefs = [['model', '模型'], ['privacy', '隐私'], ['projects', '项目'], ['data', '数据'], ['devices', '设备'], ['sites', '网站']];
+
+    // ---- 模型 ----
+    const sansF = 'var(--sans)', monoF = 'var(--mono)';
+    const api = (host, model, keySet, fast) => {
+      const list = [
+        { label: '地址', type: 'text', value: host, ph: 'https://', span: 'span 2', font: monoF },
+        { label: '模型', type: 'text', value: model, ph: '', span: 'auto', font: sansF }
+      ];
+      if (fast !== undefined) list.push({ label: '快模型', type: 'text', value: fast, ph: '主模型', span: 'auto', font: sansF });
+      list.push({ label: '密钥', type: 'password', value: '', ph: keySet ? '已设置' : '未设置', span: fast === undefined ? 'auto' : 'span 2', font: monoF });
+      return list;
+    };
+    const prices = (i, o, c) => [{ label: '输入', value: i }, { label: '输出', value: o }, { label: '缓存', value: c }];
+    const modeList = (key, defs) => defs.map((d) => ({
+      label: d[1], cls: s.modes[key] === d[0] ? 'on' : '', on: s.modes[key] === d[0],
+      pick: () => merge('modes', { [key]: d[0] })
     }));
-    const localGen = (m) => m.key === 'gen' && s.genMode === 'local';
-    const models = modelDefs.map((m) => {
-      const on = !!s.sw[m.key] && !localGen(m);
+    const gm = s.modes.gen, vm = s.modes.vision, em = s.modes.vec;
+    const defs = {
+      gen: {
+        label: '生成', ready: true, rev: 7,
+        sub: { api: 'DeepSeek · deepseek-chat', sub: 'ChatGPT · gpt-5', local: '本机 · qwen2.5-1.5b' }[gm],
+        modes: modeList('gen', [['api', 'API'], ['sub', '订阅'], ['local', '本机']]),
+        fields: gm === 'api' ? api('https://api.deepseek.com', 'deepseek-chat', true, '')
+          : gm === 'sub' ? [
+            { label: '账号', type: 'text', value: 'me@example.com', ph: '', span: 'span 2', font: monoF },
+            { label: '模型', type: 'text', value: 'gpt-5', ph: '', span: 'auto', font: sansF },
+            { label: '快模型', type: 'text', value: '', ph: '主模型', span: 'auto', font: sansF }] : [],
+        prices: gm === 'api' ? prices('2', '8', '0.5') : [],
+        local: gm === 'local' ? { name: 'qwen2.5-1.5b-instruct', meta: '已安装 · 1.1 GB', act: '' } : null,
+        toggles: gm === 'local' ? [] : [{ key: 'store', label: '服务商暂存', hint: '断网后续读' }],
+        noSwitch: gm === 'local', canTest: true, ok: '✓ 820ms'
+      },
+      vision: {
+        label: '识图', ready: true, rev: 2,
+        sub: vm === 'local' ? '本机 · 可用' : 'Qwen · qwen-vl-max',
+        modes: modeList('vision', [['local', '本机'], ['remote', '外接']]),
+        fields: vm === 'remote' ? api('https://dashscope.aliyuncs.com', 'qwen-vl-max', false) : [],
+        prices: vm === 'remote' ? prices('', '', '') : [],
+        facts: vm === 'local' ? [{ label: '本机', value: 'PaddleOCR' }, { label: '状态', value: '可用' }] : [],
+        noSwitch: vm === 'local', canTest: vm === 'remote', ok: '✓ 1.2s'
+      },
+      asr: {
+        label: '转写', ready: true, rev: 3, sub: 'Hy-ASR · 腾讯云',
+        facts: [{ label: '长音频', value: '60s · 重叠 5s' }, { label: '上限', value: '25 MB' }],
+        fields: [{ label: '密钥', type: 'password', value: '', ph: '已设置', span: 'span 2', font: monoF }],
+        terms: ['剪映', '口播', '完播率', '钩子', 'B-roll', '转场'].map((t) => ({ t: t })), termCount: '24',
+        canTest: false
+      },
+      vec: {
+        label: '向量', ready: em !== 'local' || s.vecLoaded, rev: 4,
+        sub: em === 'local' ? 'EmbeddingGemma 2 · ' + (s.vecLoaded ? '已加载' : '未加载') : em === 'server' ? '自建 · 未接入' : '未接入',
+        modes: modeList('vec', [['local', '本机'], ['server', '自建'], ['remote', '外接']]),
+        local: em === 'local' ? { name: 'EmbeddingGemma 2', meta: '768 维 · 1.53 GB', act: s.vecLoaded ? '卸载' : '加载' } : null,
+        index: em === 'local' && s.vecLoaded ? { pct: '100%', text: '12,340 / 12,340' } : null,
+        fields: em === 'local' ? [] : api('', '', false),
+        prices: em === 'remote' ? prices('', '', '') : [],
+        noSwitch: em === 'local', canTest: em === 'local' ? s.vecLoaded : false, ok: '✓ 46ms',
+        needSetup: em !== 'local'
+      },
+      rerank: { label: '重排', ready: false, rev: 0, sub: '未接入', fields: api('', '', false), prices: prices('', '', ''), needSetup: true, canTest: false },
+      search: { label: '搜索', ready: false, rev: 0, sub: '未接入', fields: api('', '', false), prices: prices('', '', ''), needSetup: true, canTest: false },
+      agent: { label: '外部 agent', ready: true, rev: 5, sub: 'Claude Code · 每日 20 次', agent: true,
+        toggles: [{ key: 'profile', label: '带上画像', hint: '' }],
+        fields: [{ label: '每日上限', type: 'text', value: '20', ph: '', span: 'auto', font: monoF }] }
+    };
+    const item = (key) => {
+      const d = defs[key];
+      const isOpen = s.open === key;
+      const noSwitch = !!d.noSwitch || (!!d.needSetup && !s.sw[key]);
+      const on = !!s.sw[key] && !noSwitch;
+      const fields = d.fields || [], pr = d.prices || [], toggles = d.toggles || [];
       return {
-        label: m.label, value: m.value, open: s.open === m.key, chev: s.open === m.key ? 'on' : '', expand: flip(m.key),
-        dot: m.ready ? 'on' : '', dotTitle: m.ready ? '可用' : '未配置',
-        on: on, cls: on ? 'on' : '', switchLabel: m.label + '外发',
-        toggle: () => { if (!localGen(m)) this.setState({ sw: Object.assign({}, this.state.sw, { [m.key]: !this.state.sw[m.key] }) }); },
-        isGen: !!m.isGen, isApi: !!m.isApi, isSub: !!m.isSub, isLocal: !!m.isLocal,
-        fields: m.fields, facts: m.facts, rev: String(m.rev),
-        test: testOf(m.key, m.ok), testResult: s.tested[m.key] || ''
+        label: d.label, sub: d.sub, icon: I[key], dot: d.ready ? '' : 'off',
+        open: isOpen, chev: isOpen ? 'on' : '', expand: flip(key),
+        needSetup: !!d.needSetup && !isOpen, hasSwitch: !noSwitch,
+        on: on, cls: on ? 'on' : '', switchLabel: d.label + '外发',
+        toggle: () => merge('sw', { [key]: !this.state.sw[key] }),
+        hasModes: !!d.modes, modes: d.modes || [],
+        hasFacts: !!(d.facts && d.facts.length), facts: d.facts || [],
+        hasLocalModel: !!d.local, localName: d.local ? d.local.name : '', localMeta: d.local ? d.local.meta : '',
+        localAct: d.local ? d.local.act : '', localToggle: () => set({ vecLoaded: !this.state.vecLoaded }),
+        hasIndex: !!d.index, indexPct: d.index ? d.index.pct : '0%', indexText: d.index ? d.index.text : '',
+        hasFields: fields.length > 0, fields: fields,
+        hasPrices: pr.length > 0, prices: pr,
+        hasToggles: toggles.length > 0,
+        toggles: toggles.map((t) => ({ label: t.label, hint: t.hint, on: !!s.sw[t.key], cls: s.sw[t.key] ? 'on' : '', toggle: () => merge('sw', { [t.key]: !this.state.sw[t.key] }) })),
+        hasTerms: !!d.terms, terms: d.terms || [], termCount: d.termCount || '',
+        isAgent: !!d.agent,
+        hasFoot: true, canTest: !!d.canTest, test: testOf(key, d.ok || ''), testResult: s.tested[key] || '',
+        canSave: fields.length > 0 || pr.length > 0, rev: String(d.rev),
+        save: () => flash(key), saveLabel: s.saved[key] ? '✓ 已保存' : '保存'
       };
-    });
-    const privSources = [
-      { id: 'ps1', type: '录音', title: '面试复盘.m4a', project: '求职' },
-      { id: 'ps2', type: '文档', title: '体检报告.pdf', project: '收件箱' }
-    ].filter((x) => !s.unsetSrc[x.id]).map((x) => Object.assign({}, x, { unset: () => this.setState({ unsetSrc: Object.assign({}, this.state.unsetSrc, { [x.id]: true }) }) }));
-    const receipts = [
-      { at: '10·01 21:14', purpose: '问', model: 'deepseek-chat', items: '4', tokens: '1.1k / 160' },
-      { at: '10·01 20:52', purpose: '干活', model: 'deepseek-chat', items: '6', tokens: '86k / 2.4k' },
-      { at: '10·01 20:40', purpose: '整理', model: 'deepseek-chat', items: '1', tokens: '6.2k / 1.8k' },
-      { at: '10·01 20:39', purpose: '转写', model: 'hy-asr', items: '1', tokens: '12:40' },
-      { at: '09·30 23:05', purpose: '认识', model: 'deepseek-chat', items: '1', tokens: '2.0k / 210' }
+    };
+    const modelCards = [
+      { cap: '对话', items: ['gen', 'vision', 'asr'].map(item) },
+      { cap: '检索', items: ['vec', 'rerank', 'search'].map(item) },
+      { cap: '外接', items: ['agent'].map(item) }
     ];
+    const clientDefs = [
+      { key: 'cc', label: 'Claude Code', state: '可用 · 2.1.4', fix: '' },
+      { key: 'codex', label: 'Codex', state: '未安装', fix: '' },
+      { key: 'ds', label: 'DeepSeek Harness', state: '缺生成模型', fix: '去配置' }
+    ];
+    const agentClients = clientDefs.map((c) => ({
+      label: c.label, state: c.state, fix: c.fix, on: !!s.clients[c.key], cls: s.clients[c.key] ? 'on' : '',
+      line: s.client === c.key ? 'var(--line2)' : 'var(--line)',
+      pick: () => set({ client: c.key, copied: false }),
+      goFix: () => set({ open: 'gen' }),
+      toggle: () => merge('clients', { [c.key]: !this.state.clients[c.key] })
+    }));
+    const agentCommand = { cc: 'claude mcp add memory -- incremind mcp --project 创作助手', codex: 'codex mcp add memory incremind mcp --project 创作助手', ds: 'incremind harness --project 创作助手' }[s.client];
+
+    // ---- 隐私 ----
+    const privSources = [
+      { id: 'ps1', type: '录音', title: '面试复盘.m4a', project: '求职', inherited: true },
+      { id: 'ps2', type: '文档', title: '体检报告.pdf', project: '收件箱', inherited: false },
+      { id: 'ps3', type: '认识', title: '每月存款目标', project: '我', inherited: false }
+    ].filter((x) => !s.unsetSrc[x.id]).map((x) => Object.assign({}, x, {
+      canUnset: !x.inherited, unset: () => merge('unsetSrc', { [x.id]: true })
+    }));
+    const receipts = [
+      { at: '10·24 21:14', purpose: '问', model: 'deepseek-chat', items: '4', tokens: '1.1k / 160', cost: '0.01' },
+      { at: '10·24 20:52', purpose: '干活', model: 'deepseek-chat', items: '6', tokens: '86k / 2.4k', cost: '0.19' },
+      { at: '10·24 20:40', purpose: '整理', model: 'deepseek-chat', items: '1', tokens: '6.2k / 1.8k', cost: '0.03' },
+      { at: '10·24 20:39', purpose: '转写', model: 'hy-asr', items: '1', tokens: '12:40', cost: '0.25' },
+      { at: '10·23 23:05', purpose: '认识', model: 'deepseek-chat', items: '1', tokens: '2.0k / 210', cost: '0.01' }
+    ];
+    const privStats = [
+      { value: '128', label: '本月外发' },
+      { value: '¥3.42', label: '本月花费' },
+      { value: String(s.privateProjects.length) + ' · ' + String(privSources.length), label: '私密 项目 · 资料' }
+    ];
+
+    // ---- 项目 ----
     const projDefs = [
-      { id: 'p1', name: '创作助手', scenes: ['选题', '剪辑'], tag: '', editable: true },
-      { id: 'p2', name: '求职', scenes: ['简历', '面试'], tag: '私密', editable: true },
-      { id: 'inbox', name: '收件箱', scenes: [], tag: '内置', editable: false },
-      { id: 'me', name: '我', scenes: [], tag: '内置', editable: false }
+      { id: 'p1', name: '创作助手', scenes: ['选题', '剪辑'], editable: true, skills: [{ name: '剪辑节奏', ver: 'v3', stale: false }, { name: '开头', ver: '需更新', stale: true }] },
+      { id: 'p2', name: '求职', scenes: ['简历', '面试'], editable: true, skills: [] },
+      { id: 'inbox', name: '收件箱', scenes: [], editable: true, skills: [] },
+      { id: 'me', name: '我', scenes: [], editable: false, skills: [{ name: '写作偏好', ver: 'v1', stale: false }] }
     ];
     const projects = projDefs.map((p) => {
+      const key = 'p:' + p.id;
       const rules = s.rules[p.id] || [];
       const isPrivate = s.privateProjects.indexOf(p.name) >= 0;
-      const setRules = (next) => this.setState({ rules: Object.assign({}, this.state.rules, { [p.id]: next }) });
+      const setRules = (next) => merge('rules', { [p.id]: next });
       const draft = s.drafts[p.id] || '';
+      const subParts = [];
+      if (p.scenes.length) subParts.push(p.scenes.join(' · '));
+      if (rules.length) subParts.push(rules.filter((r) => r.on).length + ' 条约束');
+      if (p.id === 'inbox') subParts.push('未归类');
+      if (p.id === 'me') subParts.push('画像');
       return {
-        name: p.name, tag: isPrivate ? '私密' : p.tag, editable: p.editable, hasRules: p.id !== 'inbox',
-        scenesText: p.scenes.join(' · '), scenes: p.scenes.map((n) => ({ name: n })),
-        open: s.projOpen === p.id, chev: s.projOpen === p.id ? 'on' : '',
-        expand: () => set({ projOpen: s.projOpen === p.id ? '' : p.id }),
+        name: p.name, initial: p.name.slice(0, 1), sub: subParts.join(' · '),
+        editable: p.editable, hasRules: p.id !== 'inbox',
+        scenes: p.scenes.map((t) => ({ t: t })), open: s.open === key, chev: s.open === key ? 'on' : '', expand: flip(key),
         private: isPrivate, privCls: isPrivate ? 'on' : '',
         togglePrivate: () => set({ privateProjects: isPrivate ? s.privateProjects.filter((x) => x !== p.name) : s.privateProjects.concat([p.name]) }),
         rulesOn: String(rules.filter((r) => r.on).length), rulesTotal: String(rules.length),
@@ -405,50 +741,91 @@ class Component extends DCLogic {
           toggle: () => setRules(rules.map((x) => x.id === r.id ? Object.assign({}, x, { on: !x.on }) : x))
         })),
         draft: draft,
-        onDraft: (e) => this.setState({ drafts: Object.assign({}, this.state.drafts, { [p.id]: e.target.value }) }),
+        onDraft: (e) => merge('drafts', { [p.id]: e.target.value }),
         onDraftKey: (e) => {
           const composing = e.nativeEvent && e.nativeEvent.isComposing;
           if (e.key !== 'Enter' || composing || !draft.trim()) return;
           setRules(rules.concat([{ id: 'n' + Date.now(), text: draft.trim(), on: true, until: '' }]));
-          this.setState({ drafts: Object.assign({}, this.state.drafts, { [p.id]: '' }) });
-        }
+          merge('drafts', { [p.id]: '' });
+        },
+        skillCount: String(p.skills.length),
+        skills: p.skills.map((k) => ({ name: k.name, ver: k.ver, fg: k.stale ? 'var(--red)' : 'var(--muted)' })),
+        save: () => flash(key), saveLabel: s.saved[key] ? '✓ 已保存' : '保存'
       };
     });
-    const ink = { fg: 'var(--ink)' };
-    const mute = { fg: 'var(--muted)' };
-    const dataDefs = [
-      { key: 'backup', label: '备份', meta: '10·01', act: '立即备份', primary: false, done: '✓ 10·01 21:30',
-        lines: [Object.assign({ label: '10·01 03:00', value: '84 MB' }, ink), Object.assign({ label: '09·30 03:00', value: '83 MB' }, ink), Object.assign({ label: '09·29 03:00', value: '80 MB' }, ink)] },
-      { key: 'export', label: '导出', meta: '', act: '导出', primary: false, done: '✓ memory-1001.json',
-        lines: [Object.assign({ label: '认识', value: '126' }, ink), Object.assign({ label: '整理稿', value: '58' }, ink), Object.assign({ label: '原件', value: '61' }, ink)] },
-      { key: 'import', label: '导入', meta: '', act: '选择文件', primary: false, done: '新 12 · 重复 3',
-        lines: [Object.assign({ label: '重复时', value: '跳过' }, ink)] },
-      { key: 'migrate', label: '迁移旧记忆', meta: '待执行', act: '执行', primary: true, done: '✓ 128 · 跳过 4',
-        lines: [Object.assign({ label: '认识', value: '128' }, ink), Object.assign({ label: '场景', value: '6' }, ink), Object.assign({ label: '跳过', value: '4' }, mute), Object.assign({ label: '先备份', value: '✓' }, ink)] }
+
+    // ---- 数据 ----
+    const backups = [
+      { at: '10·24 03:00', size: '84 MB', ok: true },
+      { at: '10·23 03:00', size: '83 MB', ok: true },
+      { at: '10·22 03:00', size: '83 MB', ok: false }
     ];
-    const dataRows = dataDefs.map((d) => ({
-      label: d.label, meta: s.done[d.key] && d.key === 'migrate' ? '已完成' : d.meta,
-      open: s.dataOpen === d.key, chev: s.dataOpen === d.key ? 'on' : '',
-      expand: () => set({ dataOpen: s.dataOpen === d.key ? '' : d.key }),
-      lines: d.lines, actLabel: d.act,
-      actBg: d.primary ? 'var(--red)' : 'transparent', actFg: d.primary ? 'var(--onred)' : 'var(--ink)', actLine: d.primary ? 'var(--red)' : 'var(--line2)',
-      act: () => this.setState({ done: Object.assign({}, this.state.done, { [d.key]: true }) }),
-      result: s.done[d.key] ? d.done : ''
+    if (s.backupDone) backups.unshift({ at: '10·24 21:30', size: '84 MB', ok: true });
+
+    // ---- 设备 ----
+    const devDefs = [
+      { id: 'desk', name: '这台电脑', sub: '本机', icon: I.desk, revoked: false, local: true },
+      { id: 'ip', name: 'iPhone', sub: '10·24 20:12', icon: I.phone, revoked: false },
+      { id: 'pad', name: '旧平板', sub: '已作废', icon: I.phone, revoked: true }
+    ].filter((d) => !s.devDeleted[d.id]).map((d) => Object.assign({}, d, { revoked: d.revoked || !!s.devRevoked[d.id] }));
+    const devices = devDefs.map((d) => ({
+      name: d.name, icon: d.icon, sub: d.revoked ? '已作废' : d.sub, dot: d.revoked ? 'off' : '',
+      fg: d.revoked ? 'var(--muted)' : 'var(--ink)',
+      act: d.local ? '' : d.revoked ? '删除' : '作废', actCls: d.revoked ? 'danger' : '',
+      do: () => d.revoked ? merge('devDeleted', { [d.id]: true }) : merge('devRevoked', { [d.id]: true })
     }));
+    const users = [
+      { initial: '我', name: '我', sub: '管理员 · 420 MB', pct: '42%', act: '管理' },
+      { initial: '林', name: '小林', sub: '120 / 500 MB', pct: '24%', act: '进入' }
+    ];
+
+    // ---- 网站 ----
+    const siteDefs = [{ id: 'bili', name: 'B站', initial: 'B', at: '10·20' }, { id: 'xhs', name: '小红书', initial: '红', at: '' }];
+    const sites = siteDefs.map((w) => {
+      const key = 'w:' + w.id, logged = !!s.siteLogged[w.id], mode = s.siteMode[w.id];
+      return {
+        name: w.name, initial: w.initial, sub: logged ? '已登录 · ' + w.at : '未登录', dot: logged ? '' : 'off',
+        open: s.open === key, chev: s.open === key ? 'on' : '', expand: flip(key),
+        modes: [['qr', '扫码'], ['file', '导入']].map((m) => ({ label: m[1], cls: mode === m[0] ? 'on' : '', on: mode === m[0], pick: () => merge('siteMode', { [w.id]: m[0] }) })),
+        isQr: mode === 'qr', isFile: mode === 'file', logged: logged,
+        logout: () => merge('siteLogged', { [w.id]: false })
+      };
+    });
+
     return {
       themeClass: dark ? 't-dark' : 't-light',
-      toggleTheme: () => set({ darkOverride: !dark }),
-      groups: groupDefs.map((g) => ({ label: g[1], cls: s.group === g[0] ? 'on' : '', pick: () => set({ group: g[0] }) })),
-      title: titles[s.group],
-      isModel: s.group === 'model', isPrivacy: s.group === 'privacy', isProjects: s.group === 'projects', isData: s.group === 'data',
-      models: models, genModes: genModes,
+      themes: [['light', '浅色', I.sun], ['system', '跟随系统', I.auto], ['dark', '深色', I.moon]].map((t) => ({
+        label: t[1], icon: t[2], cls: s.theme === t[0] ? 'on' : '', on: s.theme === t[0], pick: () => set({ theme: t[0] })
+      })),
+      groups: groupDefs.map((g) => ({ label: g[1], icon: I[g[0]], cls: s.group === g[0] ? 'on' : '', current: s.group === g[0] ? 'page' : 'false', pick: () => set({ group: g[0], open: '' }) })),
+      isModel: s.group === 'model', isPrivacy: s.group === 'privacy', isProjects: s.group === 'projects',
+      isData: s.group === 'data', isDevices: s.group === 'devices', isSites: s.group === 'sites',
+      modelCards: modelCards, agentClients: agentClients, agentCommand: agentCommand,
+      copyLabel: s.copied ? '✓' : '复制', copyCmd: () => set({ copied: true }),
+      privStats: privStats,
       privateProjects: s.privateProjects.map((n) => ({ name: n, remove: () => set({ privateProjects: s.privateProjects.filter((x) => x !== n) }) })),
+      addPrivate: () => { if (s.privateProjects.indexOf('创作助手') < 0) set({ privateProjects: s.privateProjects.concat(['创作助手']) }); },
       privSrcOpen: s.privSrcOpen, privSrcChev: s.privSrcOpen ? 'on' : '', togglePrivSrc: () => set({ privSrcOpen: !s.privSrcOpen }),
       privSrcCount: String(privSources.length), privSources: privSources,
-      receiptOpen: s.receiptOpen, receiptChev: s.receiptOpen ? 'on' : '', toggleReceipt: () => set({ receiptOpen: !s.receiptOpen }),
       receipts: receipts,
       projects: projects,
-      dataRows: dataRows
+      backupOpen: s.open === 'd:backup', backupChev: s.open === 'd:backup' ? 'on' : '', toggleBackup: flip('d:backup'),
+      backupSub: backups[0].at + ' · ' + backups[0].size,
+      backups: backups.map((b) => ({ at: b.at, size: b.size, mark: b.ok ? '✓' : '✕', fg: b.ok ? 'var(--ink2)' : 'var(--red)', title: b.ok ? '已校验' : '校验失败' })),
+      backupResult: s.backupDone ? '✓ 10·24 21:30' : '',
+      backupNow: () => set({ backupDone: true }),
+      checkSub: s.check === '…' ? '…' : s.check ? '✓ 无问题' : '上次 10·23 · ✓',
+      runCheck: () => { set({ check: '…' }); setTimeout(() => this.setState({ check: 'ok' }), 800); },
+      signalSub: (s.signalCount ? s.signalCount.toLocaleString() : '0') + ' 条 · 180 天',
+      signalOn: s.signalOn, signalCls: s.signalOn ? 'on' : '', toggleSignals: () => set({ signalOn: !s.signalOn }),
+      clearLabel: s.armed ? '确认' : '清除', clearCls: s.armed ? 'warn' : '',
+      clearSignals: () => {
+        if (!s.armed) { set({ armed: true }); setTimeout(() => this.setState({ armed: false }), 3000); return; }
+        set({ armed: false, signalCount: 0 });
+      },
+      devices: devices, users: users,
+      pairOpen: s.pairOpen, togglePair: () => set({ pairOpen: !s.pairOpen }),
+      sites: sites
     };
   }
 }

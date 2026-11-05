@@ -4,6 +4,8 @@ import json
 import math
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock, Timer
 from time import monotonic, time
@@ -14,6 +16,20 @@ from core.storage_provider.observability import observe_connection
 FRAMES = 'v2_turn_frames'
 STREAMS = 'v2_turn_streams'
 MAX_SEQUENCE = 2 ** 53 - 1
+
+
+@dataclass(frozen=True)
+class FrameProducerOwner:
+    turn_id: str
+    lease: object
+    store: object
+
+    def validate(self, request):
+        if (self.lease is None or self.turn_id != request['turn_id'] or self.lease.turn_id != self.turn_id):
+            raise ValueError('frame_producer_owner_changed')
+        current = self.store.assert_active_run_lease(self.lease)
+        if current is None or current.stale_after <= datetime.now(timezone.utc):
+            raise ValueError('frame_producer_owner_changed')
 
 
 def _retry_values(value, *, timed):
@@ -68,8 +84,9 @@ class _StreamRecords:
         self.connection, self.database_path = connection, path
 
     def read(self, collection, identity):
-        if collection not in {STREAMS, FRAMES, 'v2_turns', 'v2_model_wire_prices',
-                              'v2_task_profiles', 'v2_task_methods', 'v2_task_styles'}:
+        if collection not in {STREAMS, FRAMES, 'v2_turns', 'v2_model_wire_prices', 'v2_model_wire_shared_costs',
+                              'v2_task_profiles', 'v2_task_methods', 'v2_task_styles', 'v2_task_executions',
+                              'v2_answer_continuations'}:
             raise ValueError('unsupported_stream_record')
         row = self.connection.execute('''SELECT payload_json,revision
             FROM crp_structured_records WHERE collection=? AND object_id=?''', (collection, identity)).fetchone()
@@ -224,7 +241,7 @@ def frame_text(payload):
 
 class TurnFrames:
     def __init__(self, records, *, turn_id, project_id, recipe, turn=None, clock=monotonic, schedule=True,
-                 projection=None, text_prefix=None, request=None, on_frame=None, wall_clock=time):
+                 projection=None, text_prefix=None, request=None, on_frame=None, wall_clock=time, producer_owner=None):
         self.records, self.turn_id, self.project_id = records, turn_id, project_id
         self.clock, self.schedule = clock, schedule
         self.wall_clock, self.retrying = wall_clock, False
@@ -234,6 +251,7 @@ class TurnFrames:
         self.turn = dict(turn) if turn is not None else None
         self.projection, self.text_prefix, self.text_from = projection, text_prefix, None
         self.request, self.on_frame, self.stream = request, on_frame, False
+        self.producer_owner, self.pending_owner = producer_owner, None
         self.text, self.pending, self.closed = '', '', False
         self.last_write = clock()
 
@@ -294,6 +312,11 @@ class TurnFrames:
             except Exception:
                 pass
 
+    def deliver_control(self, sequence, event, value):
+        if event != 'steer' or type(sequence) is not int or sequence < 1:
+            raise ValueError('steer_delivery_invalid')
+        self._deliver({'sequence': sequence, 'kind': event}, value)
+
     def _status(self, state, *, retry=None):
         try:
             with self.records.begin() as tx:
@@ -339,6 +362,17 @@ class TurnFrames:
         with self.lock:
             if self.closed:
                 return
+            owner = self.producer_owner() if text and self.producer_owner is not None else None
+            if text and self.producer_owner is not None:
+                if not isinstance(owner, FrameProducerOwner):
+                    raise ValueError('frame_producer_owner_invalid')
+                owner.validate(self.request)
+            if text and self.pending and owner != self.pending_owner:
+                self._flush()
+                if self.pending:
+                    raise ValueError('frame_previous_producer_not_flushed')
+            if text:
+                self.pending_owner = owner
             if text:
                 self._clear_retry()
             self.text += text
@@ -395,8 +429,11 @@ class TurnFrames:
                         raise ValueError('stream_projection_closed')
                     payload = dict(head.payload)
                     event = append_stream_event(payload, 'delta', frame_sequence=frames[-1]['sequence'],
-                        offset=0, length=len(self.pending))
+                        offset=0, length=len(self.pending),
+                        **({'run_generation': self.pending_owner.lease.generation} if self.pending_owner is not None else {}))
                     tx.put(STREAMS, self.turn_id, payload, expected_revision=head.revision)
+                if self.pending_owner is not None:
+                    self.pending_owner.validate(self.request)
                 tx.commit()
             delivered = self.pending
             self.pending, self.last_write = '', self.clock()
@@ -406,14 +443,47 @@ class TurnFrames:
             # Text delivery and model ownership do not depend on this projection.
             return
 
-    def close(self, *, completed):
+    def reset_for_steer(self):
+        with self.lock:
+            if self.closed or self.producer_owner is None:
+                raise ValueError('steer_stream_reset_unavailable')
+            owner = self.producer_owner()
+            if not isinstance(owner, FrameProducerOwner):
+                raise ValueError('frame_producer_owner_invalid')
+            owner.validate(self.request)
+            self._flush()
+            if self.pending:
+                raise ValueError('steer_previous_frame_not_committed')
+            with self.records.begin() as tx:
+                head, previous = tx.read(STREAMS, self.turn_id), tx.read(FRAMES, self.turn_id)
+                if (head is None or head.payload.get('terminal') is not None
+                        or head.payload.get('binding') != {'kernel_turn_id': self.request['turn_id'], 'request': self.request}
+                        or previous is not None and frame_text(previous.payload) is None):
+                    raise ValueError('steer_stream_reset_binding_changed')
+                frames = previous.payload['frames'] if previous is not None else []
+                start = len(frames) + 1
+                tx.put(FRAMES, self.turn_id, {'project_id': self.project_id, 'thread_id': self.turn['thread_id'],
+                    'turn': self.turn, 'frames': frames, 'text_from': start, 'text_prefix': ''},
+                    expected_revision=previous.revision if previous is not None else 0)
+                payload = dict(head.payload)
+                event = append_stream_event(payload, 'reset', source='steer', run_generation=owner.lease.generation)
+                tx.put(STREAMS, self.turn_id, payload, expected_revision=head.revision)
+                owner.validate(self.request)
+                tx.commit()
+            self.text, self.pending, self.text_prefix, self.text_from = '', '', '', start
+            self.pending_owner = None
+            self._deliver(event, {'text': ''})
+
+    def close(self, *, completed, discard_pending=False):
         with self.lock:
             self._clear_retry()
             self.closed = True
             timers, self.timers, self.timer = self.timers, [], None
             for timer in timers:
                 timer.cancel()
-            if not completed or self.stream:
+            if discard_pending:
+                self.pending, self.pending_owner = '', None
+            elif not completed or self.stream:
                 self._flush()
             if completed and not self.stream:
                 try:

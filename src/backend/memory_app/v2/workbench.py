@@ -1,11 +1,14 @@
 """Durable workbench turns orchestrating the existing intake domains."""
 from core.storage_provider.connection_scope import with_connection_scope, create_scoped_task
 import asyncio
+from dataclasses import replace
 import json
 import logging
 import re
 import sqlite3
-from contextlib import nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
+from contextvars import ContextVar
+from time import monotonic
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -17,11 +20,14 @@ from backend.recognition import WorkScope, RecognitionError, RecognitionConflict
 from backend.recognition_retrieval import retrieve
 from core.storage_provider.observability import current_observation, observation_scope, stage, timed_stage
 from .turn_timings import turn_timing
+from .audio_positions import AudioPositions
 from backend.shared.runtime_logging import bind_turn_id
+from backend.shared.llm.model_transport import ModelInterrupted
 from ..workspace_media_url import media_platform
 from .share_capture import install_share_capture, share_url
 from ..workspace_contracts import _json, _now, _project, _text
 from ..model_config import ModelConfigurationError
+from ..model_billing_errors import model_billing_code, model_billing_status
 from .auto_confirm import process_and_confirm
 from .do import read_task
 from .task_do import TaskDo, TASK_EXECUTIONS
@@ -44,11 +50,15 @@ from .followup import read_history, condense, validate_history, sum_usage
 from .multi_query import expand_plan, expand_gap_plan
 from .bookshelf import consult_bookshelf, relearn_cited
 from .outcome_corrections import record_redo
+from .shared_task_receipt_access import SharedReceiptDelivery, has_receipt_sources
+from .shared_projects import SharedProjectError
 from ..transaction_records import TransactionRecords
 from core.document_engine import SQLiteDocumentRepository
+from core.storage_provider import SQLiteUnitOfWorkConflict
 from .workbench_transport import negotiate_turn_response, SSEDelivery, routed_response
 from .route import RouteService
 from .multipart import execute_parts, project_parts
+from .attachments import attachment_ids, OriginalReadiness
 
 from .workbench_receipts import (
     ITEM_STATES,
@@ -63,17 +73,43 @@ from .workbench_receipts import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _shared_stopped_ask(ask, *, partial):
+    return {'answer': None, 'partial': partial, 'interruption': 'stopped', 'citations': [],
+        'layers': dict.fromkeys((*_ASK_LAYERS.values(), 'persona'), 0), 'trace': [], 'egress_receipt_id': None,
+        'no_match': False, 'context': None, 'model_usage': ask['model_usage'], 'model_cost': ask.get('model_cost'),
+        'excluded_sources': []}
+
+
 def install_workbench_routes(application, *, records, models, documents, service, workspace, organization=None, research_reader=None, topology_reader=None, usage_reader=None, reminders=None):
     router = APIRouter(prefix="/api/v2/workbench")
+    from .shared_task_outcome_read import install_shared_task_outcome_route
+    install_shared_task_outcome_route(router, application)
     from .placement import PlacementSuggestions
     from .overviews import ScopeOverviews
+    from .shared_workbench_remember import SharedWorkbenchRemember
     placement = PlacementSuggestions(records, documents, service, ScopeOverviews(records, documents, models))
     instance = "workbench-instance-" + uuid4().hex
+    shared_remember = SharedWorkbenchRemember(application, records, documents, instance)
     tasks = set()
+    accepted_clock = ContextVar('workbench_message_accepted_at', default=None)
+    accepted_message = ContextVar('workbench_message_acceptance', default=None)
     running = set()
     item_locks = {}
+    original_readiness = OriginalReadiness()
     application.state.workbench_tasks = tasks
     application.state.workbench_instance = instance
+    def incoming_query(project, *, scope_kind='personal'):
+        factory = getattr(application.state, 'shared_query_factory', None)
+        if factory is None:
+            if scope_kind == 'shared':
+                raise HTTPException(409, 'shared_scope_unavailable')
+            return workspace.query
+        from .shared_projects import SharedProjectError
+        try:
+            return factory.incoming_query(application, project, scope_kind=scope_kind)
+        except SharedProjectError as error:
+            raise HTTPException(error.status, str(error)) from None
+
     from ..research_sources import ReadControl
     from .turn_frames import TurnFrames
     application.state.product_task_read_control_type = ReadControl
@@ -82,8 +118,11 @@ def install_workbench_routes(application, *, records, models, documents, service
         query=workspace.query, service=service,
         execution_getter=lambda: (getattr(application.state, 'ai_runtime', None),
                                   getattr(application.state, 'ai_turn_runner', None)))
+    application.state.workbench_research_service = research
     def observe_task(turn):
-        return research.observe(turn) if turn.payload.get('instance') != instance else turn.payload['receipt']['do']
+        receipt = research.observe(turn) if turn.payload.get('instance') != instance else turn.payload['receipt']['do']
+        return {**receipt, 'retryable': research.retry_available(turn),
+                'retry_check_required': research.retry_check_required(turn)} if receipt.get('state') == 'failed' else receipt
     application.state.workbench_task_observer = observe_task
     from .external_task_do import ExternalTaskDo
     external_research = ExternalTaskDo(application, records, models, TaskDrafts(records, documents), workspace.query)
@@ -92,7 +131,34 @@ def install_workbench_routes(application, *, records, models, documents, service
         return external_research if state is not None and state.payload.get('executor') else research
     research_running = set()
     favorites_retry_locks = {}
-    routes = RouteService(records, models)
+    from .route_example_origins import RouteExampleOrigins
+    from .route_examples import RouteExamples
+    origins = RouteExampleOrigins(application)
+    examples = RouteExamples(records, models, origin_for=origins)
+    routes = RouteService(records, models, examples=examples)
+    application.state.workbench_route_examples = examples
+    application.state.workbench_route_origins = origins
+
+    def complete_route_example(turn_id):
+        row = records.read('v2_turns', turn_id)
+        if row is None:
+            return
+        receipt = row.payload['receipt']
+        if receipt.get('ask', {}).get('interruption') == 'stopped' or receipt.get('do', {}).get('state') == 'stopped':
+            return
+        identity = row.payload.get('parent_turn_id') or turn_id
+        if not identity.startswith('turn-route-'):
+            factory = getattr(application.state, 'shared_query_factory', None)
+            execution = records.read(TASK_EXECUTIONS, identity) if row.payload.get('intent') == 'do' else None
+            shared_task = execution is not None and any(ref.get('uri', '').startswith('crp://material-origin/')
+                for ref in execution.payload['request']['input']['refs'])
+            if shared_task:
+                from .shared_task_workbench import publication_scope
+                context = publication_scope(application, research, identity)
+            else:
+                context = factory.publication_scope(application, identity) if factory is not None else nullcontext()
+            with context:
+                examples.complete(identity)
 
     async def research_process(turn_id, timing=None):
         bind_turn_id(turn_id)
@@ -111,9 +177,11 @@ def install_workbench_routes(application, *, records, models, documents, service
                 await task_service(turn_id).advance(turn_id)
                 row = records.read("v2_turns", turn_id)
                 if (row is None or row.payload["receipt"]["do"].get("task_id")
-                        or row.payload["receipt"]["do"].get("state") in {"done", "partial", "failed", "interrupted", "stopped"}):
+                        or row.payload["receipt"]["do"].get("state") in {"done", "partial", "failed", "interrupted", "stopped", "cancelled"}):
                     break
                 await asyncio.sleep(1)
+            if row is not None:
+                complete_route_example(turn_id)
         finally:
             research_running.discard(turn_id)
 
@@ -144,6 +212,41 @@ def install_workbench_routes(application, *, records, models, documents, service
             'client_id': 'stop-' + turn_id + '-' + str(generation), 'turn_id': turn_id}, server=True)
         signal.safe_record(prepared)
 
+    @contextmanager
+    def stopped_answer_scope(admission):
+        from .shared_auxiliary import _qualified_commit
+        with ExitStack() as stack:
+            try:
+                qualification = stack.enter_context(_qualified_commit(admission))
+            except (RecognitionConflict, SharedProjectError):
+                qualification = None
+            yield qualification
+
+    def shared_stop_proof(query, result, turn_id):
+        if query.origin_admission is None or result['receipt']['ask'].get('interruption') != 'stopped':
+            return None
+        from .turn_logical_scope import TurnLogicalScope
+        runtime = application.state.ai_runtime
+        paused = query.answer_turns.paused(turn_id)
+        native = application.state.ai_turn_store.get_request(turn_id)
+        if (paused is None or paused.payload['result'] != result or native is None
+                or runtime.product_stops.state(turn_id) != 'stopped'
+                or TurnLogicalScope(application).request(native) != 'shared'):
+            raise RecognitionConflict('answer_stop_product_binding_changed')
+        return paused
+
+    def shared_stop_receipt(query, paused, original, tx, qualification, *, prior=''):
+        partial = prior
+        if qualification is not None and original['partial']:
+            try:
+                _restored_answer_plan(query, paused)
+                query.project_constraint_input.validate_public_answer(paused.object_id, reader=tx)
+            except (ValueError, KeyError):
+                pass
+            else:
+                partial = original['partial']
+        return _shared_stopped_ask(original, partial=partial)
+
     @timed_stage("persist")
     def save(turn_id, receipt, *, run_id):
         with records.begin() as tx:
@@ -162,14 +265,27 @@ def install_workbench_routes(application, *, records, models, documents, service
                     "state": remember["state"], "error": remember["error"], "updated_at": now},
                     expected_revision=current.revision if current else 0)
             tx.commit()
+        complete_route_example(turn_id)
+        learning = getattr(application.state, 'product_steer_learning', None)
+        if learning is not None:
+            learning.observe_public(row.payload.get('parent_turn_id') or turn_id)
 
-    def view(row, *, read_records=None):
+    def view_unscoped(row, *, read_records=None):
         payload = row.payload
         project, scope = payload["project_id"], WorkScope("local-user", payload["project_id"])
         receipt = payload["receipt"]
         if payload["intent"] == "remember":
             memory = dict(receipt["remember"])
             if memory["item_id"] is None:
+                from .reminders import _view as reminder_view
+                current = (records if read_records is None else read_records).read('v2_reminders',row.object_id)
+                if (current is not None and current.payload.get('project_id') == project
+                        and current.payload.get('turn_id') == row.object_id):
+                    actual = reminder_view(current)
+                    receipt = {**receipt,'reminder':{key:actual[key] for key in
+                        ('id','at','state','revision','project_id','scene','turn_id')}}
+                elif receipt.get('reminder') is not None:
+                    receipt = {**receipt,'reminder':{**receipt['reminder'],'state':'unverifiable','revision':None}}
                 return {"id": row.object_id, "thread_id": payload["thread_id"], "intent": payload["intent"], "user_text": payload["user_text"], "created_at": payload["created_at"], "receipt": receipt}
             item = workspace.items.item_for(memory["item_id"], project)
             status = item.payload.get("status")
@@ -243,7 +359,13 @@ def install_workbench_routes(application, *, records, models, documents, service
                     'answer': None}}
         elif payload["intent"] == "do":
             receipt = {"do": read_task(records if read_records is None else read_records,
-                scope, documents, observe_task(row), models=models, usage_reader=usage_reader)}
+                scope, documents, observe_task(row), models=models, usage_reader=usage_reader, turn_id=row.object_id)}
+            freshness = getattr(workspace.query, 'outcome_freshness', None)
+            if freshness is not None and receipt['do'].get('document_id') and not receipt['do'].get('executor'):
+                from .outcomes import conversation_origin
+                if conversation_origin(records, project, receipt['do']['document_id']) is not None:
+                    receipt = {'do': {**receipt['do'], **freshness.row_projection(
+                        project=project, document_id=receipt['do']['document_id'])}}
         elif payload["intent"] == "inspiration":
             old = receipt["inspiration"]["insight"]
             receipt = {"inspiration": {"insight": insight_view(records, scope, old["id"], service=service)}}
@@ -254,9 +376,14 @@ def install_workbench_routes(application, *, records, models, documents, service
                     and hint.payload['candidate_revision'] == current.revision):
                 receipt['inspiration']['placement'] = dict(hint.payload)
         elif payload["intent"] == "multi":
-            receipt = project_parts(records, payload, view)
+            receipt = project_parts(records, payload, view, instance=instance)
+        correction = (records if read_records is None else read_records).read('v2_route_corrections', row.object_id)
+        steers = getattr(application.state, 'product_steers', None)
         return {"id": row.object_id, "thread_id": payload["thread_id"], "intent": payload["intent"],
-            "user_text": payload["user_text"], "created_at": payload["created_at"], "receipt": receipt}
+            "user_text": payload["user_text"], "created_at": payload["created_at"], "receipt": receipt,
+            **(steers.projection(row.object_id, project)
+                if steers is not None and payload['intent'] in {'ask', 'do', 'multi'} else {}),
+            **({'route_correction': dict(correction.payload)} if correction is not None else {})}
 
     application.state.workbench_remember_observer = lambda row: view(row)['receipt']['remember']
 
@@ -276,6 +403,124 @@ def install_workbench_routes(application, *, records, models, documents, service
         result = retrieve(scope.project_id, text, entries, limit=3)
         return [{"id": match.id, "text": match.content} for match in result.hits]
 
+    def view(row, *, read_records=None, task_delivery=None):
+        from .turn_logical_scope import TurnLogicalScope
+        with records.begin_read() as transaction:
+            actual = TransactionRecords(transaction)
+            if actual.read('v2_turns', row.object_id) != row:
+                raise RecognitionConflict('turn_logical_scope_changed')
+            binding = shared_remember.read_turn(actual, row) if row.payload['intent'] == 'remember' else None
+            if binding is None:
+                result = view_unscoped(row, read_records=actual)
+                leases = [] if has_receipt_sources(result) else None
+                kind = TurnLogicalScope(application).read(row, reader=actual, shared_leases=leases)
+        if binding is not None:
+            return shared_remember.result(row, binding=binding)['turn']
+        public_ask = row.payload['receipt'].get('ask', {})
+        if kind == 'shared' and public_ask.get('interruption') == 'stopped':
+            observed = result['receipt']['ask']
+            stopped = _shared_stopped_ask(observed, partial=public_ask['partial'])
+            runtime = getattr(application.state, 'ai_runtime', None)
+            if observed.get('error') or runtime is not None and runtime.product_stops.continuing(row.object_id):
+                stopped.pop('interruption')
+                if observed.get('error'):
+                    stopped['error'] = observed['error']
+            result['receipt'] = {'ask': stopped}
+        elif kind == 'shared' and row.payload['intent'] == 'ask':
+            # 用量可以从原生记录投影，正文只取已提交的本人回执。
+            observed = result['receipt']['ask']
+            result['receipt'] = {'ask': {**{key: value for key, value in observed.items() if key != 'partial'},
+                'answer': public_ask['answer'] if observed.get('answer') is not None else None,
+                **({'partial': public_ask['partial']} if 'partial' in public_ask else {})}}
+        turn = {**result, 'scope_kind': kind}
+        if leases is None:
+            return turn
+        delivery = task_delivery or SharedReceiptDelivery(application, row.payload['project_id'])
+        delivery.bind(turn, kind, leases)
+        return turn if task_delivery is not None else delivery.turns([turn])[0]
+
+    def stream_scope_for_turn(turn, frozen):
+        from .turn_logical_scope import TurnLogicalScope
+        logical = TurnLogicalScope(application)
+        if frozen is not None:
+            return logical.request(frozen)
+        with records.begin_read() as transaction:
+            reader = TransactionRecords(transaction)
+            row = reader.read('v2_turns', turn['id'])
+            if row is None or any(row.payload[key] != turn[key] for key in ('thread_id', 'intent', 'user_text')):
+                raise RecognitionConflict('turn_logical_scope_changed')
+            return logical.read(row, reader=reader)
+
+    def uncommitted_answer_visible(request):
+        try:
+            if stream_scope_for_turn(None, request) != 'shared':
+                return True
+            runtime = getattr(application.state, 'ai_runtime', None)
+            stops = getattr(runtime, 'product_stops', None)
+            factory = getattr(application.state, 'shared_query_factory', None)
+            if (stops is None or factory is None or getattr(application.state, 'ai_turn_store', None) is None
+                    or stops.cancellation_requested(request['turn_id'])):
+                return False
+            factory.dispatch(application, request)
+        except (RecognitionConflict, SharedProjectError):
+            return False
+        return True
+
+    def shared_answer_delivery_visible(turn):
+        store = getattr(application.state, 'ai_turn_store', None)
+        request = store.get_request(turn['id']) if store is not None and turn is not None else None
+        return (request is not None and request['desired_outcome'] == 'project.answer'
+            and uncommitted_answer_visible(request))
+
+    def stream_answer_part(turn, frozen=None):
+        from ..kernel.route_source_snapshot import native_source_snapshot
+        from ..workbench_identity_binding import KIND, capture_identity
+
+        snapshot = native_source_snapshot(records, turn['id'])
+        request, bundle = snapshot['request'], snapshot['admission']
+        items = [] if bundle is None else [item.payload for item in bundle.items if item.kind == KIND]
+        if request is None or frozen is not None and request != frozen or len(items) > 1:
+            raise ValueError('invalid_stream_answer_part')
+        if not items or items[0].get('parent') is None:
+            if turn.get('parent_turn_id') is not None:
+                raise ValueError('invalid_stream_answer_part')
+            return None
+        binding = items[0]
+        parent_id, project = binding['parent']['id'], request['scope']['project_id']
+        if 'parent_turn_id' in turn and turn['parent_turn_id'] != parent_id:
+            raise ValueError('invalid_stream_answer_part')
+        current = capture_identity(application, records, documents, project=project, scene=binding['scene'],
+            thread_id=turn['thread_id'], turn_id=turn['id'], parent_turn_id=parent_id)
+        parent = records.read('v2_turns', parent_id)
+        revision = binding['parent']['revision']
+        if (parent is None or parent.revision != current['parent']['revision']
+                or type(revision) is not int or not 1 <= revision <= parent.revision):
+            raise ValueError('invalid_stream_answer_part')
+        current['parent']['revision'] = revision
+        parts = parent.payload['receipt']['parts']
+        if not isinstance(parts, list) or len(parts) != len(current['part_turn_ids']):
+            raise ValueError('invalid_stream_answer_part')
+        part = parts[current['part']]
+        public_text = parse_scope_tag(part['span'])[2]
+        instruction = part.get('instruction') or public_text
+        if (binding != {**current, 'turn_id': turn['id']}
+                or part['intent'] != 'ask' or part['index'] != current['part']
+                or part.get('turn_id') not in {None, turn['id']} or part.get('project_id') not in {None, project}
+                or not isinstance(instruction, str) or request['input']['text'] != instruction.strip()):
+            raise ValueError('invalid_stream_answer_part')
+        return request, public_text
+
+    def public_task_stream(identity, project, start, *, accepted=None):
+        delivery = SharedReceiptDelivery(application, project)
+
+        def stream_view(row, *, read_records=None):
+            return view(row, read_records=read_records, task_delivery=delivery)
+
+        return _read_turn_stream(records, workspace.query.answer_turns.root, identity, project, start,
+            view=stream_view, safe_errors=SAFE_ERRORS, scope_for_turn=stream_scope_for_turn,
+            accepted=accepted, project_result=delivery.result, answer_part=stream_answer_part,
+            uncommitted_answer_visible=uncommitted_answer_visible)
+
     async def process_locked(turn_id, project, item_id, run_id):
         stage = "processing_failed"
         row = scoped("v2_turns", turn_id, project)
@@ -283,7 +528,8 @@ def install_workbench_routes(application, *, records, models, documents, service
         memory = receipt["remember"]
         try:
             admission_errors = []
-            await process_and_confirm(workspace, item_id, project, on_error=admission_errors.append)
+            await process_and_confirm(workspace, item_id, project, on_error=admission_errors.append,
+                on_original=lambda: original_readiness.notify(project, item_id))
             if admission_errors:
                 stage = admission_errors[0]
                 raise RuntimeError
@@ -339,6 +585,7 @@ def install_workbench_routes(application, *, records, models, documents, service
             _LOGGER.warning("workbench_failed code=%s", memory["error"])
         finally:
             save(turn_id, receipt, run_id=run_id)
+            original_readiness.notify(project, item_id)
             running.discard(turn_id)
             start_index = getattr(application.state, "start_vector_index", None)
             if memory.get("state") == "done" and start_index is not None:
@@ -346,7 +593,7 @@ def install_workbench_routes(application, *, records, models, documents, service
                 start_index()
 
     @with_connection_scope
-    async def process(turn_id, project, item_id, run_id, timing=None):
+    async def process(turn_id, project, item_id, run_id, timing=None, *, shared=False):
         bind_turn_id(turn_id)
         # Initial submissions retain the ingress observation across background
         # processing; retries receive a fresh observation under the same turn ID.
@@ -355,21 +602,26 @@ def install_workbench_routes(application, *, records, models, documents, service
         with context:
             try:
                 async with item_locks.setdefault((project, item_id), asyncio.Lock()):
-                    await process_locked(turn_id, project, item_id, run_id)
+                    if shared:
+                        await shared_remember.run(turn_id, run_id)
+                    else:
+                        await process_locked(turn_id, project, item_id, run_id)
             finally:
                 if timing is not None:
                     timing.finish()
 
-    def start(turn_id, project, item_id, run_id):
+    def start(turn_id, project, item_id, run_id, *, shared=False):
         running.add(turn_id)
         timing = current_observation()
         if timing is not None:
             timing.defer_finish()
-        task = create_scoped_task(process(turn_id, project, item_id, run_id, timing))
+        task = create_scoped_task(process(turn_id, project, item_id, run_id, timing, shared=shared))
         tasks.add(task)
         def finished(completed):
             tasks.discard(completed)
             running.discard(turn_id)
+            if not shared:
+                original_readiness.notify(project, item_id)
             if not completed.cancelled() and completed.exception() is not None:
                 _LOGGER.warning("workbench_failed code=workbench_persistence_failed")
         task.add_done_callback(finished)
@@ -445,14 +697,19 @@ def install_workbench_routes(application, *, records, models, documents, service
     async def execute_one_measured(body, *, request_key=None, on_started=None, on_delta=None, on_frame=None, replace_turn=None, title_prefix="", division_override=None,
                                    redo_from=None, outcome_selection=None,
                                    forced_turn_id=None, parent_turn_id=None, forced_scene=None,
-                                   instruction=None, situation=None, dependency_turns=(), forced_project=None, route_meta=None, prepared_reminder=None):
-        if set(body).difference({"project_id", "thread_id", "text", "item_id", "intent", "continue_from", "executor"}):
+                                   instruction=None, situation=None, dependency_turns=(), forced_project=None, route_meta=None, prepared_reminder=None,
+                                   data_operation=None, forced_thread_id=None, remember_stage_created=None, message_origin='user',
+                                   shared_redo=None):
+        answer_query = workspace.query
+        accepted_at = accepted_clock.get() or _now()
+        acceptance = accepted_message.get() if parent_turn_id is None and replace_turn is None and message_origin != 'favorites_expansion' else None
+        if set(body).difference({"project_id", "scope_kind", "thread_id", "text", "item_id", "item_ids", "intent", "continue_from", "executor", "context_ids"}):
             raise HTTPException(400, "invalid_turn_fields")
         text = body.get("text", "")
         if not isinstance(text, str) or len(text) > 60000:
             raise HTTPException(400, "invalid_text")
         tag, scene, cleaned = parse_scope_tag(text)
-        if parent_turn_id:
+        if parent_turn_id or redo_from is not None:
             if tag is not None and (project_for_tag(tag) != body.get('project_id') or scene != forced_scene):
                 raise HTTPException(400, 'invalid_part_scope')
             scene = forced_scene
@@ -468,16 +725,19 @@ def install_workbench_routes(application, *, records, models, documents, service
                 or body.get('item_id') is not None or body.get('continue_from') is not None
                 or division_override is not None or parent_turn_id is not None):
             raise HTTPException(400, 'invalid_executor_request')
-        if intent == "do" and executor == 'builtin':
-            available = getattr(organization, 'available', None)
-            if organization is None or (callable(available) and not await run_in_threadpool(available)):
-                raise HTTPException(503, "task_runtime_unavailable")
         if intent not in {"remember", "inspiration", "ask", "do"}:
             raise HTTPException(400, "invalid_intent")
         if 'continue_from' in body and intent != 'do':
             raise HTTPException(400, 'invalid_continue_from')
         current_project = _project(body.get("project_id", "default"))
         thread_id = body.get("thread_id")
+        reserved_thread = acceptance is not None and thread_id is None
+        if acceptance is not None:
+            if thread_id is not None and thread_id != acceptance['thread_id']:
+                raise RecognitionConflict('turn_message_acceptance_binding_changed')
+            thread_id = acceptance['thread_id']
+        if forced_thread_id is not None and thread_id != forced_thread_id:
+            raise HTTPException(409, 'route_correction_planned_scope_changed')
         if thread_id is not None:
             _project(thread_id)
         item_id = body.get('item_id') if intent == 'remember' else None
@@ -494,29 +754,106 @@ def install_workbench_routes(application, *, records, models, documents, service
         project = get('place')(PlaceInput(
             project_for_tag(tag, rows=initial_rows['v2_projects']) if tag else forced_project,
             intent, current_project))
+        if (acceptance is not None and tag is not None
+                and project != acceptance['requested_project_id']):
+            raise RecognitionConflict('turn_message_acceptance_binding_changed')
+        if intent == 'do' and body.get('scope_kind') == 'shared':
+            answer_query = incoming_query(project, scope_kind='shared')
+        update_basis = None
+        if 'context_ids' in body:
+            if (intent != 'do' or executor != 'builtin' or body.get('intent') != 'do'
+                    or not isinstance(body.get('continue_from'), str) or parent_turn_id is not None
+                    or division_override is not None or redo_from is not None or attachment_ids(body)):
+                raise HTTPException(400, 'invalid_outcome_update_request')
+            freshness = getattr(workspace.query, 'outcome_freshness', None)
+            if freshness is None:
+                raise HTTPException(409, 'outcome_update_authority_unavailable')
+            from .outcomes import qualified_lineages
+            try:
+                from .shared_auxiliary import _qualified_commit
+                update_scope = (_qualified_commit(answer_query.origin_admission)
+                    if answer_query.origin_admission is not None else nullcontext())
+                with update_scope, records.begin() as tx:
+                    update_basis = freshness.read_update_basis(project=project, document_id=body['continue_from'],
+                        context_ids=body['context_ids'], reader=TransactionRecords(tx))
+                    freshness.validate_update_basis(project=project, document_id=body['continue_from'],
+                        basis=update_basis, reader=TransactionRecords(tx))
+                    lineage = qualified_lineages(tx, project).get(body['continue_from'])
+                    if lineage is None or cleaned != lineage.payload['task_text']:
+                        raise HTTPException(409, 'outcome_update_request_changed')
+                    scene = lineage.payload['scene']
+            except RecognitionConflict as error:
+                raise HTTPException(409, str(error)) from error
         placement_version = version('place')
         scope = WorkScope("local-user", project)
-        if thread_id:
+        if thread_id and not reserved_thread:
             scoped("v2_threads", thread_id, project, read=initial_read)
-        else:
+        elif thread_id is None:
             thread_id = "thread-" + uuid4().hex
-        turn_id = forced_turn_id or replace_turn or "turn-" + uuid4().hex
+        if acceptance is not None and forced_turn_id is not None and forced_turn_id != acceptance['public_id']:
+            raise RecognitionConflict('turn_message_acceptance_binding_changed')
+        turn_id = forced_turn_id or replace_turn or (acceptance['public_id'] if acceptance is not None else "turn-" + uuid4().hex)
+        if parent_turn_id and parent_turn_id.startswith('turn-route-'):
+            from ..route_correction_scopes import planned_child_scope
+            planned = planned_child_scope(records, parent_turn_id, turn_id)
+            if (planned is None or planned['target']['project_id'] != project
+                    or planned['target']['scene'] != scene or planned['target']['thread_id'] != thread_id):
+                raise HTTPException(409, 'route_correction_planned_scope_changed')
         bind_turn_id(turn_id)
         timing = current_observation()
         if timing is not None:
             timing.set_turn_id(turn_id)
             timing.operation = "task" if intent == "do" else intent
         run_id = uuid4().hex
+        parent = records.read('v2_turns', parent_turn_id) if parent_turn_id else None
+        if dependency_turns and parent is not None and parent.payload.get('attachment_item_ids'):
+            from time import monotonic
+            timeout = getattr(get('route'), 'dependency_timeout', get('route', version='@2').dependency_timeout)
+            deadline = monotonic() + timeout
+            waits = []
+            for dependency in dependency_turns:
+                child = records.read('v2_turns', dependency)
+                if child is not None and child.payload.get('intent') == 'remember':
+                    waits.append(asyncio.create_task(original_readiness.wait(records, project,
+                        child.payload['receipt']['remember']['item_id'], deadline,
+                        turn_id=dependency, active=lambda dependency=dependency: dependency in running)))
+            try:
+                await asyncio.gather(*waits)
+            finally:
+                for waiter in waits:
+                    if not waiter.done():
+                        waiter.cancel()
+                await asyncio.gather(*waits, return_exceptions=True)
         from .part_context import prepare_context
-        part_context = prepare_context(records, workspace.query, project, parent_turn_id, dependency_turns)
+        part_context = prepare_context(records, answer_query, project, parent_turn_id, dependency_turns,
+            recipient=turn_id)
+        if intent == "do" and executor == 'builtin':
+            available = getattr(organization, 'available', None)
+            if organization is None or (callable(available) and not await run_in_threadpool(available)):
+                raise HTTPException(503, "task_runtime_unavailable")
         research_state = None
+        stopped_shared_answer = None
         candidate_hint = None
-        if intent == "remember" and prepared_reminder is not None:
+        remember_query = remember_binding = None
+        if intent == 'remember' and body.get('scope_kind') == 'shared':
+            if (acceptance is None or project != acceptance['requested_project_id'] or parent_turn_id is not None
+                    or replace_turn is not None or prepared_reminder is not None or title_prefix
+                    or tag is not None or any(key in body for key in ('item_id', 'item_ids', 'context_ids', 'continue_from'))):
+                raise HTTPException(409, 'shared_intent_not_available')
+            cleaned = _text(cleaned, 'text')
+            remember_query = shared_remember.query(project)
+            item, remember_binding = await shared_remember.capture(remember_query, turn_id=turn_id,
+                request_key=request_key, text=cleaned, route=route_meta)
+            item_id = item['id']
+            receipt = {'remember': {'item_id': item_id, 'title': item['title'], 'state': 'processing',
+                'progress': {'done': 2, 'total': 4}, 'document_id': None, 'sources_available': True,
+                'verified': False, 'insights': [], 'related': [], 'error': None}}
+        elif intent == "remember" and prepared_reminder is not None:
             if reminders is None:
                 raise ValueError('reminder_service_missing')
             item_id, item = None, None
             receipt = {"remember": {"item_id": None, "title": cleaned.splitlines()[0][:80],
-                "state": "done", "progress": {"done": 4, "total": 4}, "document_id": None,
+                "state": "done", "document_id": None,
                 "verified": False, "insights": [], "related": [], "error": None}}
         elif intent == "remember":
             item_id = body.get("item_id")
@@ -535,11 +872,14 @@ def install_workbench_routes(application, *, records, models, documents, service
             else:
                 cleaned = _text(cleaned, "text")
                 url = share_url(cleaned)
-                item = await (workspace.intake.add_link({"project_id": project, "url": url})
+                created = remember_stage_created.for_child(turn_id) if remember_stage_created is not None else None
+                binding = ({'stage_created': created, 'created_item_id': created.created_item_id}
+                    if created is not None else {})
+                item = await (workspace.intake.add_link({"project_id": project, "url": url}, **binding)
                     if url
                     else workspace.intake.add_text({"project_id": project,
                         "text": body['text'] if parent_turn_id else cleaned},
-                        preserve_text=bool(parent_turn_id)))
+                        preserve_text=bool(parent_turn_id), **binding))
                 item_id = item["id"]
             if scene:
                 assign_scene(records, "item", item_id, project, scene)
@@ -555,10 +895,12 @@ def install_workbench_routes(application, *, records, models, documents, service
             receipt, item_id = {'do': initial}, None
         elif intent == "do":
             cleaned = _text(cleaned, "text")
-            if not egress_allowed(records, models, project, 'generation'):
+            if not egress_allowed(answer_query.records, models, project, 'generation'):
                 raise HTTPException(409, 'task_remote_blocked')
             continuation_version = None
             explicit_choice = 'continue_from' in body
+            if explicit_choice and body.get('continue_from') is not None:
+                data_operation = None
             try:
                 continuation_version = version('continuation')
             except ValueError as error:
@@ -567,15 +909,22 @@ def install_workbench_routes(application, *, records, models, documents, service
                 # 明确选择可使用已登记候选，省略时保持尚未激活的旧默认。
                 continuation_version = '@1' if explicit_choice else None
             # 省略选择的重做保留已经冻结的目标与共同前驱，只取得本轮策略版本。
-            if continuation_version is not None and (explicit_choice or outcome_selection is None):
+            if data_operation is not None:
+                outcome_selection = None
+            elif continuation_version is not None and (explicit_choice or outcome_selection is None):
                 from .outcomes import select_outcome, candidates
                 from .links import similarity
                 choice = body.get('continue_from')
                 if choice is not None and (not isinstance(choice, str) or not choice):
                     raise HTTPException(400, 'invalid_continue_from')
                 try:
+                    if answer_query.origin_admission is not None:
+                        from .shared_task_workbench import continuation_candidates
+                        available_outcomes = continuation_candidates(answer_query, project=project, document_id=choice)
+                    else:
+                        available_outcomes = candidates(records, project=project, document_id=choice)
                     chosen = get('continuation', version=continuation_version)(cleaned,
-                        candidates(records, project=project, document_id=choice), project_id=project, scene=scene,
+                        available_outcomes, project_id=project, scene=scene,
                         score_text=similarity, continue_from=choice,
                         force_new=explicit_choice and choice is None)
                     outcome_selection = (select_outcome(records, project=project, scene=scene,
@@ -583,9 +932,17 @@ def install_workbench_routes(application, *, records, models, documents, service
                 except (RecognitionConflict, ValueError):
                     raise HTTPException(409, 'outcome_unavailable') from None
             try:
-                initial, research_state = research.initial(turn_id, project, instruction or cleaned, scene,
+                from ..workbench_identity_binding import capture_identity
+                workbench_identity = capture_identity(application,records,documents,project=project,scene=scene,
+                    thread_id=thread_id,turn_id=turn_id,parent_turn_id=parent_turn_id)
+                selected_research = (research.with_source_query(answer_query)
+                    if answer_query.origin_admission is not None else research)
+                initial, research_state = selected_research.initial(turn_id, project,
+                    cleaned if data_operation is not None else instruction or cleaned, scene,
                     division_override=division_override, continuation=outcome_selection,
-                    continuation_version=continuation_version, situation=situation, part_context=part_context)
+                    continuation_version=continuation_version, situation=situation, part_context=part_context,
+                    data_operation=data_operation,workbench_identity=workbench_identity, update_basis=update_basis,
+                    shared_redo=shared_redo)
             except RecognitionConflict:
                 if continuation_version is None:
                     raise
@@ -593,21 +950,31 @@ def install_workbench_routes(application, *, records, models, documents, service
             receipt = {"do": initial}
             item_id = None
         elif intent == "ask":
+            answer_query = incoming_query(project, scope_kind=body.get('scope_kind', 'personal'))
+            answer_workspace = replace(workspace, query=answer_query)
             cleaned = _text(cleaned, "text")
             question = _text(instruction or cleaned, 'text')
             if len(question) > 1000:
                 raise HTTPException(400, "question_too_long")
             from .elsewhere import selected_version
             elsewhere_version = selected_version()
-            answered = await workspace.query.answer_turns.run(turn_id=turn_id, project=project, question=question,
-                situation=situation, part_context=part_context,
-                operation=lambda: _answer_workbench(workspace, records, project, question, scene,
+            from ..workbench_identity_binding import capture_identity
+            workbench_identity = capture_identity(application,records,documents,project=project,scene=scene,
+                thread_id=thread_id,turn_id=turn_id,parent_turn_id=parent_turn_id)
+            origin = answer_query.origin_admission
+            answered = await answer_query.answer_turns.run(turn_id=turn_id, project=project, question=question,
+                situation=situation, part_context=part_context,workbench_identity=workbench_identity,
+                **({'admission_prepare': origin.prepare, 'privacy_prepare': answer_query.freeze_answer_privacy}
+                   if origin is not None else {}),
+                operation=lambda: _answer_workbench(answer_workspace, records, project, question, scene,
                     thread_id, turn_id, on_started, on_delta, part_context=part_context,
                     parent_turn_id=parent_turn_id, on_frame=on_frame, situation=situation,
-                    tagged=tag is not None or forced_project is not None, elsewhere_version=elsewhere_version))
+                    tagged=tag is not None or forced_project is not None, elsewhere_version=elsewhere_version,
+                    message_accepted_at=accepted_at, public_text=cleaned))
             receipt, chosen = answered["receipt"], answered["chosen"]
             stopped_generation = (application.state.ai_runtime.product_stops.current(turn_id).payload['generation']
                 if receipt['ask'].get('interruption') == 'stopped' else None)
+            stopped_shared_answer = shared_stop_proof(answer_query, answered, turn_id)
             from ..kernel.receipt_projection import question_receipt
             receipt = {"ask": question_receipt(workspace.query.answer_turns.root, turn_id,
                                                project, receipt["ask"], records=records)}
@@ -632,33 +999,50 @@ def install_workbench_routes(application, *, records, models, documents, service
         created_at = scoped("v2_turns", replace_turn, project).payload["created_at"] if replace_turn else now
         response = {"thread_id": thread_id, "turn": {"id": turn_id, "thread_id": thread_id,
             "intent": intent, "user_text": cleaned, "created_at": created_at, "receipt": receipt}}
-        with stage("persist"), records.begin() as tx:
+        response['turn']['scope_kind'] = ('shared' if remember_binding is not None
+            or intent in {'ask', 'do'} and answer_query.origin_admission is not None else 'personal')
+        from .shared_auxiliary import _qualified_commit
+        answer_scope = (_qualified_commit(answer_query.origin_admission)
+            if intent in {'ask', 'do'} and answer_query.origin_admission is not None and not stopped_shared_answer
+            else nullcontext(None))
+        if stopped_shared_answer:
+            answer_scope = stopped_answer_scope(answer_query.origin_admission)
+        if remember_query is not None:
+            answer_scope = shared_remember.qualified(remember_query)
+        with stage("persist"), answer_scope as qualification, records.begin() as tx:
+            if stopped_shared_answer:
+                receipt['ask'] = shared_stop_receipt(answer_query, stopped_shared_answer, receipt['ask'], tx, qualification)
+            elif intent == 'ask' and prepared_reminder is None:
+                constraint_input = getattr(answer_query, 'project_constraint_input', None)
+                if constraint_input is not None:
+                    constraint_input.validate_public_answer(turn_id, reader=tx)
             if outcome_selection is not None:
                 from .outcomes import validate_selection
                 validate_selection(tx, project=project, scene=scene, selection=outcome_selection)
+                if update_basis is not None:
+                    workspace.query.outcome_freshness.validate_update_basis(project=project,
+                        document_id=outcome_selection['document_id'], basis=update_basis, reader=TransactionRecords(tx))
             if redo_from is not None:
-                previous, sample_revision = redo_from
-                old_turn, sample = tx.read('v2_turns', previous), tx.read('v2_task_divisions', previous)
-                if (old_turn is None or old_turn.payload.get('project_id') != project or sample is None
-                        or sample.payload.get('project_id') != project or sample.payload.get('deleted')):
-                    raise HTTPException(404, 'task_division_not_found')
-                if sample.revision != sample_revision:
-                    raise HTTPException(409, 'task_division_revision_conflicted')
+                research.validate_redo_source(tx, project, redo_from)
             if prepared_reminder is not None:
                 # 提醒、Turn 与幂等完成记录同一次提交；stage 不另开写事务。
-                reminders.stage(tx, project_id=project, scene=scene, turn_id=turn_id,
-                                parsed=prepared_reminder)
+                actual = reminders.stage(tx, project_id=project, scene=scene, turn_id=turn_id,
+                                         parsed=prepared_reminder)
+                receipt['reminder'] = {key:actual[key] for key in
+                    ('id','at','state','revision','project_id','scene','turn_id')}
             saved = persist_workbench_turn(tx, turn_id=turn_id, project=project, thread_id=thread_id,
                 cleaned=cleaned, now=now, created_at=created_at, intent=intent, receipt=receipt,
                 item_id=item_id, item=item if intent == 'remember' else None,
                 instance=instance, run_id=run_id, title_prefix=title_prefix,
                 replace_turn=replace_turn, research_state=research_state,
                 parent_turn_id=parent_turn_id, route_meta=route_meta,
-                track_item=prepared_reminder is None)
+                track_item=prepared_reminder is None and remember_binding is None)
+            if remember_binding is not None:
+                shared_remember.bind_turn(tx, qualification, remember_query, saved, remember_binding)
             if redo_from is not None:
                 enlisted = SQLiteDocumentRepository(TransactionRecords(tx), namespace_id=documents.namespace_id)
-                record_redo(tx, enlisted, scope=scope, turn_id=redo_from[0], new_turn_id=turn_id, now=now)
-            if intent == "remember" and prepared_reminder is None:
+                record_redo(tx, enlisted, scope=scope, turn_id=redo_from['turn_id'], new_turn_id=turn_id, now=now)
+            if intent == "remember" and prepared_reminder is None and remember_binding is None:
                 if placement_version != '@1':
                     old_input = tx.read('v2_place_inputs', turn_id)
                     frozen_input = {'project_id': project, 'tagged': tag is not None,
@@ -672,17 +1056,40 @@ def install_workbench_routes(application, *, records, models, documents, service
                 if current is None or current.revision != candidate_hint['candidate_revision']:
                     raise RecognitionConflict('placement_candidate_changed')
                 tx.put('v2_place_hints_candidate', candidate.id, candidate_hint, expected_revision=0)
+            learning = getattr(application.state, 'product_steer_learning', None)
+            if (learning is not None and parent_turn_id is None and replace_turn is None and intent != 'ask'
+                    and message_origin != 'favorites_expansion'):
+                learning.record_message(tx, public_id=turn_id, project_id=project, thread_id=thread_id,
+                    text=cleaned, accepted_at=accepted_at,
+                    origin='outcome_update' if update_basis is not None else 'redo' if redo_from is not None else message_origin,
+                    ordering_only=remember_binding is not None)
             executions.complete(tx, request_key, response)
+            if intent == 'do' and answer_query.origin_admission is not None:
+                from .shared_task_workbench import validate_public_task
+                validate_public_task(answer_query, tx.read(TASK_EXECUTIONS, turn_id).payload, reader=tx)
+            if qualification is not None:
+                qualification._actor_reader(TransactionRecords(tx))
             tx.commit()
-        if intent == "remember" and prepared_reminder is None:
+        if remember_binding is not None:
+            start(turn_id, project, item_id, run_id, shared=True)
+        if learning is not None and remember_binding is None:
+            learning.observe_public(parent_turn_id or turn_id)
+        if intent == "remember" and prepared_reminder is None and remember_binding is None:
             start(turn_id, project, item_id, run_id)
         elif intent == 'inspiration':
             from .stats import record_activity
             record_activity(records, 'remember', project, candidate.id,
                             event_id='remember-' + candidate.id)
         elif intent == "ask" and not receipt["ask"]["no_match"] and 'interruption' not in receipt['ask']:
-            record_answer_usage(records, chosen, receipt["ask"]["citations"], project)
-            relearn_cited(records, chosen, receipt["ask"]["citations"], turn_id=turn_id if parent_turn_id else None)
+            if answer_query.origin_admission is not None:
+                from .shared_usage import record_shared_answer_usage
+                record_shared_answer_usage(answer_query, chosen, receipt['ask']['citations'], turn_id=turn_id)
+            else:
+                record_answer_usage(records, chosen, receipt["ask"]["citations"], project,
+                    turn_id=turn_id, thread_id=thread_id)
+                relearn_cited(records, chosen, receipt["ask"]["citations"], turn_id=turn_id if parent_turn_id else None)
+        if remember_binding is None:
+            complete_route_example(turn_id)
         if intent == 'ask' and receipt['ask'].get('interruption') == 'stopped':
             record_stop(turn_id, project, stopped_generation)
         if research_state is not None:
@@ -692,10 +1099,12 @@ def install_workbench_routes(application, *, records, models, documents, service
         return response
 
     async def execute_favorites(body, *, replace_turn=None, **part_options):
+        accepted_at = accepted_clock.get() or _now()
+        acceptance = accepted_message.get() if replace_turn is None and not part_options.get('parent_turn_id') else None
         tag, scene, cleaned = parse_scope_tag(body.get('text', ''))
         project = project_for_tag(tag) if tag else _project(body.get('project_id', 'default'))
-        thread_id = body.get('thread_id')
-        if thread_id:
+        thread_id = body.get('thread_id') or (acceptance['thread_id'] if acceptance is not None else None)
+        if body.get('thread_id'):
             scoped('v2_threads', _project(thread_id), project)
         discovery = getattr(application.state, 'bilibili_favorites_discovery', None)
         if not callable(discovery):
@@ -708,7 +1117,8 @@ def install_workbench_routes(application, *, records, models, documents, service
                 raise ValueError('favorites_empty')
             urls = list(dict.fromkeys(video_url(value) for value in found))
         except Exception:
-            identity, thread_id, now = part_options.get('forced_turn_id') or replace_turn or 'turn-' + uuid4().hex, thread_id or 'thread-' + uuid4().hex, _now()
+            identity = part_options.get('forced_turn_id') or replace_turn or (acceptance['public_id'] if acceptance is not None else 'turn-' + uuid4().hex)
+            thread_id, now = thread_id or 'thread-' + uuid4().hex, _now()
             receipt = {'remember': {'item_id': None, 'title': '收藏夹', 'state': 'failed', 'error': 'favorites_discovery_failed',
                 'progress': {'done': 0, 'total': 4}, 'document_id': None, 'verified': False, 'insights': [], 'related': []}}
             with records.begin() as tx:
@@ -720,7 +1130,13 @@ def install_workbench_routes(application, *, records, models, documents, service
                     'instance': instance, 'run_id': uuid4().hex,
                     **({'route':part_options['route_meta']} if part_options.get('route_meta') else {}),
                     **({'parent_turn_id':part_options['parent_turn_id']} if part_options.get('parent_turn_id') else {})}, expected_revision=old.revision if old else 0)
+                learning = getattr(application.state, 'product_steer_learning', None)
+                if learning is not None and old is None and not part_options.get('parent_turn_id'):
+                    learning.record_message(tx, public_id=identity, project_id=project, thread_id=thread_id,
+                        text=body['text'], accepted_at=accepted_at)
                 tx.commit()
+            if learning is not None:
+                learning.observe_public(part_options.get('parent_turn_id') or identity)
             return {'thread_id': thread_id, 'turn': view(scoped('v2_turns', identity, project))}
         first = None
         for index, url in enumerate(urls[:50]):
@@ -729,7 +1145,7 @@ def install_workbench_routes(application, *, records, models, documents, service
                 text = body['text'] if part_options.get('parent_turn_id') and index == 0 else body['text'].replace(cleaned.split()[0], url, 1)
                 options = {**part_options}
                 if index:
-                    options.update(forced_turn_id=None, request_key=None)
+                    options.update(forced_turn_id=None, request_key=None, message_origin='favorites_expansion')
                     options.pop('route_meta', None)
                 result = await execute_one({'project_id': project, 'text': text, 'intent': 'remember', 'item_id': item_id,
                     **({'thread_id': thread_id} if thread_id else {})}, replace_turn=replace_turn if index == 0 else None,
@@ -747,10 +1163,19 @@ def install_workbench_routes(application, *, records, models, documents, service
             return await execute_favorites(body, **options)
         return await execute_one(body, **options)
 
-    async def execute_turn(body, *, request_key=None, on_started=None, on_delta=None, on_plan=None, on_frame=None):
-        with override(**entry_versions()):
-            return await execute_turn_prepared(body, request_key=request_key, on_started=on_started,
-                on_delta=on_delta, on_plan=on_plan, on_frame=on_frame)
+    async def execute_turn(body, *, request_key=None, on_started=None, on_delta=None, on_plan=None, on_frame=None,
+                           acceptance=None):
+        token = accepted_clock.set(acceptance['accepted_at'] if acceptance is not None else _now())
+        accepted_token = accepted_message.set(acceptance)
+        try:
+            with override(**entry_versions()):
+                if '_redo' in body:
+                    return await execute_redo(body, request_key=request_key)
+                return await execute_turn_prepared(body, request_key=request_key, on_started=on_started,
+                    on_delta=on_delta, on_plan=on_plan, on_frame=on_frame)
+        finally:
+            accepted_message.reset(accepted_token)
+            accepted_clock.reset(token)
 
     async def execute_turn_prepared(body, *, request_key=None, on_started=None, on_delta=None, on_plan=None, on_frame=None):
         route_meta = None
@@ -760,20 +1185,31 @@ def install_workbench_routes(application, *, records, models, documents, service
         if tag:
             project = project_for_tag(tag)
         requested = body.get('intent')
+        shared = body.get('scope_kind') == 'shared'
+        selected_remember = shared_remember.selection(request_key) if shared_remember.is_submission(body) else None
+        if selected_remember is not None:
+            if on_plan:
+                await on_plan('remember')
+            return await execute_one({**body, 'intent': 'remember'}, request_key=request_key,
+                route_meta=selected_remember['route'])
+        items = attachment_ids(body)
+        for attachment in items:
+            workspace.items.item_for(_project(attachment), project)
         if requested not in {None, 'auto', 'remember', 'ask', 'do', 'inspiration'}:
             raise HTTPException(400, 'invalid_intent')
-        if (requested in {None, 'auto'} and not body.get('item_id')
+        if (requested in {None, 'auto'} and not items
                 and getattr(get('retrieve'), 'agentic', False)):
             from .agentic_rag import pending_clarification
-            if pending_clarification(workspace.query, records, project, body.get('thread_id')) is not None:
+            clarification_query = incoming_query(project, scope_kind=body.get('scope_kind', 'personal'))
+            if pending_clarification(clarification_query, records, project, body.get('thread_id')) is not None:
                 # 此处已在原 TurnExecutionService 的幂等认领之后，同键回放不会重新路由。
                 body, requested = {**body, 'intent': 'ask'}, 'ask'
         parsed = None
         reminder_branch = False
-        if (requested in {None, 'auto', 'remember'} and reminders is not None
-                and body.get('item_id') is None and cleaned.startswith('提醒我')):
+        if (not shared and requested in {None, 'auto', 'remember'} and reminders is not None
+                and not items and cleaned.startswith('提醒我')):
             try:
-                get('remind')
+                get('remind', version=reminders.policy_version)
             except ValueError as error:
                 if str(error) != 'unknown_policy_interface':
                     raise
@@ -789,37 +1225,106 @@ def install_workbench_routes(application, *, records, models, documents, service
             # 解析不出时间时仍由原普通记住处理，不再交路由重新选择意图。
             return await execute_one({**body, 'intent': 'remember'}, request_key=request_key,
                 on_started=on_started, on_delta=on_delta, on_frame=on_frame, prepared_reminder=parsed)
-        if requested in {None, 'auto'}:
-            plan = await run_in_threadpool(routes.route, text, project_id=project,
-                request_key=request_key or 'request-' + uuid4().hex, has_files=bool(body.get('item_id')))
+        if (requested in {None, 'auto'} or 'item_ids' in body
+                or requested == 'do' and body.get('executor', 'builtin') == 'builtin'
+                and getattr(get('route'), 'classify_manual_do', False)):
+            selected_routes = routes
+            if body.get('scope_kind') == 'shared':
+                from .shared_route import shared_routes
+                selected_routes = shared_routes(routes, incoming_query(project, scope_kind='shared'))
+            plan = await run_in_threadpool(selected_routes.route, text, project_id=project,
+                request_key=request_key or 'request-' + uuid4().hex, has_files=bool(items), intent=requested)
+            if shared and (len(plan.parts) != 1 or plan.parts[0].intent not in {'ask', 'do', 'remember'}):
+                raise HTTPException(409, 'shared_intent_not_available')
             if on_plan:
-                representation = await on_plan('multi' if len(plan.parts) > 1 else plan.parts[0].intent)
+                representation = await on_plan('multi' if len(plan.parts) > 1 or 'item_ids' in body else plan.parts[0].intent)
                 if representation != 'sse':
                     on_started = on_delta = on_frame = None
-            if len(plan.parts) > 1:
-                return await execute_parts(body, plan, records=records, instance=instance, execute=execute_routed_part,
+            route_policy = get('route')
+            requires_model = getattr(route_policy, 'requires_model_routing', None)
+            classification_required = (requested == 'do' or requested in {None, 'auto'}
+                and requires_model is not None and requires_model(cleaned))
+            if (getattr(route_policy, 'data_operations', False)
+                    and (classification_required or any(part.intent == 'do' for part in plan.parts))
+                    and plan.mode != 'model' and plan.reason != 'explicit_lexicon_instruction'):
+                raise HTTPException(409, 'turn_interrupted')
+            if len(plan.parts) > 1 or 'item_ids' in body:
+                result = await execute_parts(body, plan, records=records, instance=instance, execute=execute_routed_part,
                     project=project, scene=scene, request_key=request_key, complete=executions.complete,
-                    on_started=on_started, on_delta=on_delta)
+                    on_started=on_started, on_delta=on_delta, on_frame=on_frame,
+                    learning=getattr(application.state, 'product_steer_learning', None),
+                    message_accepted_at=accepted_clock.get(), acceptance=accepted_message.get())
+                complete_route_example(result['turn']['id'])
+                return result
             part = plan.parts[0]
             route_meta = {key:getattr(plan, key) for key in ('mode', 'usage', 'egress_receipt_id')}
             body = {**body, 'intent':part.intent}
-            if part.situation is not None:
+            if part.situation is not None or getattr(part, 'data_operation', None) is not None:
                 return await execute_one(body, request_key=request_key, on_started=on_started,
-                    on_delta=on_delta, on_frame=on_frame, situation=part.situation, route_meta=route_meta)
+                    on_delta=on_delta, on_frame=on_frame, situation=part.situation, route_meta=route_meta,
+                    data_operation=getattr(part, 'data_operation', None))
         _, _, cleaned = parse_scope_tag(body.get('text', ''))
         intent = body['intent'] if 'intent' in body else get('route')(route_intent, body.get('text', ''), bool(body.get('item_id')))
-        if intent == 'remember' and not body.get('item_id') and cleaned and is_favorite_url(cleaned.split()[0]):
+        if not shared and intent == 'remember' and not body.get('item_id') and cleaned and is_favorite_url(cleaned.split()[0]):
             return await execute_favorites(body, **({'route_meta':route_meta} if route_meta else {}))
         return await execute_one(body, request_key=request_key, on_started=on_started, on_delta=on_delta, on_frame=on_frame, route_meta=route_meta)
 
-    executions = TurnExecutionService(records, execute_turn, instance=instance)
+    def accept_turn(tx, body, *, request_key, accepted_at):
+        learning = getattr(application.state, 'product_steer_learning', None)
+        if learning is None:
+            return None
+        text = body.get('text', '')
+        if not isinstance(text, str) or len(text) > 60000:
+            raise HTTPException(400, 'invalid_text')
+        project = _project(body.get('project_id', 'default'))
+        tag = parse_scope_tag(text)[0]
+        if tag:
+            project = project_for_tag(tag, rows=tx.list('v2_projects'))
+        thread = body.get('thread_id')
+        origin = 'outcome_update' if 'context_ids' in body else 'user'
+        if '_redo' in body:
+            previous = scoped('v2_turns', _project(body['_redo']), project, read=tx.read)
+            thread, origin = previous.payload['thread_id'], 'redo'
+        if thread is not None:
+            thread = _project(thread)
+            scoped('v2_threads', thread, project, read=tx.read)
+        acceptance = learning.order.reserve(tx, public_id='turn-' + uuid4().hex,
+            project_id=project, thread_id=thread or 'thread-' + uuid4().hex,
+            body=body, accepted_at=accepted_at, request_key=request_key, origin=origin, new_thread=thread is None)
+        shared_remember.reserve(tx, body, request_key, acceptance)
+        return acceptance
+
+    executions = TurnExecutionService(records, execute_turn, instance=instance, accept=accept_turn,
+        replay=shared_remember.replay)
     application.state.workbench_turn_execution = executions
+    from .shared_task_command_read import install_shared_task_command_route
+    install_shared_task_command_route(router, application, executions)
     install_share_capture(router, records=records, workspace=workspace, executions=executions, instance=instance, project_for_tag=project_for_tag)
+
+    async def classify_correction_do(text, *, project_id, request_key):
+        plan = await run_in_threadpool(routes.route, text, project_id=project_id,
+            request_key=request_key, intent='do')
+        if (len(plan.parts) != 1 or plan.parts[0].intent != 'do'
+                or getattr(get('route'), 'data_operations', False)
+                and plan.mode != 'model' and plan.reason != 'explicit_lexicon_instruction'):
+            raise RecognitionConflict('route_correction_classifier_unavailable')
+        part = plan.parts[0]
+        return {'situation': part.situation, 'data_operation': getattr(part, 'data_operation', None),
+                'route_meta': {key: getattr(plan, key) for key in ('mode', 'usage', 'egress_receipt_id')}}
+
+    from .route_correction_routes import install_route_correction_routes
+    from ..route_correction_originals import RouteOriginalBinding
+    application.state.workbench_route_corrections = install_route_correction_routes(router,
+        application=application, records=records, instance=instance, execute=execute_one,
+        view=view, examples=examples, classify_do=classify_correction_do,
+        remember_binding_factory=lambda operation, index: RouteOriginalBinding(records, origins, operation, index))
 
     @router.post("/turns")
     @with_connection_scope
     async def create(request: Request):
         body = await _json(request)
+        if body.get('scope_kind') == 'shared' and body.get('executor', 'builtin') != 'builtin':
+            raise HTTPException(409, 'shared_intent_not_available')
         if body.get('executor', 'builtin') != 'builtin':
             from backend.security.device_identity import server_mode
             host = getattr(application.state, 'external_execution_host', None)
@@ -834,18 +1339,45 @@ def install_workbench_routes(application, *, records, models, documents, service
             if previous != tuple(server):
                 raise HTTPException(409, 'external_task_backend_unavailable')
             application.state.external_mcp_backend = tuple(server)
-        if set(body).difference({"project_id", "thread_id", "text", "item_id", "intent", "continue_from", "executor"}):
+        if set(body).difference({"project_id", "scope_kind", "thread_id", "text", "item_id", "item_ids", "intent", "continue_from", "executor", "context_ids"}):
             raise HTTPException(400, "invalid_turn_fields")
-        if not isinstance(body.get("text", ""), str) or len(body.get("text", "")) > 60000:
-            raise HTTPException(400, "invalid_text")
+        attachment_ids(body)
+        from .turn_logical_scope import logical_scope
+        try:
+            logical_scope(body.get('scope_kind', 'personal'))
+        except ValueError:
+            raise HTTPException(400, 'invalid_scope_kind') from None
         if 'intent' in body and not isinstance(body['intent'], str):
             raise HTTPException(400, 'invalid_intent')
+        if body.get('scope_kind') == 'shared' and getattr(application.state, 'shared_query_factory', None) is None:
+            raise HTTPException(409, 'shared_scope_unavailable')
+        if body.get('scope_kind') == 'shared' and (body.get('intent') not in {None, 'ask', 'auto', 'do', 'remember'}
+                or attachment_ids(body) or 'item_ids' in body):
+            raise HTTPException(409, 'shared_intent_not_available')
+        if not isinstance(body.get("text", ""), str) or len(body.get("text", "")) > 60000:
+            raise HTTPException(400, "invalid_text")
+        if body.get('scope_kind') == 'shared' and parse_scope_tag(body.get('text', ''))[0]:
+            raise HTTPException(400, 'shared_scope_tag_unsupported')
+        project = _project(body.get('project_id', 'default'))
+        tag = parse_scope_tag(body.get('text', ''))[0]
+        if tag:
+            project = project_for_tag(tag)
+        for attachment in attachment_ids(body):
+            workspace.items.item_for(_project(attachment), project)
         if body.get('executor', 'builtin') != 'builtin' and body.get('intent') != 'do':
             raise HTTPException(400, 'invalid_executor_request')
+        key = request.headers.get('idempotency-key')
+        if body.get('scope_kind') == 'shared' and body.get('intent') == 'remember':
+            if any(field in body for field in ('item_id', 'continue_from', 'context_ids')):
+                raise HTTPException(409, 'shared_intent_not_available')
+            _text(body.get('text'), 'text')
+            shared_remember.validate_key(key)
+            shared_remember.query(project)
+        task_delivery = SharedReceiptDelivery(application, project)
+        delivery_guard = shared_answer_delivery_visible if body.get('scope_kind') == 'shared' else None
         if body.get('intent') in {None, 'auto'}:
-            return await routed_response(executions, body, request.headers.get('idempotency-key'),
-                request.headers.get('accept'))
-        key = request.headers.get("idempotency-key")
+            return await routed_response(executions, body, key, request.headers.get('accept'),
+                project_result=task_delivery.result, uncommitted_visible=delivery_guard)
         intent = executions.completed_intent(body, key)
         selections = {} if intent is not None else entry_versions()
         if intent is None:
@@ -880,14 +1412,13 @@ def install_workbench_routes(application, *, records, models, documents, service
                 accepted = {'turn': {key: turn[key] for key in
                     ('id', 'thread_id', 'intent', 'user_text', 'created_at')},
                     'request': execution.payload['request']}
-                response = _read_turn_stream(records, workspace.query.answer_turns.root, turn['id'],
-                    _project(product.payload['project_id']), 0, view=view, safe_errors=SAFE_ERRORS, accepted=accepted)
+                response = public_task_stream(turn['id'], _project(product.payload['project_id']), 0, accepted=accepted)
                 response.headers['Vary'] = 'Accept'
                 return response
-            delivery = SSEDelivery(records)
+            delivery = SSEDelivery(records, project_result=task_delivery.result, uncommitted_visible=delivery_guard)
             return delivery.response(lambda started, delta, frame: execute_created(started, delta, frame))
         result = await execute_created()
-        return JSONResponse(result, headers={"Vary": "Accept", "Cache-Control": "no-store"})
+        return JSONResponse(task_delivery.result(result), headers={"Vary": "Accept", "Cache-Control": "no-store"})
 
     @router.post('/turns/{turn_id}/stop')
     async def stop_turn(turn_id: str, body: dict):
@@ -898,9 +1429,6 @@ def install_workbench_routes(application, *, records, models, documents, service
         if (product is not None and product.payload.get('project_id') == project
                 and product.payload.get('intent') == 'ask' and view(product)['receipt']['ask'].get('error')):
             raise HTTPException(409, 'turn_finished')
-        if (product is not None and product.payload.get('project_id') == project
-                and product.payload.get('receipt', {}).get('do', {}).get('executor')):
-            raise HTTPException(409, 'external_task_continuation_unsupported')
         runtime = await run_in_threadpool(workspace.query.answer_turns._runtime)
         try:
             state, generation = await run_in_threadpool(runtime.product_stops.request, identity, project,
@@ -913,7 +1441,64 @@ def install_workbench_routes(application, *, records, models, documents, service
             raise
         if product is not None:
             record_stop(identity, project, generation)
+            if state == 'stopped' and product.payload['intent'] == 'do' and not product.payload['receipt']['do'].get('executor'):
+                await research.advance(identity, observe_stop_only=True)
         return JSONResponse({'state': state}, status_code=202)
+
+    @router.post('/turns/{turn_id}/save-outcome')
+    async def save_answer_outcome(turn_id: str, body: dict):
+        if set(body) != {'project_id'}:
+            raise HTTPException(400, 'invalid_outcome_save_fields')
+        project, identity = _project(body['project_id']), _project(turn_id)
+
+        def save():
+            from .outcomes import ANSWER_OUTCOMES, save_answer_outcome_in_uow
+            freshness = getattr(workspace.query, 'outcome_freshness', None)
+            native = application.state.ai_turn_store.get_request(identity) if freshness is not None else None
+            sources = freshness.source_scope(request=native) if freshness is not None else nullcontext()
+            with sources, records.begin() as tx:
+                public = tx.read('v2_turns', identity)
+                if public is None or public.payload.get('project_id') != project:
+                    raise HTTPException(404, 'workbench_not_found')
+                already_saved = tx.read(ANSWER_OUTCOMES, identity) is not None
+                result = save_answer_outcome_in_uow(tx, documents, TaskDrafts(records, documents),
+                    project=project, turn_id=identity, now=_now())
+                freshness = getattr(workspace.query, 'outcome_freshness', None)
+                if freshness is not None and not already_saved:
+                    from ..answer_proof import completed_answer_evidence
+                    evidence = completed_answer_evidence(tx, WorkScope('local-user', project), identity)
+                    native = application.state.ai_turn_store.get_request(identity)
+                    freshness.capture_actual_outcome_inputs(tx, project=project,
+                        document_id=result['document_id'], public_turn_id=identity, native_request=native,
+                        evidence_refs=evidence['cited_refs'],
+                        basis_refs=freshness.completion_basis_refs(native, reader=TransactionRecords(tx)))
+                    freshness.rebuild_fresh_in_uow(tx, project=project, document_id=result['document_id'])
+                tx.commit()
+                return result
+        try:
+            return await run_in_threadpool(with_connection_scope(save))
+        except (RecognitionConflict, SQLiteUnitOfWorkConflict):
+            raise HTTPException(409, 'saved_answer_unavailable') from None
+
+    @router.post('/turns/{turn_id}/lexicon-action')
+    async def decide_lexicon(turn_id: str, body: dict, request: Request):
+        from .agent_data_tools import AgentDataToolError
+        if (set(body) != {'project_id', 'preview_id', 'preview_revision', 'event_id', 'sequence', 'decision'}
+                or not isinstance(body['decision'], str) or body['decision'] not in {'approve', 'cancel'}):
+            raise HTTPException(400, 'invalid_lexicon_action')
+        project, identity = _project(body['project_id']), _project(turn_id)
+        scoped('v2_turns', identity, project)
+        from .turn_execution import _REQUEST_KEY
+        from core.product_core.asr_lexicon_service import AsrLexiconError
+        key = request.headers.get('idempotency-key')
+        if not isinstance(key, str) or not _REQUEST_KEY.fullmatch(key):
+            raise HTTPException(400, 'invalid_idempotency_key')
+        try:
+            await research.decide_lexicon(identity, project, key,
+                {name: value for name, value in body.items() if name != 'project_id'})
+        except (AsrLexiconError, AgentDataToolError) as error:
+            raise HTTPException(409, str(error)) from error
+        return view(scoped('v2_turns', identity, project))
 
     @router.post('/turns/{turn_id}/continue')
     async def continue_answer(turn_id: str, body: dict, request: Request):
@@ -938,49 +1523,96 @@ def install_workbench_routes(application, *, records, models, documents, service
         if view(turn)['receipt']['ask'].get('error'):
             raise HTTPException(409, 'turn_interrupted')
         service = workspace.query.answer_turns
+        try:
+            original = service.store_request(turn_id)
+            if original is None:
+                raise RecognitionConflict('answer_continuation_native_unavailable')
+            continuation_query = workspace.query._query_for_native_request(original)
+        except ValueError:
+            raise HTTPException(409, 'source_changed_retry') from None
+        continuation_workspace = replace(workspace, query=continuation_query)
         def validate_current(row):
             from ..kernel.answer_continuations import plan_binding
-            if 'parameters' in plan_binding(workspace.query, row):
-                workspace.query.validate_answer_request(workspace.query.models, service.store_request(turn_id))
+            if 'parameters' in plan_binding(continuation_query, row):
+                continuation_query.validate_answer_request(continuation_query.models, service.store_request(turn_id))
             else:
-                _restored_answer_plan(workspace.query, row)
+                _restored_answer_plan(continuation_query, row)
         async def operation(row, invocation):
             from ..kernel.answer_continuations import plan_binding, decode
-            binding = plan_binding(workspace.query, row)
+            binding = plan_binding(continuation_query, row)
             if 'parameters' in binding:
-                return await _answer_workbench(workspace, records, on_started=None, on_delta=None,
+                return await _answer_workbench(continuation_workspace, records, on_started=None, on_delta=None,
                     **decode(binding['parameters']))
-            return await _continue_answer_workbench(workspace.query, records, turn, row, invocation)
+            return await _continue_answer_workbench(continuation_query, records, turn, row, invocation, items=workspace.items)
         try:
             result = await service.continue_on_request(identity=turn_id, project=project, key=key,
                 operation=operation, validate_current=validate_current)
-        except ValueError:
+        except ValueError as failure:
+            billing = model_billing_code(failure, ModelConfigurationError)
+            if billing is not None:
+                raise HTTPException(model_billing_status(billing), billing) from None
             raise HTTPException(409, 'source_changed_retry') from None
         from ..kernel.receipt_projection import question_receipt
         receipt = {'ask': question_receipt(service.root, turn_id, project, result['receipt']['ask'], records=records)}
+        stopped_shared_answer = shared_stop_proof(continuation_query, result, turn_id)
         if 'interruption' not in turn.payload.get('receipt', {}).get('ask', {}):
             # Only the service's saved resume action can reach this replay.
             # Keep the original projection and never count cited use twice.
             if receipt != turn.payload.get('receipt'):
                 raise HTTPException(409, 'turn_interrupted')
             return view(turn)
-        with records.begin() as tx:
+        from .shared_auxiliary import _qualified_commit
+        source_scope = (_qualified_commit(continuation_query.origin_admission)
+            if continuation_query.origin_admission is not None else nullcontext(None))
+        if stopped_shared_answer is not None:
+            source_scope = stopped_answer_scope(continuation_query.origin_admission)
+        with source_scope as qualification, records.begin() as tx:
             current = scoped('v2_turns', turn_id, project, read=tx.read)
             if current != turn:
                 raise HTTPException(409, 'turn_in_progress')
+            constraint_input = getattr(continuation_query, 'project_constraint_input', None)
+            if stopped_shared_answer is not None:
+                receipt['ask'] = shared_stop_receipt(continuation_query, stopped_shared_answer, receipt['ask'],
+                    tx, qualification, prior=current.payload['receipt']['ask'].get('partial', ''))
+            elif constraint_input is not None:
+                constraint_input.validate_public_answer(turn_id, reader=tx)
             row = tx.put('v2_turns', turn_id, {**current.payload, 'receipt': receipt, 'updated_at': _now()},
                 expected_revision=current.revision)
             executions.complete(tx, None, {'thread_id': row.payload['thread_id'],
                 'turn': {'id': row.object_id, **row.payload}})
+            if qualification is not None:
+                qualification._actor_reader(TransactionRecords(tx))
             tx.commit()
+        learning = getattr(application.state, 'product_steer_learning', None)
+        if learning is not None:
+            learning.observe_public(row.payload.get('parent_turn_id') or turn_id)
         if 'interruption' not in receipt['ask']:
-            record_answer_usage(records, result['chosen'], receipt['ask']['citations'], project)
-            relearn_cited(records, result['chosen'], receipt['ask']['citations'])
+            if continuation_query.origin_admission is not None:
+                from .shared_usage import record_shared_answer_usage
+                record_shared_answer_usage(continuation_query, result['chosen'], receipt['ask']['citations'], turn_id=turn_id)
+            else:
+                record_answer_usage(records, result['chosen'], receipt['ask']['citations'], project,
+                    turn_id=turn_id, thread_id=row.payload['thread_id'])
+                relearn_cited(records, result['chosen'], receipt['ask']['citations'])
         return view(row)
 
     @router.get("/threads")
-    def threads(project_id: str = "default"):
-        rows = records.list_matching("v2_threads", project_id=_project(project_id))
+    def threads(project_id: str = "default", scope_kind: str | None = None):
+        from .turn_logical_scope import TurnLogicalScope, logical_scope
+        if scope_kind is not None:
+            try:
+                logical_scope(scope_kind)
+            except ValueError:
+                raise HTTPException(400, 'invalid_scope_kind') from None
+        project = _project(project_id)
+        rows = records.list_matching("v2_threads", project_id=project)
+        if scope_kind is not None:
+            scopes = TurnLogicalScope(application)
+            turns = records.list_matching('v2_turns', project_id=project)
+            selected = {row.payload['thread_id'] for row in turns if scopes.read(row) == scope_kind}
+            occupied = {row.payload['thread_id'] for row in turns}
+            rows = tuple(row for row in rows if row.object_id in selected
+                or scope_kind == 'personal' and row.object_id not in occupied)
         return {"items": [{"id": row.object_id, "title": row.payload["title"], "updated_at": row.payload["updated_at"]}
             for row in sorted(rows, key=lambda row: row.payload["updated_at"], reverse=True)
             if not row.payload.get('parent_turn_id')]}
@@ -1000,16 +1632,26 @@ def install_workbench_routes(application, *, records, models, documents, service
         start = cursor(after) if after is not None else cursor(header) if header is not None else 0
         if header is not None and cursor(header) != start:
             raise HTTPException(400, 'invalid_stream_cursor')
-        return _read_turn_stream(records, workspace.query.answer_turns.root, identity, project, start,
-            view=view, safe_errors=SAFE_ERRORS)
+        return public_task_stream(identity, project, start)
 
     from .workbench_stream import read_turn_stream as _read_turn_stream
 
     @router.get("/threads/{thread_id}")
-    async def thread(thread_id: str, project_id: str = "default"):
+    async def thread(thread_id: str, project_id: str = "default", scope_kind: str | None = None):
+        from backend.security.user_context import USER_ACCESS
+        from .turn_logical_scope import TurnLogicalScope, logical_scope
+        scopes = TurnLogicalScope(application)
+        if scope_kind is not None:
+            try:
+                logical_scope(scope_kind)
+            except ValueError:
+                raise HTTPException(400, 'invalid_scope_kind') from None
         project = _project(project_id)
         scoped("v2_threads", _project(thread_id), project)
         rows = records.list_matching("v2_turns", project_id=project, thread_id=thread_id)
+        if scope_kind is not None:
+            rows = tuple(row for row in rows if scopes.read(row) == scope_kind)
+        shared_progress = None
         for row in rows:
             if row.payload["intent"] == "do":
                 if row.payload["receipt"]["do"].get("executor"):
@@ -1020,18 +1662,42 @@ def install_workbench_routes(application, *, records, models, documents, service
                     continue
                 if (row.payload["receipt"]["do"].get("kernel_turn_id")
                         and not row.payload["receipt"]["do"].get("task_id")
-                        and row.payload["receipt"]["do"].get("state") not in {"done", "partial", "failed", "interrupted"}):
+                        and row.payload["receipt"]["do"].get("state") not in {"done", "partial", "failed", "interrupted", "stopped", "cancelled"}):
+                    if scope_kind == 'shared' or scope_kind is None and scopes.read(row) == 'shared':
+                        if shared_progress is None:
+                            access = USER_ACCESS.get()
+                            factory = getattr(application.state, 'shared_query_factory', None)
+                            shared_progress = False
+                            if access is not None and access.target_user_id == scopes.owner_user_id and factory is not None:
+                                try:
+                                    with factory.registry.records.begin_read() as central:
+                                        factory.registry.authorize(central, access.caller, project)
+                                    shared_progress = True
+                                except SharedProjectError as error:
+                                    if error.status not in {403, 404}:
+                                        raise
+                        if not shared_progress:
+                            await research.advance(row.object_id, observe_stop_only=True)
+                            continue
                     await task_service(row.object_id).advance(row.object_id)
-                    if records.read("v2_turns", row.object_id).payload["receipt"]["do"].get("state") not in {"done", "partial", "failed", "interrupted"}:
+                    if records.read("v2_turns", row.object_id).payload["receipt"]["do"].get("state") not in {"done", "partial", "failed", "interrupted", "stopped", "cancelled"}:
                         start_research(row.object_id)
         rows = records.list_matching("v2_turns", project_id=project, thread_id=thread_id)
+        if scope_kind is not None:
+            rows = tuple(row for row in rows if scopes.read(row) == scope_kind)
         aggregated = {identity for row in rows if row.payload.get('intent') == 'multi'
                       for identity in row.payload['part_turn_ids']}
-        turns = [view(row) for row in rows if row.object_id not in aggregated]
+        task_delivery = SharedReceiptDelivery(application, project)
+        turns = [view(row, task_delivery=task_delivery) for row in rows if row.object_id not in aggregated]
         from ..kernel.receipt_projection import frozen_answer_request
-        from .turn_frames import FRAMES, frame_text
+        from .turn_frames import FRAMES, STREAMS, failed_stream_event, frame_text
         saved = {row.object_id for row in rows}
-        for frame in records.list_matching(FRAMES, project_id=project, thread_id=thread_id):
+        partial_frames = {row.object_id: row for row in
+            records.list_matching(FRAMES, project_id=project, thread_id=thread_id)}
+        unpublished = [*partial_frames.values(), *(row for row in
+            records.list_matching(STREAMS, project_id=project, thread_id=thread_id)
+            if row.object_id not in partial_frames)]
+        for frame in unpublished:
             if frame.object_id in saved:
                 continue
             turn = frame.payload.get('turn', {})
@@ -1040,11 +1706,37 @@ def install_workbench_routes(application, *, records, models, documents, service
                 continue
             frozen = frozen_answer_request(workspace.query.answer_turns.root, frame.object_id, project,
                 question=turn.get('user_text'))
+            if frame.object_id in aggregated:
+                try:
+                    request, public_text = stream_answer_part(turn, frozen)
+                    if frozen is None:
+                        frozen = frozen_answer_request(workspace.query.answer_turns.root, frame.object_id, project,
+                            question=request['input']['text'])
+                    if request != frozen or turn['user_text'] not in {public_text, request['input']['text']}:
+                        continue
+                except (ValueError, KeyError, TypeError, AttributeError, OSError):
+                    continue
+                turn = {**turn, 'user_text': public_text}
             if frozen is None:
+                continue
+            has_frames = frame.object_id in partial_frames
+            if not has_frames and frame.payload.get('binding') != {
+                    'kernel_turn_id': frame.object_id, 'request': frozen}:
+                continue
+            failure = failed_stream_event(workspace.query.answer_turns.root, frame.object_id,
+                frozen, safe_errors=SAFE_ERRORS)
+            # 只有真实失败终态可从无正文的已受理流恢复历史，活动流仍沿原交付通道。
+            if not has_frames and failure is None:
+                continue
+            frame_scope = scopes.request(frozen)
+            if scope_kind is not None and frame_scope != scope_kind:
+                continue
+            frame_visible = frame_scope != 'shared' or uncommitted_answer_visible(frozen)
+            if not frame_visible and failure is None:
                 continue
             try:
                 recipe = get('retry', version=(frozen.get('policy_versions') or {}).get('retry', '@1'))
-                raw = frame_text(frame.payload)
+                raw = frame_text(frame.payload) if has_frames and frame_visible else ''
                 if raw is None:
                     continue
                 partial = recipe({'kind': 'partial_output', 'text': raw})
@@ -1054,14 +1746,21 @@ def install_workbench_routes(application, *, records, models, documents, service
                 'layers': dict.fromkeys((*_ASK_LAYERS.values(), 'persona'), 0),
                 'trace': [], 'egress_receipt_id': None, 'model_usage': {}, 'model_cost': None,
                 'excluded_sources': [], 'context': _empty_ask_context()}
-            turns.append({**turn, 'receipt': {'ask': ask}})
-        return {'id': thread_id, 'turns': sorted(turns, key=lambda turn: turn['created_at'])}
+            if failure is not None:
+                ask = {key: value for key, value in ask.items() if key != 'interruption'}
+                ask['error'] = failure['code']
+            turns.append({**turn, 'scope_kind': frame_scope, 'receipt': {'ask': ask}})
+        return {'id': thread_id, 'scope_kind': scope_kind,
+            'turns': sorted(task_delivery.turns(turns), key=lambda turn: turn['created_at'])}
 
     @router.get('/turns/{turn_id}/division')
-    async def division(turn_id: str, project_id: str = 'default'):
+    async def division(turn_id: str, project_id: str = 'default', for_redo: bool = False):
         project = _project(project_id)
-        scoped('v2_turns', _project(turn_id), project)
+        turn = scoped('v2_turns', _project(turn_id), project)
         try:
+            if for_redo:
+                source = await run_in_threadpool(research.redo_source, turn)
+                return {key: source[key] for key in ('source_kind', 'revision', 'items', 'task_text', 'scene')}
             return research.divisions.read(turn_id,project)
         except ValueError:
             raise HTTPException(404,'task_division_not_found') from None
@@ -1099,14 +1798,36 @@ def install_workbench_routes(application, *, records, models, documents, service
     @router.post('/turns/{turn_id}/redo')
     async def redo_division(turn_id: str, request: Request):
         body = await _json(request)
-        if set(body).difference({'continue_from'}) != {'project_id','expected_revision'}:
+        if (set(body).difference({'continue_from', 'source_kind'}) != {'project_id','expected_revision'}
+                or type(body['expected_revision']) is not int or body['expected_revision'] < 1
+                or not isinstance(body.get('source_kind', 'sample'), str)
+                or body.get('source_kind', 'sample') not in {'sample', 'execution'}):
             raise HTTPException(400,'invalid_task_division')
         project = _project(body['project_id'])
-        old = scoped('v2_turns',_project(turn_id),project)
+        command = {**body, '_redo': _project(turn_id)}
+        key = request.headers.get('Idempotency-Key')
+        task_delivery = SharedReceiptDelivery(application, project)
+        recovered = executions.replay_completed(command, key)
+        recovered_turn = recovered.get('turn', {}) if recovered is not None else {}
+        if recovered_turn.get('intent') == 'do' and recovered_turn.get('scope_kind') == 'shared':
+            return task_delivery.result(recovered)
+        from .shared_task_workbench import require_redo_query
+        require_redo_query(application, scoped('v2_turns', command['_redo'], project),
+            source_kind=body.get('source_kind', 'sample'), expected_revision=body['expected_revision'])
+        return task_delivery.result(await executions.run(command, key=key))
+
+    async def execute_redo(body, *, request_key=None):
+        project = _project(body['project_id'])
+        turn_id = body['_redo']
+        old = scoped('v2_turns',turn_id,project)
+        from .shared_task_workbench import require_redo_query
+        redo_query = require_redo_query(application, old, source_kind=body.get('source_kind', 'sample'),
+            expected_revision=body['expected_revision'])
         if old.payload.get('receipt', {}).get('do', {}).get('executor'):
             raise HTTPException(409, 'external_task_continuation_unsupported')
         try:
-            sample = research.divisions.read(turn_id,project)
+            source_research = research.with_source_query(redo_query) if redo_query.origin_admission is not None else research
+            sample = await run_in_threadpool(source_research.redo_source, old, source_kind=body.get('source_kind', 'sample'))
         except ValueError:
             raise HTTPException(404,'task_division_not_found') from None
         if sample['revision'] != body['expected_revision']:
@@ -1122,9 +1843,17 @@ def install_workbench_routes(application, *, records, models, documents, service
             except (RecognitionConflict, AttributeError, KeyError):
                 raise HTTPException(409, 'outcome_selection_changed') from None
         return await execute_one({'project_id':project,'thread_id':old.payload['thread_id'],
+            'scope_kind': 'shared' if redo_query.origin_admission is not None else 'personal',
             'intent':'do','text':sample['task_text'],
             **({'continue_from': body['continue_from']} if 'continue_from' in body else {})},division_override=sample['items'],
-            redo_from=(turn_id, sample['revision']), outcome_selection=selected)
+            redo_from=sample['guard'], outcome_selection=selected, request_key=request_key,
+            forced_scene=sample['scene'], shared_redo=sample.get('shared_redo'))
+
+    @router.get('/remember-commands/{key}')
+    def shared_remember_command(key: str, project_id: str, scope_kind: str):
+        if scope_kind != 'shared':
+            raise HTTPException(400, 'invalid_scope_kind')
+        return JSONResponse(shared_remember.discover(key, _project(project_id)), headers={'Cache-Control': 'no-store'})
 
     @router.post("/turns/{turn_id}/retry")
     async def retry(turn_id: str, request: Request):
@@ -1137,6 +1866,10 @@ def install_workbench_routes(application, *, records, models, documents, service
         if row.payload["intent"] != "remember" or current["receipt"]["remember"]["state"] != "failed" or turn_id in running:
             raise HTTPException(409, "turn_not_retryable")
         item_id = row.payload["item_id"]
+        if current['scope_kind'] == 'shared':
+            saved, run_id = shared_remember.retry(row)
+            start(turn_id, project, item_id, run_id, shared=True)
+            return view(saved)
         if item_id is None and current['receipt']['remember'].get('error') == 'favorites_discovery_failed':
             async with favorites_retry_locks.setdefault(turn_id, asyncio.Lock()):
                 latest = scoped('v2_turns', turn_id, project)
@@ -1158,15 +1891,21 @@ def install_workbench_routes(application, *, records, models, documents, service
 
 
 async def _answer_workbench(workspace, records, project, cleaned, scene, thread_id, turn_id, on_started, on_delta,
-                            part_context=None, parent_turn_id=None, *, on_frame=None, situation=None, tagged=False, elsewhere_version=None):
+                            part_context=None, parent_turn_id=None, *, on_frame=None, situation=None, tagged=False, elsewhere_version=None,
+                            message_accepted_at=None, public_text=None):
     query = workspace.query
-    if query.ask_target()["execution_location"] == "remote" and is_private_project(records, project):
+    if query.ask_target()["execution_location"] == "remote" and is_private_project(query.records, project):
         raise HTTPException(409, "private_project_remote_blocked")
     from ..kernel.answer_continuations import save_preparation
     from ..kernel.answer_turns import ACTIVE_ANSWER
-    from .turn_frames import TurnFrames, STREAMS
+    from .turn_frames import FrameProducerOwner, TurnFrames, STREAMS
     active_request, active_store, _, _ = ACTIVE_ANSWER.get()
     original_request = active_store.get_request(active_request['turn_id'])
+    runtime = query.answer_turns.application.state.ai_runtime
+    steers = getattr(runtime, 'product_steers', None)
+    lease = runtime._run_lease_context.get()
+    if lease is None or lease.turn_id != active_request['turn_id']:
+        raise ValueError('answer_frame_producer_owner_unavailable')
     query.validate_answer_request(query.models, original_request)
     with records.begin() as tx:
         thread = tx.read('v2_threads', thread_id)
@@ -1176,27 +1915,76 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
             now = _now()
             tx.put('v2_threads', thread_id, {'project_id': project, 'title': cleaned[:40],
                 'created_at': now, 'updated_at': now}, expected_revision=0)
-            tx.commit()
+        learning = getattr(query.answer_turns.application.state, 'product_steer_learning', None)
+        if learning is not None and parent_turn_id is None:
+            message = learning.order.read(tx, turn_id)
+            learning.record_message(tx, public_id=turn_id, project_id=project, thread_id=thread_id,
+                text=cleaned, accepted_at=message.payload['accepted_at'] if message is not None
+                    else message_accepted_at or original_request['created_at'], native_request=original_request)
+        tx.commit()
     stream = records.read(STREAMS, turn_id)
     turn = stream.payload['turn'] if stream is not None else {
-        'id': turn_id, 'thread_id': thread_id, 'intent': 'ask', 'user_text': cleaned, 'created_at': _now()}
+        'id': turn_id, 'thread_id': thread_id, 'intent': 'ask',
+        'user_text': cleaned if public_text is None else public_text, 'created_at': _now()}
+    def answer_frame_visible():
+        return query.origin_admission is None or not runtime.product_stops.cancellation_requested(turn_id)
+    def deliver_frame(sequence, event, value):
+        if event in {'delta', 'reset'} and not answer_frame_visible():
+            return
+        if event == 'started':
+            value = {**value, 'turn': {**value['turn'],
+                'scope_kind': 'shared' if query.origin_admission is not None else 'personal'}}
+        on_frame(sequence, event, value)
     frames = TurnFrames(records, turn_id=turn_id, project_id=project, recipe=get('retry'), turn=turn,
-        request=original_request, on_frame=on_frame,
+        request=original_request, on_frame=deliver_frame if on_frame is not None else None,
+        producer_owner=lambda: FrameProducerOwner(turn_id=active_request['turn_id'], lease=lease, store=active_store),
         text_prefix='' if query.answer_turns.active[turn_id].get('continuation') is not None else None)
     stream_bound = frames.start()
+    if steers is not None and steers.registered(turn_id):
+        steers.bind_delivery(turn_id, frames.deliver_control)
+        query.answer_turns.active[turn_id]['steer_reset'] = frames.reset_for_steer
     save_preparation(query, turn_id, {'project': project, 'cleaned': cleaned, 'scene': scene,
         'thread_id': thread_id, 'turn_id': turn_id, 'part_context': part_context, 'parent_turn_id': parent_turn_id,
         'situation': situation, 'tagged': tagged, 'elsewhere_version': elsewhere_version},
         request=active_request, store=active_store, runtime=query.answer_turns.application.state.ai_runtime)
     if on_started and (on_frame is None or not stream_bound):
-        on_started({'thread_id': thread_id, 'turn': {'id': turn_id, 'intent': 'ask', 'user_text': cleaned}})
+        on_started({'thread_id': thread_id, 'turn': {'id': turn_id, 'intent': 'ask', 'user_text': turn['user_text'],
+            'scope_kind': 'shared' if query.origin_admission is not None else 'personal'}})
     target, budget, overhead = query.ask_budget()
     history = read_history(records, project, thread_id, cleaned, budget=budget,
         prompt_overhead=overhead, excluded_turn=turn_id, query=query)
     rewritten = await condense(query, project, cleaned, history, turn_id=turn_id)
     retrieval_question = rewritten["question"] or cleaned
     agentic = getattr(get('retrieve'), 'agentic', False)
-    collected = ({'candidates': [], 'excluded_sources': [], 'policy_versions': versions_for_turn('project.answer')}
+    initial_memory, initial_route = None, None
+    if agentic and getattr(get('retrieve'), 'initial_memory_probe', False):
+        evidence_probe = getattr(get('retrieve'), 'evidence_answer_probe', False)
+        raw_probe = getattr(get('retrieve'), 'raw_evidence_probe', False)
+        if evidence_probe:
+            parse_question = None
+        elif raw_probe:
+            from .raw_answer import parse_question
+        else:
+            from .initial_answer import parse_question
+        initial_route = {'route': 'investigate', 'reason': 'unsupported_question',
+            'probe_collections': 0, 'remainder_collections': 0, 'reused_queries': 0,
+            'decision_invocations': 0, 'probe_seconds': 0.0}
+        if raw_probe or evidence_probe:
+            initial_route.update(generation_invocations=0, generation_usage_complete=True,
+                                 generation_physical_attempts=0, generation_seconds=0.0,
+                                 conflict_scope='retrieved_evidence_only')
+        if not evidence_probe and (history['text'] or history.get('clarification') or part_context is not None or situation is not None):
+            initial_route['reason'] = 'unsupported_context'
+        elif not evidence_probe and retrieval_question != cleaned:
+            initial_route['reason'] = 'rewritten_question'
+        elif evidence_probe or parse_question(cleaned) is not None:
+            started = monotonic()
+            initial_memory = await run_in_threadpool(query.collect_initial_candidates, project,
+                retrieval_question, scene=scene, policy_versions=versions_for_turn('project.answer'))
+            initial_route.update(reason='initial_evidence_insufficient' if raw_probe or evidence_probe else 'upper_evidence_insufficient', probe_collections=1,
+                                 probe_seconds=round(monotonic() - started, 6))
+    collected = (initial_memory if initial_memory is not None else
+        {'candidates': [], 'excluded_sources': [], 'policy_versions': versions_for_turn('project.answer')}
         if agentic else query.collect_candidates(project, retrieval_question, scene=scene,
             **({'situation':situation} if situation is not None else {})))
     retrieval = get('retrieve', version=collected['policy_versions']['retrieve'])
@@ -1215,7 +2003,10 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         from .agentic_rag import investigate
         try:
             plan, expanded, rewrite = await investigate(query, project, retrieval_question, plan,
-                turn_id=turn_id, scene=scene, history=history)
+                turn_id=turn_id, scene=scene, history=history,
+                initial_memory=initial_memory, initial_route=initial_route)
+            if expanded['status'] == 'failed':
+                raise HTTPException(502, 'answer_generation_failed')
         except RecognitionError:
             raise HTTPException(409, 'source_changed_retry') from None
     elif gap:
@@ -1225,8 +2016,11 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         except RecognitionError:
             raise HTTPException(409, 'source_changed_retry') from None
         except ModelConfigurationError as failure:
+            billing = model_billing_code(failure, ModelConfigurationError)
+            if billing is not None:
+                raise HTTPException(model_billing_status(billing), billing) from None
             code = str(failure)
-            _LOGGER.warning("ask model configuration failure: %s", code)
+            _LOGGER.warning("ask model configuration failure: %s", 'answer_generation_failed')
             if target['execution_location'] == 'remote' and code in {
                 'model_configuration_changed_before_request', 'model_egress_remote_not_consented'
             }:
@@ -1260,6 +2054,10 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         history_turn_ids=[{"id": turn["id"], "revision": turn["revision"]} for turn in history["turns"]])
     if agentic:
         plan['trace'][0]['agentic'] = plan['_rag_summary']
+    if initial_route is not None:
+        name = ('evidence_fast_path' if getattr(get('retrieve'), 'evidence_answer_probe', False) else
+                'raw_fast_path' if getattr(get('retrieve'), 'raw_evidence_probe', False) else 'initial_memory')
+        plan['trace'][0][name] = dict(initial_route)
     # execute_ask releases its evidence after completion; retain only mapping metadata.
     chosen = tuple({"layer": candidate["layer"], "persona": bool(candidate.get("persona")),
         **({'inspiration': True} if candidate.get('inspiration') else {}),
@@ -1268,7 +2066,7 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         "stale": bool(candidate.get("stale")),
         "project_id": candidate["scope"].project_id,
         **({'url':candidate['href']} if candidate['kind'] == 'search' else {}),
-        "entry": {key: candidate["entry"].get(key) for key in ("id", "document_id", "item_id", "source_id")}}
+        "entry": {key: candidate["entry"].get(key) for key in ("id", "document_id", "item_id", "source_id", "revision", "item_revision")}}
         for candidate in plan["chosen"])
     plan['search_materials'] = {index: dict(candidate) for index, candidate in enumerate(plan['chosen'], 1)
                                 if candidate['kind'] == 'search'}
@@ -1315,9 +2113,10 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
             runtime=query.answer_turns.application.state.ai_runtime)
     def streamed(text):
         frames.delta(text)
-        if on_delta is not None and (on_frame is None or not stream_bound):
+        if on_delta is not None and (on_frame is None or not stream_bound) and answer_frame_visible():
             on_delta(text)
     interrupted = False
+    discard_pending = False
     try:
         if clarifying:
             text = '\n'.join(plan['_rag_summary']['questions'])
@@ -1334,21 +2133,23 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         else:
             result = query.public_ask_preview('', plan)
         interrupted = 'interruption' in result
+        discard_pending = query.origin_admission is not None and result.get('interruption') == 'stopped'
+    except ModelInterrupted as error:
+        discard_pending = interrupted = query.origin_admission is not None and error.interruption == 'stopped'
+        raise
     finally:
-        frames.close(completed=not interrupted)
-    from .search import persist_cited
-    search_originals = persist_cited(workspace.items, plan, result)
-    chosen = tuple({**candidate, 'entry':{**candidate['entry'], 'item_id':search_originals[index]}}
-                   if index in search_originals else candidate for index, candidate in enumerate(chosen, 1))
-    for entry in (result.get('context') or {}).get('entries', []):
-        if entry.get('url'):
-            entry['id'] = next((identity for number, identity in search_originals.items()
-                if chosen[number - 1]['url'] == entry['url']), entry['id'])
+        frames.close(completed=not interrupted, discard_pending=discard_pending)
     result["model_usage"] = sum_usage(rewritten["usage"], expanded["usage"], result.get("model_usage", {}))
     if not rewritten["usage_complete"] or not expanded["usage_complete"]:
         result["model_usage"]["observed_only"] = True
+    if discard_pending:
+        return {'receipt': {'ask': _shared_stopped_ask(result, partial=result['partial'])}, 'chosen': []}
+    from .search import persist_answer_search
+    chosen, search_births = persist_answer_search(workspace.items, plan, result, chosen, query=query)
     egress = records.read("workspace_ask_receipts", preview_id) if preview_id else None
-    receipt = _ask_receipt(plan, chosen, result, preview_id, egress.payload if egress else None)
+    receipt = await run_in_threadpool(with_connection_scope(_ask_receipt),
+        plan, chosen, result, preview_id, egress.payload if egress else None,
+        audio_positions=AudioPositions(records, workspace.intake.runtime_root))
     if plan.get('search'):
         receipt['search'] = dict(plan['search'])
         partial = result['model_usage'].get('observed_only') is True or any(
@@ -1374,6 +2175,7 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         if hint is not None:
             receipt['elsewhere'] = hint
     return {"receipt": {"ask": receipt}, "chosen": list(chosen),
+            **({'search_originals': search_births} if search_births else {}),
             **({'multipart_authority':authority} if parent_turn_id else {})}
 
 
@@ -1398,15 +2200,20 @@ def _restored_answer_plan(query, row):
         from .search import validate_search_binding
         binding = guards['search_guard']
         plan['search_guard'] = lambda: validate_search_binding(query, binding, plan)
+        plan['search_guard'].frozen_binding = binding
     query.validate_ask_plan(plan)
     return plan
 
 
-async def _continue_answer_workbench(query, records, turn, row, invocation):
+async def _continue_answer_workbench(query, records, turn, row, invocation, *, items):
     from ..kernel.answer_turns import ACTIVE_ANSWER
-    from .turn_frames import TurnFrames
+    from .turn_frames import FrameProducerOwner, TurnFrames
     plan = _restored_answer_plan(query, row)
     frozen, store, _, _ = ACTIVE_ANSWER.get()
+    runtime = query.answer_turns.application.state.ai_runtime
+    lease = runtime._run_lease_context.get()
+    if lease is None or lease.turn_id != turn.object_id:
+        raise ValueError('answer_frame_producer_owner_unavailable')
     original = store.get_immutable_payload(turn.object_id, 'answer-model-input-answer')
     if original is None:
         raise RecognitionError('original_answer_input_unavailable')
@@ -1415,7 +2222,12 @@ async def _continue_answer_workbench(query, records, turn, row, invocation):
     preview = query.store_ask_preview(plan)
     frames = TurnFrames(records, turn_id=turn.object_id, project_id=plan['project_id'], recipe=get('retry'),
         turn={key: turn.payload[key] for key in ('thread_id', 'intent', 'user_text', 'created_at')} | {'id': turn.object_id},
-        request=store.get_request(turn.object_id), text_prefix=old['partial'])
+        request=store.get_request(turn.object_id), text_prefix=old['partial'],
+        producer_owner=lambda: FrameProducerOwner(turn_id=turn.object_id, lease=lease, store=store))
+    steers = getattr(runtime, 'product_steers', None)
+    if steers is not None and steers.registered(turn.object_id):
+        steers.bind_delivery(turn.object_id, frames.deliver_control)
+        query.answer_turns.active[turn.object_id]['steer_reset'] = frames.reset_for_steer
     frame_started = False
     def streamed(text):
         nonlocal frame_started
@@ -1424,14 +2236,28 @@ async def _continue_answer_workbench(query, records, turn, row, invocation):
             frames.start()
         frames.delta(text)
     interrupted = False
+    discard_pending = False
     try:
         result = await query.execute_ask(preview, plan['project_id'], plan['question'], True, on_delta=streamed,
             on_retry=frames.retry,
             continuation={'invocation_key': invocation, 'messages': original[1]['messages'],
                 'partial': old['partial'], 'usage': old['model_usage']})
         interrupted = 'interruption' in result
+        discard_pending = query.origin_admission is not None and result.get('interruption') == 'stopped'
+    except ModelInterrupted as error:
+        discard_pending = interrupted = query.origin_admission is not None and error.interruption == 'stopped'
+        raise
     finally:
-        frames.close(completed=not interrupted)
+        frames.close(completed=not interrupted, discard_pending=discard_pending)
+    if discard_pending:
+        return {'receipt': {'ask': _shared_stopped_ask(result, partial=result['partial'])}, 'chosen': []}
+    from .search import persist_answer_search
+    chosen, search_births = await run_in_threadpool(with_connection_scope(persist_answer_search),
+        items, plan, result, prior['chosen'], query=query)
     egress = records.read('workspace_ask_receipts', preview)
-    return {'receipt': {'ask': _ask_receipt(plan, prior['chosen'], result, preview, egress.payload)},
-            'chosen': prior['chosen']}
+    receipt = await run_in_threadpool(with_connection_scope(_ask_receipt),
+        plan, chosen, result, preview, egress.payload,
+        audio_positions=AudioPositions(records, query.models.root))
+    return {'receipt': {'ask': receipt},
+            'chosen': list(chosen), **({'search_originals': search_births} if search_births else {}),
+            **({'multipart_authority': prior['multipart_authority']} if 'multipart_authority' in prior else {})}

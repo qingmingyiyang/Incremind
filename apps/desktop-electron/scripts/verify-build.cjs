@@ -12,7 +12,7 @@ const { verifySidecar, verifySidecarMetadata } = require("./verify-sidecar.cjs")
 const { smokePackaged } = require("./smoke-packaged.cjs");
 const { assertBuildId, IDENTITY_FILE, parseCandidateIdentity } = require("../src/candidate-identity.cjs");
 const { MAX_MANUAL_BYTES } = require("./stage-manual.cjs");
-const { assertPackageClean } = require("./package-guard.cjs");
+const { assertPackageClean, assertSqliteRuntime } = require("./package-guard.cjs");
 const {
   proofName,
   readTransferProof,
@@ -415,6 +415,7 @@ function verifyPackageData(resourcesRoot, stageRoot = path.join(__dirname, "..",
     runtimeRoots: [path.join(resourcesRoot, "sidecar", "runtime")],
     cleanupStageRoot: stageRoot,
   });
+  assertSqliteRuntime(path.join(resourcesRoot, "sidecar", "runtime"), { cleanupStageRoot: stageRoot });
 }
 
 if (require.main === module) main().catch((error) => {

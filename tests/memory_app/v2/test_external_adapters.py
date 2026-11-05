@@ -9,6 +9,11 @@ import tomllib
 import pytest
 
 
+CODEX_EMPTY_ENV = {name: '' for name in ('CODEX_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY',
+    'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
+    'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CODEX_CA_CERTIFICATE')}
+
+
 def build(tmp_path, executor='codex', **changes):
     module = importlib.import_module('backend.memory_app.v2.external_adapters')
     values = {'cli_version':'0.156.1' if executor == 'codex' else '2.1.257',
@@ -41,7 +46,8 @@ def test_codex_disabled_commands_and_fixed_argv_keep_task_outside_args(tmp_path,
     assert config['features']['shell_tool'] is False and config['features']['unified_exec'] is False
     assert config['features']['apps'] is False
     assert config['mcp_servers']['chriptmas-memory'] == {'command':sys.executable,
-        'args':['-I','-m','backend.memory_app.mcp'], 'env_vars':['CHRIPTMAS_DEVICE_KEY']}
+        'args':['-I','-m','backend.memory_app.mcp'], 'env_vars':['CHRIPTMAS_DEVICE_KEY'],
+        'env': CODEX_EMPTY_ENV}
     assert plan.requested_commands == 'disabled' and plan.preset == preset
     assert plan.adapter_version == 'codex@1' and plan.cli_version == '0.156.1'
     assert plan.input_text == '只经标准输入传任务😀' and plan.input_text not in command
@@ -88,7 +94,8 @@ def test_claude_has_exact_tools_mcp_read_boundary_and_text_stdin(tmp_path, prese
     mcp = json.loads(command[command.index('--mcp-config') + 1])
     assert set(mcp['mcpServers']) == {'chriptmas-memory'}
     assert mcp['mcpServers']['chriptmas-memory']['env'] == {
-        'CHRIPTMAS_DEVICE_KEY':'${CHRIPTMAS_DEVICE_KEY}'}
+        'CHRIPTMAS_DEVICE_KEY':'${CHRIPTMAS_DEVICE_KEY}',
+        'CODEX_API_KEY': '', 'OPENAI_API_KEY': '', 'ANTHROPIC_API_KEY': '', 'DEEPSEEK_API_KEY': ''}
     assert plan.input_text == '只经标准输入传任务😀' and plan.input_text not in command
     assert plan.adapter_version == 'claude-code@1'
 
@@ -151,7 +158,8 @@ def test_codex_mcp_alias_is_requested_without_literal_env_or_lost_target(tmp_pat
     plan = build(tmp_path, mcp_config=config)
     assert plan.environment_aliases == (('DEVICE_KEY','APPROVED_DEVICE_KEY'),)
     server = overrides(plan.command)['mcp_servers']['chriptmas-memory']
-    assert server['env_vars'] == ['DEVICE_KEY'] and 'env' not in server
+    assert server['env_vars'] == ['DEVICE_KEY']
+    assert server['env'] == CODEX_EMPTY_ENV
     assert '${APPROVED_DEVICE_KEY}' not in repr(plan.command)
 
 

@@ -7,10 +7,12 @@
   "scripts": {
     "dev": "vite",
     "test": "vitest run",
-    "build": "vite build",
+    "build": "vite build && npm run build:mcp-app",
+    "build:mcp-app": "vite build --config chatgpt-app/vite.config.js",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@modelcontextprotocol/ext-apps": "2.0.4",
     "framer-motion": "^12.38.0",
     "katex": "^0.17.0",
     "lucide-react": "^1.7.0",

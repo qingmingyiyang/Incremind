@@ -45,8 +45,7 @@ export function ConsolidationSuggestions({ projectId, insightId, originals = [],
     } catch {if(gate.isCurrent(request))setError('内容已变化 · 刷新');}
     finally {if(gate.isCurrent(request))setBusy(false);}
   }
-  const documents = row => row.documents || [...new Map((row.snapshot?.experiences || []).flatMap(r=>r.payload.provenance?.source_refs || [])
-    .filter(r=>r.type==='document').map(r=>[r.id,r])).values()];
+  const documents = row => (row.documents || []).filter(document=>document.title);
   return <section className="library-grown library-consolidation" aria-label="整理建议">
     {error && <div className="library-error" role="alert"><span>{error}</span><button type="button" aria-label="重试整理建议" disabled={busy || reading} onClick={()=>setRefresh(value=>value+1)}>重试</button></div>}
     {!!originals.length && <details><summary>原认识 {originals.length}</summary>{originals.map(r=><p key={r.id}>{r.text}</p>)}</details>}
@@ -55,7 +54,7 @@ export function ConsolidationSuggestions({ projectId, insightId, originals = [],
     {(expanded==='merge'?merges:expanded==='support'?supports:[]).map(row=><div key={row.id}>
       {expanded==='merge' ? <><ul>{[...(row.snapshot.recognitions || []),...(row.snapshot.candidates || [])].filter(r=>row.target_recognition_ids.includes(r.id)).map(r=><li key={r.id}>{r.payload.content}</li>)}</ul>
         {row.outputs.map((r,i)=><div key={i}><p>{r.content}</p>{r.conditions?.length>0 && <ul>{r.conditions.map(c=><li key={c}>{c}</li>)}</ul>}</div>)}</> : <p>{row.evidence}</p>}
-      <div className="library-actions">{documents(row).map(d=><button type="button" key={d.id} aria-label={`打开整理稿 ${d.id}`} onClick={()=>onOpenDocument?.(d.id,row.project_id || projectId)}><Icon name="open" size={14}/>{d.id}</button>)}</div>
+      <div className="library-actions">{documents(row).map(d=><button type="button" key={d.id} title={d.title} aria-label={`打开整理稿 ${d.title}`} onClick={()=>onOpenDocument?.(d.id,row.project_id || projectId)}><Icon name="open" size={14}/><span className="library-consolidation-title">{d.title}</span></button>)}</div>
       {row.state==='pending' && !readonly && <div className="library-actions"><button type="button" disabled={busy || reading || row.current===false} onClick={()=>review(row,expanded, true)}>{expanded==='merge'?'确认合并方案':'确认支持'}</button>
         <button type="button" disabled={busy || reading} onClick={()=>review(row,expanded,false)}>{expanded==='merge'?'忽略合并':'忽略支持'}</button></div>}
     </div>)}

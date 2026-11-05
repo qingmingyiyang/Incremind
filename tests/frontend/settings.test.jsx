@@ -15,7 +15,8 @@ beforeEach(() => {
   }));
   value = { model: {
     generation: { revision: 3, base_url: 'https://example.test/v1', model: 'writer', enabled: true, configured: true, has_api_key: true, allow_remote: true },
-    generation_mode: { mode: 'api', revision: 7, local_enabled: true, local_base_url: 'http://127.0.0.1:8001/local-model/v1', local_model: 'local', local_model_installed: true },
+    generation_mode: { mode: 'api', revision: 7, local_enabled: true, local_base_url: 'http://127.0.0.1:8001/local-model/v1', local_model: 'local', local_model_installed: true,
+      local_readiness: { status: 'available', assets_ready: true, eligible: true, missing_files: [], invalid_files: [], missing_dependencies: [] } },
     embedding: { revision: 4, base_url: 'https://example.test/v1', model: 'vector', enabled: true, allow_remote: false },
     rerank: { revision: 5, base_url: 'https://example.test/v1', model: 'rank', enabled: true, allow_remote: true },
     asr: { settings_revision: 9, enabled: true, model: 'hy-asr', endpoint: 'https://asr.test', max_audio_bytes: 12000000, has_api_key: true, egress_manifest: { manifest_id: 'asr-m', consented: true } },
@@ -39,10 +40,11 @@ it('orders model labels, values, status and egress and reports expansion', async
   const row = trigger.closest('.ui-row');
   expect(trigger).toHaveAttribute('aria-expanded', 'false');
   const valueLabel = within(row).getByText('writer');
-  const status = within(row).getByRole('img', { name: '已沉淀' });
+  const status = row.querySelector('.ui-status-done');
   const toggle = within(row).getByRole('switch', { name: '生成外发' });
-  expect(trigger.compareDocumentPosition(valueLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(valueLabel.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(trigger).toContainElement(valueLabel);
+  expect(valueLabel).toContainElement(status);
+  expect(within(row).getByRole('status')).toHaveAccessibleName('writer · 已沉淀');
   expect(status.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   fireEvent.click(trigger);
   expect(trigger).toHaveAttribute('aria-expanded', 'true');
@@ -76,12 +78,12 @@ it('revokes transcription consent when switching it off', async () => {
   fireEvent.click(screen.getByRole('switch', { name: '转写外发' })); await settle();
   expect(api.disableAsr).toHaveBeenCalledOnce(); expect(screen.getByRole('switch', { name: '转写外发' })).toHaveAttribute('aria-checked', 'false');
 });
-it('disables egress in local mode and displays the installed model', async () => {
+it('disables egress in local mode and displays qualified assets awaiting loading', async () => {
   value.model.generation_mode.mode = 'local';
   render(<SettingsPage api={api}/>); await settle();
   expect(screen.getByRole('switch', { name: '生成外发' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: '生成' }));
-  expect(screen.getByText('已安装')).toBeInTheDocument(); expect(screen.queryByLabelText('生成密钥')).not.toBeInTheDocument();
+  expect(screen.getByText('待加载')).toBeInTheDocument(); expect(screen.queryByLabelText('生成密钥')).not.toBeInTheDocument();
 });
 it('cancels only direct private sources and refreshes the list', async () => {
   render(<SettingsPage api={api} initialSection="privacy"/>); await settle();
@@ -94,7 +96,7 @@ it('cancels only direct private sources and refreshes the list', async () => {
 });
 it('renders missing egress metadata as unknown and preserves real usage', async () => {
   render(<SettingsPage api={api} initialSection="privacy"/>); await settle();
-  fireEvent.click(screen.getByRole('button', { name: '外发记录' })); await settle();
+  expect(api.receipts).toHaveBeenCalledOnce();
   expect(screen.getByRole('table')).toHaveTextContent('—'); expect(screen.getByRole('table')).toHaveTextContent('90 / 20');
 });
 it('opens the requested project and hides inbox constraints and persona fields', async () => {
@@ -135,6 +137,7 @@ it('waits for the API profile before mounting editable generation fields', async
   await act(async () => finish()); await settle();
   expect(screen.getByLabelText('生成地址')).toHaveValue('https://original-api.test/v1');
   expect(screen.getByLabelText('生成模型')).toHaveValue('original-writer');
+  fireEvent.change(screen.getByLabelText('生成密钥'), { target: { value: 'synthetic-value' } });
   fireEvent.click(screen.getByRole('button', { name: '保存' })); await settle();
   expect(api.saveModel).toHaveBeenCalledWith(expect.objectContaining({ baseUrl: 'https://original-api.test/v1', model: 'original-writer', expectedRevision: 3 }));
 });

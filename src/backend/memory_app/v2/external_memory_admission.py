@@ -11,7 +11,6 @@ from pathlib import Path
 import sys
 from threading import Thread, get_ident
 
-from ..transaction_records import TransactionRecords
 from .external_agent_guard import ExternalAgentGuard
 from .external_context import DELIVERIES, ExternalContext
 from .external_workspace import validate_memory_mcp_config, validate_task_path
@@ -206,8 +205,8 @@ def _qualification(application, turn_id, client):
             or archive['handoff']['version'] != 'handoff@2'):
         _deny()
     with context.records.begin() as tx:
-        ExternalAgentGuard(TransactionRecords(tx), owner_id=context.owner_id,
-            now=context.now).validate(turn_id, arguments)
+        ExternalAgentGuard(context.records, owner_id=context.owner_id,
+            now=context.now, reader=tx).validate(turn_id, arguments)
         delivery = tx.read(DELIVERIES, turn_id)
         if (delivery is None or delivery.revision != 1
                 or set(delivery.payload) != {'owner_id', 'turn_id', 'immutable_ref', 'outcome_ref', 'at'}

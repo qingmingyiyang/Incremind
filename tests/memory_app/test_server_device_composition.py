@@ -66,24 +66,16 @@ with TestClient(app, base_url='http://127.0.0.1:8765', client=('127.0.0.1', 1234
         create_worker_auth_middleware(legacy)
         assert TestClient(legacy).get('/api/private').status_code == 401
         assert TestClient(legacy).get('/api/private', headers={'Authorization':'Bearer '+pair.json()['key']}).status_code == 401
-        model = app.state.server_context.resources.model_path('qwen2.5-1.5b-instruct')/'model.safetensors'
-        model.parent.mkdir(parents=True); model.write_bytes(b'fake inference asset')
-        models.update_generation_mode(mode='local', local_enabled=True, local_base_url='http://127.0.0.1:8765/local-model/v1', expected_revision=0)
-        from backend.memory_app import local_model
-        calls = []
-        def engine(directory, messages, max_tokens):
-            calls.append(messages)
-            return 'done', 12, 2, True
-        local_model._generate = engine
-        def wire(**request):
-            response = client.post('/local-model/v1/chat/completions', headers={'Authorization':'Bearer '+request['api_key']},
-                json={'model': request['model'].removeprefix('openai/'), 'messages':request['messages'], 'max_tokens':request['max_tokens']})
-            assert response.status_code == 200
-            return response.json()
-        models._completion_fn = wire
-        assert models.complete([{'role':'user','content':'background without device'}])[0] == 'done'
-        assert len(calls) == 1
-        assert models.snapshot('generation')['api_key'] == 'local-model'
+        from backend.memory_app.model_config import ModelConfigurationError
+        try:
+            models.update_generation_mode(mode='local', local_enabled=True,
+                local_base_url='http://127.0.0.1:8765/local-model/v1', expected_revision=0)
+        except ModelConfigurationError as error:
+            assert str(error) == 'local_model_assets_missing'
+        else:
+            raise AssertionError('missing local assets must not be selectable')
+        assert not models.local_generation_allowed()
+        assert models.generation_mode()['local_readiness']['status'] == 'missing_assets'
         assert not (Path(sys.argv[2])/'recognition.sqlite3').exists()
 print('server-device-composition-ok')
 """

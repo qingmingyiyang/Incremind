@@ -106,12 +106,12 @@ def _do_view(records, scope, turn, now, namespace, *, observer=None):
             "target": target, "updated_at": _timestamp(turn.payload)}
 
 
-def _pending_index(service, scope):
+def _pending_index(service, scope, *, exclude=()):
     """Use domain-scoped candidates and their explicit document provenance."""
     experiences = {item.id: item for item in service.list_experiences(scope=scope)}
     by_document = {}
     candidates = [candidate for candidate in service.list_candidates(scope=scope)
-                  if service.records.read('v2_candidate_fade', candidate.id) is None]
+                  if candidate.id not in exclude and service.records.read('v2_candidate_fade', candidate.id) is None]
     for candidate in candidates:
         for identity in candidate.source_experience_ids:
             experience = experiences.get(identity)
@@ -185,8 +185,10 @@ def install_job_routes(application, *, records, service, document_namespace="rec
     def list_jobs(project_id: str = "default"):
         project_id = _project(project_id)
         scope = WorkScope("local-user", project_id)
-        by_document, pending_ids = _pending_index(service, scope)
-        items = []
+        automatic = getattr(application.state, 'memory_automatic_inspirations', None)
+        represented = automatic.represented_candidates() if automatic is not None else set()
+        by_document, pending_ids = _pending_index(service, scope, exclude=represented)
+        items = automatic.job_views(project_id) if automatic is not None else []
         backup = getattr(application.state, 'memory_backup', None)
         if backup is not None:
             for identity, failure in backup.failures().items():

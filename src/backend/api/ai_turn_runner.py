@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, wait
+from contextlib import nullcontext
 from contextvars import copy_context
 from datetime import datetime, timedelta, timezone
 from threading import Event, Lock, Thread, current_thread
@@ -102,7 +103,9 @@ class AITurnRunner:
         self._heartbeat_thread = Thread(target=self._heartbeat_loop, name="ai-turn-lease-heartbeat", daemon=True)
         self._heartbeat_thread.start()
 
-    def accept_and_submit(self, request: Mapping[str, object]) -> TurnReceipt:
+    def accept_and_submit(self, request: Mapping[str, object], *, admission_bundle=None, admission_guard=None) -> TurnReceipt:
+        if admission_guard is not None and not callable(admission_guard):
+            raise TypeError('turn_admission_guard_must_be_callable')
         payload = validate_turn_request(request)
         submitted: tuple[str, Future[object]] | None = None
         with self._lock:
@@ -111,6 +114,9 @@ class AITurnRunner:
             if active is not None:
                 if active[0] != payload:
                     raise AIKernelRuntimeError("turn idempotency identity conflict")
+                if admission_bundle is not None:
+                    with admission_guard() if admission_guard is not None else nullcontext():
+                        self._runtime.accept_turn(payload,admission_bundle=admission_bundle)
                 prior = active[1]
                 return TurnReceipt(
                     prior.turn_id, prior.session_id, prior.operation_id,
@@ -121,7 +127,9 @@ class AITurnRunner:
                 raise AITurnRunnerCapacityError("AI Turn runner capacity is unavailable")
             if self._closed:
                 raise AIKernelRuntimeError("AI Turn runner is shutting down")
-            receipt = self._runtime.accept_turn(payload)
+            with admission_guard() if admission_guard is not None else nullcontext():
+                receipt = (self._runtime.accept_turn(payload,admission_bundle=admission_bundle)
+                    if admission_bundle is not None else self._runtime.accept_turn(payload))
             turn_id = receipt.turn_id
             if child:
                 self._child_turn_ids.add(turn_id)
@@ -287,10 +295,10 @@ class AITurnRunner:
                     turn_id in self._active or turn_id in self._active_actions
                 )
                 locally_observed = turn_id in self._terminal_observed
-            if terminal is not None and (
-                not locally_active or locally_observed
-            ):
-                return terminal
+                if terminal is not None and (not locally_active or locally_observed):
+                    return terminal
+                if self._closed:
+                    return None
             if deadline is not None:
                 remaining = deadline - monotonic()
                 if remaining <= 0:

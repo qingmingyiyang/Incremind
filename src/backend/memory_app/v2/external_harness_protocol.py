@@ -21,7 +21,15 @@ class HarnessProtocol:
         self.reason = None
         self.usage = None
         self._observed_usage = {}
+        self._partial_usage = {}
         self._usage_unknown = False
+
+    @property
+    def observed_usage(self):
+        rows = {**self._partial_usage, **self._observed_usage}.values()
+        values = {key: sum(row[key] for row in rows if key in row)
+            for key in ('input_tokens', 'output_tokens') if any(key in row for row in rows)}
+        return values or None
 
     @staticmethod
     def _request(identity, method, params=None):
@@ -116,6 +124,13 @@ class HarnessProtocol:
             selected = {target: usage.get(key) for key, target in
                 [('inputTokens', 'input_tokens'), ('outputTokens', 'output_tokens')]} if isinstance(usage, dict) else {}
             identity = (self.turn, data.get('step'), message.get('id'))
+            if type(data.get('step')) is int and isinstance(message.get('id'), str):
+                partial = {key: value for key, value in selected.items() if type(value) is int and value >= 0}
+                if partial:
+                    prior = self._partial_usage.get(identity)
+                    if prior is not None and prior != partial:
+                        return self._reject()
+                    self._partial_usage[identity] = partial
             if (type(data.get('step')) is not int or not isinstance(message.get('id'), str)
                     or not selected or any(type(value) is not int or value < 0 for value in selected.values())):
                 self._usage_unknown = True
@@ -125,6 +140,9 @@ class HarnessProtocol:
                 self._observed_usage[identity] = selected
             self.usage = None if self._usage_unknown else {key: sum(row[key] for row in self._observed_usage.values())
                 for key in ('input_tokens', 'output_tokens')}
+        elif kind == 'assistant/attempt':
+            self._usage_unknown = True
+            self.usage = None
         elif kind == 'turn/end':
             if data.get('turn') != self.turn or data.get('reason', {}).get('kind') != 'completed':
                 return self._reject()

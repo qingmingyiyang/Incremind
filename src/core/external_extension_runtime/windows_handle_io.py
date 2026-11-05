@@ -129,6 +129,16 @@ class _Nt:
             raise WindowsHandleIoError("file has an invalid byte length")
         return size
 
+    def file_state(self, handle: int) -> tuple[int, int, bytes]:
+        standard, basic, io = (ctypes.c_ubyte * 32)(), (ctypes.c_ubyte * 40)(), _IoStatus()
+        _status(int(self.dll.NtQueryInformationFile(ctypes.c_void_p(handle), ctypes.byref(io), ctypes.byref(standard), len(standard), _STANDARD)), "NtQueryInformationFile")
+        _status(int(self.dll.NtQueryInformationFile(ctypes.c_void_p(handle), ctypes.byref(io), ctypes.byref(basic), len(basic), _BASIC)), "NtQueryInformationFile")
+        size = int.from_bytes(bytes(standard[8:16]), 'little', signed=True)
+        links = int.from_bytes(bytes(standard[16:20]), 'little')
+        if size < 0 or links != 1:
+            raise WindowsHandleIoError('file does not have one stable link')
+        return size, links, bytes(basic[16:32])
+
     def names(self, directory: int, *, maximum: int) -> tuple[str, ...]:
         if maximum < 0: raise WindowsHandleIoError("directory entry limit is invalid")
         result: list[str] = []; restart = True
@@ -280,6 +290,8 @@ class WindowsHandleTreeIo:
         max_files: int,
         max_file_bytes: int,
         max_total_bytes: int,
+        expected_root_identity: Sequence[int] | None = None,
+        require_single_link: bool = False,
     ) -> dict[str, bytes]:
         """Freeze a tree through one root HANDLE, enforcing hard resource limits.
 
@@ -296,6 +308,7 @@ class WindowsHandleTreeIo:
             or max_files < 0
             or max_file_bytes < 0
             or max_total_bytes < 0
+            or type(require_single_link) is not bool
         ):
             raise WindowsHandleIoError("bounded tree limits are invalid")
         api = _Nt()
@@ -304,6 +317,8 @@ class WindowsHandleTreeIo:
             raise FileNotFoundError(root)
         try:
             _directory(api, root_h)
+            if expected_root_identity is not None and _handle_directory_identity(root_h) != list(expected_root_identity):
+                raise WindowsHandleIoError('managed root identity changed')
             self._after_root_open(root_h)
             current = root_h
             handles: list[int] = []
@@ -329,7 +344,8 @@ class WindowsHandleTreeIo:
                     1,
                     max_files * (_MAX_BOUNDED_COMPONENTS + 1) + 1,
                 )
-                return self._read_bounded(api, current, "", state, max_files, entry_limit, max_file_bytes, max_total_bytes)
+                return self._read_bounded(api, current, "", state, max_files, entry_limit, max_file_bytes, max_total_bytes,
+                    require_single_link=require_single_link)
             finally:
                 for handle in reversed(handles):
                     api.close(handle)
@@ -440,6 +456,7 @@ class WindowsHandleTreeIo:
         max_entries: int,
         max_file_bytes: int,
         max_total_bytes: int,
+        *, require_single_link: bool = False,
     ) -> dict[str, bytes]:
         _directory(api, directory)
         result: dict[str, bytes] = {}
@@ -471,6 +488,7 @@ class WindowsHandleTreeIo:
                     nested = self._read_bounded(
                         api, child, rel + "/", state, max_files, max_entries,
                         max_file_bytes, max_total_bytes,
+                        require_single_link=require_single_link,
                     )
                     if not nested:
                         raise WindowsHandleIoError("tree contains an empty directory")
@@ -481,7 +499,8 @@ class WindowsHandleTreeIo:
                 state["files"] += 1
                 if state["files"] > max_files:
                     raise WindowsHandleIoError("tree contains too many files")
-                before = api.size(child)
+                file_state = api.file_state(child) if require_single_link else None
+                before = file_state[0] if file_state is not None else api.size(child)
                 remaining_total = max_total_bytes - state["total"]
                 if before > max_file_bytes:
                     raise WindowsHandleIoError("file exceeds per-file byte limit")
@@ -490,6 +509,8 @@ class WindowsHandleTreeIo:
                 data = api.read(child, maximum=before)
                 if len(data) != before or api.size(child) != before:
                     raise WindowsHandleIoError("file byte length changed during read")
+                if file_state is not None and api.file_state(child) != file_state:
+                    raise WindowsHandleIoError('file changed during bounded read')
                 state["total"] += before
                 if state["total"] > max_total_bytes or rel in result:
                     raise WindowsHandleIoError("bounded tree changed during read")

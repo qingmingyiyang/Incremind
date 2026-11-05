@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 // 这里只能添加已核验的、精确的包内相对文件路径，原因记入计划执行记录。
 // 当前没有获准的放行项。
@@ -90,4 +91,28 @@ function assertPythonRuntime(root, options = {}) {
   assertPackageClean(resolved, { ...options, runtimeRoots: [resolved] });
 }
 
-module.exports = { PACKAGE_ALLOWLIST, RUNTIME_DATA_DIRECTORIES, assertPackageClean, assertPythonRuntime, clearSidecarStage };
+function assertSqliteVersion(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  const parts = match?.slice(1).map(Number);
+  const fixed = parts && (parts[0] > 3 || parts[0] === 3 && (
+    parts[1] > 51 || parts[1] === 51 && parts[2] >= 3 || parts[1] === 50 && parts[2] >= 7
+  ));
+  if (!fixed) throw new Error(`package_sqlite_version_unsupported: ${version}`);
+  return version;
+}
+
+function assertSqliteRuntime(root, { cleanupStageRoot = null } = {}) {
+  try {
+    // 实际运行包内解释器，核对 Python 真正加载的库，避免误查系统命令或 DLL 元数据。
+    const result = spawnSync(path.join(path.resolve(root), "python.exe"),
+      ["-I", "-B", "-c", "import sqlite3; print(sqlite3.sqlite_version)"],
+      { cwd: root, encoding: "utf8", windowsHide: true, timeout: 30000, maxBuffer: 4096 });
+    if (result.error || result.status !== 0) throw new Error("package_sqlite_runtime_check_failed");
+    return assertSqliteVersion(result.stdout.trim());
+  } catch (error) {
+    if (cleanupStageRoot !== null) clearSidecarStage(cleanupStageRoot);
+    throw error;
+  }
+}
+
+module.exports = { PACKAGE_ALLOWLIST, RUNTIME_DATA_DIRECTORIES, assertPackageClean, assertPythonRuntime, assertSqliteVersion, assertSqliteRuntime, clearSidecarStage };

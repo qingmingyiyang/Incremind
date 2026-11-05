@@ -86,7 +86,7 @@ def _signal_decision_project(reader, payload):
     return project
 
 
-def events(reader, *, now=None):
+def events(reader, *, now=None, steer_learning=None, project=None, seen_event_ids=None, record_steer_errors=False):
     result = {}
     def add(project, identity):
         if project:
@@ -108,12 +108,17 @@ def events(reader, *, now=None):
     for row in reader.list(OUTCOMES):
         if _outcome_ready(row.payload, instant):
             add(row.payload['project_id'], 'outcome:' + row.object_id)
-    return result
+    if steer_learning is not None:
+        for own, identities in steer_learning.countable_events(reader, project=project,
+                seen_event_ids=seen_event_ids, record_errors=record_steer_errors).items():
+            result.setdefault(own, set()).update(identities)
+    return result if project is None else {project: result.get(project, set())}
 
 
-def checkpoint(records, elapsed, *, clock_sample=None, previous=None, check_interval=60):
+def checkpoint(records, elapsed, *, clock_sample=None, previous=None, check_interval=60, steer_learning=None):
     with records.begin() as tx:
-        facts = events(tx)
+        seen = {identity for row in tx.list(COLLECTION) for identity in row.payload.get('seen_event_ids', [])}
+        facts = events(tx, steer_learning=steer_learning, seen_event_ids=seen, record_steer_errors=True)
         projects = set(facts) | {row.object_id for row in tx.list(COLLECTION)}
         states = {}
         for project in sorted(projects):
@@ -138,17 +143,19 @@ def checkpoint(records, elapsed, *, clock_sample=None, previous=None, check_inte
     return states
 
 
-def completed(records, project, *, completion_clock=None):
+def completed(records, project, *, completion_clock=None, steer_learning=None):
     with records.begin() as tx:
         complete_in_transaction(tx, project,
-            clock_sample=completion_clock() if completion_clock is not None else None)
+            clock_sample=completion_clock() if completion_clock is not None else None, steer_learning=steer_learning)
         tx.commit()
 
 
-def complete_in_transaction(tx, project, *, clock_sample=None):
+def complete_in_transaction(tx, project, *, clock_sample=None, steer_learning=None):
     current = tx.read(COLLECTION, project)
     seen = set(current.payload.get('seen_event_ids', [])) if current else set()
-    state = {'score': 0, 'run_seconds': 0, 'seen_event_ids': sorted(seen | events(tx).get(project, set()))}
+    state = {'score': 0, 'run_seconds': 0,
+        'seen_event_ids': sorted(seen | events(tx, steer_learning=steer_learning, project=project,
+            seen_event_ids=seen, record_steer_errors=True).get(project, set()))}
     if clock_sample is not None:
         state['run_clock_reset'] = dict(clock_sample)
     tx.put(COLLECTION, project, state, expected_revision=current.revision if current else 0)

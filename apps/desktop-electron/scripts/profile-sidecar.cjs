@@ -36,7 +36,7 @@ function profileSidecar(root) {
   const dependencies = timedSpawn(python, [
     path.join(resolved, "verify-runtime-dependencies.py"),
     "--requirements",
-    path.join(resolved, "requirements.txt"),
+    path.join(resolved, "runtime-requirements.txt"),
   ]);
   return {
     schema_version: "1.0.0",

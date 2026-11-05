@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Row } from '../../shared/ui';
+import { Row, Icon } from '../../shared/ui';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
 import { formatLocalShortDate } from '../../shared/lib/time';
 import { forgetDeviceCredential, readUserSpace, userStorageKey } from '../../shared/api/deviceTransport';
@@ -7,6 +7,8 @@ import { devicesApi } from './devicesApi';
 import { SettingsUsers } from './SettingsUsers';
 import { DevicePairing } from './DevicePairing';
 import { DeleteConfirmation } from './DeleteConfirmation';
+import './SettingsSupport.css';
+import { ExternalMemoryAccess } from './ExternalMemoryAccess';
 
 export function SettingsDevices({ projectId }) {
   const [value, setValue] = useState(null), [qr, setQr] = useState(null);
@@ -27,11 +29,11 @@ export function SettingsDevices({ projectId }) {
     catch (reason) { if (gate.isCurrent(token)) setError(reason.code === 'device_delete_requires_revoked' ? '设备仍有效 · 先作废' : reason.status === 409 ? '设备已变化 · 刷新' : '操作未完成 · 重试'); }
     finally { if (gate.isCurrent(token)) setBusy(false); }
   }
-  return <section>{value?.mode === 'server' && <SettingsUsers projectId={projectId}/>}
-    <section className="settings-current-devices" aria-label="当前空间设备"><h2>{readUserSpace() ? `${readUserSpace().name}的设备` : '当前空间设备'}</h2>
+  return <section className="settings-devices-layout">
+    <section className="settings-current-devices" aria-label="当前空间设备"><h2>{readUserSpace() ? `${readUserSpace().name}的设备` : '设备'}<span className="settings-support-count">{value?.items.length ?? '—'}</span></h2>
     {error && <p role="alert">{error} <button type="button" onClick={() => setRefresh(value => value + 1)}>刷新</button></p>}
-    {!value ? <span role="status">读取中</span> : value.items.map(device => <div key={device.device_id}><Row className="settings-device-row" readOnly title={device.name}
-      meta={device.revoked_at ? '已作废' : device.device_id === 'desktop' ? '本机' : formatLocalShortDate(device.last_seen_at)}
+    <div className="settings-card">{!value ? <span role="status">读取中</span> : value.items.map(device => <div className="settings-item" key={device.device_id}><Row dot={<span className="settings-glyph"><Icon name="person" size={18}/></span>} className="settings-device-row" readOnly title={<span className="settings-device-title">{device.name}{device.device_id === value.device_id && <span className="settings-support-tag">当前</span>}</span>}
+      sub={device.revoked_at ? '已作废' : device.device_id === 'desktop' ? '本机' : formatLocalShortDate(device.last_seen_at)}
       trailing={!device.revoked_at && device.device_id !== 'desktop' && <button type="button" className="settings-device-revoke" disabled={busy} aria-label={`作废${device.name}`} onClick={() => run(async token => {
         const result = await devicesApi.revoke(device);
         if (!gate.isCurrent(token)) return;
@@ -51,7 +53,9 @@ export function SettingsDevices({ projectId }) {
       if (gate.isCurrent(token)) setQr(result);
     })}>{qr ? '重新生成' : '添加设备'}</button>
       <DevicePairing value={qr}/>
-    </div>
+    </div></div>
     </section>
+    {value?.mode === 'server' && <SettingsUsers projectId={projectId}/>}
+    {value?.mode === 'server' && <ExternalMemoryAccess projectId={projectId}/>}
   </section>;
 }

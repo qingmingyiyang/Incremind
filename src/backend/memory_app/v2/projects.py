@@ -99,6 +99,8 @@ def install_project_routes(application, *, records):
                          {"name": name, "scenes": [], "private": False, "builtin": None},
                          expected_revision=0)
             result = _view(tx, row)
+            from .audit_objects import record_project_write
+            record_project_write(tx, records=records, project_id=project_id, revision=row.revision, creating=True)
             tx.commit()
         return result
 
@@ -132,11 +134,13 @@ def install_project_routes(application, *, records):
             if "private" in changes:
                 private_row = tx.read("v2_private_scopes", project_id)
                 set_private_project_in_transaction(
-                    tx, project_id, changes["private"], private_row.revision if private_row else 0)
+                    tx, project_id, changes["private"], private_row.revision if private_row else 0, source_owner=records)
             row = tx.put(_PROJECTS, project_id,
                          {**current.payload, "private": is_private_project(tx, project_id), **changes},
                          expected_revision=revision)
             result = _view(tx, row)
+            from .audit_objects import record_project_write
+            record_project_write(tx, records=records, project_id=project_id, revision=row.revision, creating=False)
             tx.commit()
         return result
 

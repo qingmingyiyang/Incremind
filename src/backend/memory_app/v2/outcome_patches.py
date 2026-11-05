@@ -14,14 +14,14 @@ class OutcomePatchError(ValueError):
         super().__init__(code)
 
 
-def _outline(markdown, *, heading_error='outline_heading_unsupported'):
+def _outline(markdown, *, heading_error='outline_heading_unsupported', strict=True):
     # 原扫描器处理围栏、缩进和精确字符坐标，追加空行只探测未闭围栏。
-    if not list(_lines(markdown + '\n\n'))[-1][3]:
+    if strict and not list(_lines(markdown + '\n\n'))[-1][3]:
         raise OutcomePatchError('fence_unclosed')
     rows, stack, previous = [], [], None
     for start, end, line, visible in _lines(markdown):
         if visible:
-            if (re.search(r'<\s*/?h[1-6](?:\s|>)', line, re.IGNORECASE)
+            if strict and (re.search(r'<\s*/?h[1-6](?:\s|>)', line, re.IGNORECASE)
                     or (re.fullmatch(r' {0,3}(?:=+|-+)[ \t]*', line)
                         and previous is not None and previous.strip()
                         and not previous.startswith(('    ', '\t'))
@@ -39,13 +39,28 @@ def _outline(markdown, *, heading_error='outline_heading_unsupported'):
                 stack.append(row)
         previous = line if visible else None
     paths = [row['path'] for row in rows]
-    if len(paths) != len(set(paths)):
+    if strict and len(paths) != len(set(paths)):
         raise OutcomePatchError('path_ambiguous')
     for index, row in enumerate(rows):
         row['body_end'] = rows[index + 1]['start'] if index + 1 < len(rows) else len(markdown)
         row['subtree_end'] = next((later['start'] for later in rows[index + 1:]
                                   if later['level'] <= row['level']), len(markdown))
     return rows
+
+
+def compare_outlines(before, after):
+    # 恢复整篇旧稿只比较结构，重复标题和历史正文均不取得补丁写入资格。
+    def sections(markdown):
+        rows = _outline(markdown, strict=False)
+        result = {(): [markdown[:rows[0]['start']] if rows else markdown]}
+        for position, row in enumerate(rows):
+            # 每次出现都保留位置和正文，同名小节也能识别换序与次数变化。
+            result.setdefault(row['path'], []).append((position, markdown[row['start']:row['body_end']]))
+        return result
+    previous, current = sections(before), sections(after)
+    return [{'path': list(path), 'kind': 'added' if path not in previous else
+             'removed' if path not in current else 'updated'}
+        for path in dict.fromkeys((*previous, *current)) if previous.get(path) != current.get(path)]
 
 
 def _tokens(markdown, rows):

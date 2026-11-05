@@ -1,0 +1,7 @@
+.route-correction { min-width: 0; padding: 16px 0; border-top: 1px solid var(--line2); }
+.route-correction-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.route-correction-part { min-width: 0; margin-block: 12px; }
+.route-correction .ui-row-title { white-space: pre-wrap; overflow-wrap: anywhere; }
+.route-correction-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.route-correction-actions label { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.route-correction select { min-width: 0; max-width: 100%; color: var(--ink); background: var(--panel); border: 1px solid var(--line2); }

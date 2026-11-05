@@ -99,7 +99,7 @@
               "capability_policy": {"properties": {"allowed": {"const": ["external.context.execute"]}, "denied": {"maxItems": 0}, "require_approval": {"maxItems": 0}}},
               "capability_request": {"properties": {"mode": {"const": "execute_exact_v1"}, "capability_id": {"const": "external.context.execute"},
                 "arguments": {"type": "object", "additionalProperties": false, "required": ["client", "tool", "query", "scope", "budget"],
-                  "properties": {"client": {"enum": ["claude", "codex", "deepseek-harness"]}, "tool": {"enum": ["projects", "recall", "methods", "read"]},
+                  "properties": {"client": {"enum": ["claude", "codex", "deepseek-harness", "chatgpt"]}, "tool": {"enum": ["projects", "recall", "methods", "read"]},
                     "query": {"type": "string", "not": {"pattern": "\u0000"}}, "budget": {"type": "integer", "minimum": 1, "maximum": 12000},
                     "scope": {"type": "object", "additionalProperties": false, "required": ["user_id", "project_id"],
                       "properties": {"user_id": {"type": "string", "minLength": 1}, "project_id": {"type": "string", "minLength": 1}}}}}}},
@@ -645,7 +645,7 @@
       "type": "object",
       "minProperties": 1,
       "propertyNames": {
-        "enum": ["organize", "place", "extract", "route", "steer", "scope", "retrieve", "rank", "strength", "forget", "enough", "compose", "trigger", "consolidate", "search", "nudge", "handoff", "image_read", "retry", "skill_export", "skill_author", "ladder", "vector", "rerank", "elsewhere", "continuation", "style", "gap", "reask", "review", "outcome_correction", "material_analysis", "context_preparation", "agent_data"]
+        "enum": ["organize", "place", "extract", "route", "steer", "scope", "retrieve", "rank", "strength", "forget", "enough", "compose", "trigger", "consolidate", "search", "nudge", "handoff", "image_read", "retry", "skill_export", "skill_author", "ladder", "vector", "rerank", "elsewhere", "continuation", "style", "gap", "reask", "review", "outcome_correction", "material_analysis", "context_preparation", "agent_data", "external_task_output"]
       },
       "additionalProperties": {
         "type": "string",

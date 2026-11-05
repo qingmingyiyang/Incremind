@@ -146,7 +146,7 @@ it('keeps a highlighted window until full text is expanded', async () => {
   expect(panel()).toHaveTextContent('s1完整原文');
 });
 it('reads a directly opened original even with multiple document candidates', async () => {
-  mount(); await settle(); fireEvent.click(screen.getByRole('button', { name: '原件 2' }));
+  mount(); await settle(); fireEvent.click(screen.getByRole('button', { name: '原件 —' })); await settle();
   fireEvent.click(screen.getByRole('button', { name: '第一原件' })); await settle();
   expect(panel()).toHaveTextContent('s1完整原文');
 });
@@ -170,7 +170,7 @@ it('keeps zero memo evidence and marks unknown metadata with a dash', async () =
 it('ignores a full-text response after changing the project', async () => {
   const base = fetch.getMockImplementation(); let resolve;
   fetch.mockImplementation((url, options) => String(url).includes('/sources/s1/text') ? new Promise(done => { resolve = done; }) : base(url, options));
-  const view = mount(); await settle(); fireEvent.click(screen.getByRole('button', { name: '原件 2' })); fireEvent.click(screen.getByRole('button', { name: '第一原件' })); await settle();
+  const view = mount(); await settle(); fireEvent.click(screen.getByRole('button', { name: '原件 —' })); await settle(); fireEvent.click(screen.getByRole('button', { name: '第一原件' })); await settle();
   view.rerender(<Library projectId="beta" projects={[]}/>); await settle();
   await act(async () => resolve({ ok: true, json: async () => ({ text: '旧项目正文' }) }));
   expect(screen.queryByText('旧项目正文')).not.toBeInTheDocument(); expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -181,7 +181,7 @@ it('retries a failed full-text read without replacing the selected original', as
     if (String(url).includes('/sources/s1/text') && ++attempts === 1) return Promise.resolve({ ok: false, status: 503, json: async () => ({}) });
     return base(url, options);
   });
-  mount(); await settle(); fireEvent.click(screen.getByRole('button', { name: '原件 2' })); fireEvent.click(screen.getByRole('button', { name: '第一原件' })); await settle();
+  mount(); await settle(); fireEvent.click(screen.getByRole('button', { name: '原件 —' })); await settle(); fireEvent.click(screen.getByRole('button', { name: '第一原件' })); await settle();
   expect(within(panel()).getByRole('alert')).toHaveTextContent('读取未完成 · 重试');
   fireEvent.click(within(panel()).getByRole('button', { name: '重试' })); await settle();
   expect(panel()).toHaveTextContent('s1完整原文'); expect(attempts).toBe(2);

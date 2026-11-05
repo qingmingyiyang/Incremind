@@ -90,16 +90,28 @@ def v1(entries: Sequence[Mapping], *, count_tokens: Callable[[str], int],
 def v2(projects: Sequence[Mapping], *, count_tokens: Callable[[str], int],
        budget: int = DEFAULT_BUDGET) -> dict:
     """Admit complete catalog metadata rows, with no memory IDs or usage facts."""
+    return _catalog(projects, count_tokens=count_tokens, budget=budget, shared=False)
+
+
+def v3(projects: Sequence[Mapping], *, count_tokens: Callable[[str], int],
+       budget: int = DEFAULT_BUDGET) -> dict:
+    return _catalog(projects, count_tokens=count_tokens, budget=budget, shared=True)
+
+
+def _catalog(projects, *, count_tokens, budget, shared):
     if type(budget) is not int or budget < 1 or not callable(count_tokens):
         raise ValueError('invalid_handoff_budget')
     budget = min(budget, MAX_BUDGET)
     if isinstance(projects, (str, bytes)) or not isinstance(projects, Sequence):
         raise ValueError('invalid_handoff_catalog')
+    fields = {'id', 'name', 'overview', 'scenes'} | ({'scope_kind', 'namespace'} if shared else set())
     rows, seen = [], set()
     for row in projects:
-        if (not isinstance(row, Mapping) or set(row) != {'id', 'name', 'overview', 'scenes'}
+        if (not isinstance(row, Mapping) or set(row) != fields
                 or any(not isinstance(row[key], str) or not row[key] for key in ('id', 'name', 'overview'))
                 or row['id'] in seen or not isinstance(row['scenes'], list)):
+            raise ValueError('invalid_handoff_catalog')
+        if shared and (row['scope_kind'] != 'shared' or not isinstance(row['namespace'], str) or not row['namespace']):
             raise ValueError('invalid_handoff_catalog')
         seen.add(row['id'])
         for scene in row['scenes']:
@@ -117,5 +129,13 @@ def v2(projects: Sequence[Mapping], *, count_tokens: Callable[[str], int],
             raise ValueError('invalid_handoff_token_count')
         if cost <= budget:
             selected, text, tokens = proposed, body, cost
-    return {'version': 'handoff@2', 'budget': budget, 'entries': [], 'profile': [],
+    return {'version': 'handoff@3' if shared else 'handoff@2', 'budget': budget, 'entries': [], 'profile': [],
         'projects': selected, 'tokens': tokens, 'text': text}
+
+
+def v4(entries, *, profile=(), count_tokens, budget=DEFAULT_BUDGET):
+    result = v1(entries, profile=profile, count_tokens=count_tokens, budget=budget)
+    for entry in [*result['entries'], *result['profile']]:
+        if any(not isinstance(source.get('namespace'), str) or not source['namespace'] for source in entry['sources']):
+            raise ValueError('invalid_handoff_entry')
+    return {**result, 'version': 'handoff@4'}

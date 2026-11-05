@@ -110,15 +110,32 @@ class _CopyInspection:
         def in_scene(assigned):
             return get('scope')(ScopeInput(scene, assigned))
 
-        def emit(kind, row, reason, *, href=None, severity='attention'):
+        def emit(kind, row, reason, *, href=None, severity='attention', message=None):
             items.append({'kind': kind, 'id': row.object_id, 'revision': row.revision,
                           'reason': reason, 'severity': severity,
+                          **({'message': message} if message is not None else {}),
                           'href': href or _destination(project)})
 
         for row in self.records.list('recognitions'):
             if row.payload.get('scope') != {'user_id': scope.user_id, 'project_id': project}:
                 continue
-            view = insight_view(self.records, scope, row.object_id, service=self.service)
+            try:
+                view = insight_view(self.records, scope, row.object_id, service=self.service)
+            except RecognitionConflict as error:
+                if str(error) != 'inspiration_generation_unavailable':
+                    raise
+                assignment = scene_of(self.records, 'recognition', row.object_id)
+                if assignment is None:
+                    assignment = next((assigned for candidate in self.records.list('recognition_candidates')
+                        if candidate.payload.get('scope') == {'user_id': scope.user_id, 'project_id': project}
+                        and candidate.payload.get('state') == 'published'
+                        and candidate.payload.get('recognition_id') == row.object_id
+                        and (assigned := scene_of(self.records, 'candidate', candidate.object_id)) is not None), None)
+                assigned_scene = (assignment.get('scene') if assignment is not None
+                    and assignment.get('project_id') == project else None)
+                if row.payload.get('state') == 'active' and in_scene(assigned_scene):
+                    emit('recognition', row, 'source_evidence_unverified', message='来源证明尚未核验')
+                continue
             if not view or view['state'] not in {'active', 'stale'} or not in_scene(view['scene']):
                 continue
             try:

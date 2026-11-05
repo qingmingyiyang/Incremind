@@ -12,7 +12,7 @@
     "turn_id": {"type": "string", "pattern": "^turn-[0-9a-f]{32}$"},
     "session_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$"},
     "sequence": {"type": "integer", "minimum": 1},
-    "type": {"enum": ["turn.accepted", "turn.resumed", "turn.cancel.requested", "context.resolved", "expert.selection.recorded", "expert.binding.frozen", "model.requested", "model.routed", "model.attempt.dispatched", "model.attempt.terminal", "model.completed", "model.failed", "model.cancelled", "model.timed_out", "model.result.discarded", "hook.invoked", "tool.requested", "tool.intent.recorded", "tool.dispatch.claimed", "approval.required", "approval.resolved", "tool.started", "tool.attempt.failed", "tool.outcome.recorded", "tool.completed", "tool.failed", "tool.cancelled", "turn.completed", "turn.failed", "turn.cancelled"]},
+    "type": {"enum": ["turn.accepted", "turn.resumed", "turn.cancel.requested", "turn.steer.received", "turn.steer.applied", "context.resolved", "expert.selection.recorded", "expert.binding.frozen", "model.requested", "model.routed", "model.attempt.dispatched", "model.attempt.terminal", "model.completed", "model.failed", "model.cancelled", "model.timed_out", "model.result.discarded", "hook.invoked", "tool.requested", "tool.intent.recorded", "tool.dispatch.claimed", "approval.required", "approval.resolved", "tool.started", "tool.attempt.failed", "tool.outcome.recorded", "tool.completed", "tool.failed", "tool.cancelled", "turn.completed", "turn.failed", "turn.cancelled"]},
     "actor": {"enum": ["user", "kernel", "model", "tool", "human", "system"]},
     "correlation": {
       "type": "object",

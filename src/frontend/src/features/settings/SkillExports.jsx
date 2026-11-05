@@ -17,7 +17,7 @@ export function SkillExports({ projectId, scenes = [] }) {
     }).catch(() => { if (gate.isCurrent(token)) setError('读取未完成 · 重试'); });
     return () => controller.abort();
   }, [projectId, open, refresh]);
-  return <section>
+  return <section className="settings-skill-exports">
     <Row title="导出为 skill" expanded={open} meta={items ? String(items.length) : undefined} onOpen={() => { setOpen(old => !old); setPanel(null); }}/>
     {open && <section aria-label="skill 列表">
       {error && <p role="alert">{error} <button type="button" onClick={() => setRefresh(old => old + 1)}>重试</button></p>}

@@ -31,6 +31,10 @@ from .external_proxy_settings import ExternalProxySettingsError, external_proxy_
 from .embedding_settings import EmbeddingSettings, EmbeddingSettingsError, vector_policy
 
 
+def _model_status(code, *, conflict=False):
+    return 403 if code in {'server_model_configuration_readonly', 'server_model_not_allowed'} else 409 if conflict else 400
+
+
 def _privacy(reader):
     return {"revision": privacy_revision(reader), "private_projects": sorted(
         row.object_id for row in reader.list("v2_private_scopes")
@@ -93,83 +97,12 @@ def _receipt(at, purpose, target, items=None, usage=None, duration=None, model_c
 
 
 def _receipts(records, limit, *, runtime_root=None):
-    result = []
-    from .external_context import delivery_receipts
-    if runtime_root is not None:
-        result.extend(_receipt(row['at'], '外部 agent', {}, row['items'])
-                      for row in delivery_receipts(records, runtime_root))
-    for row in records.list('v2_egress_receipts'):
-        payload = row.payload
-        result.append(_receipt(payload.get('at'), '认识', {'model': payload.get('model')},
-            payload.get('items'), payload.get('usage')))
-    from ..kernel.receipt_projection import kernel_call_groups, PURPOSES, aggregate_usage, aggregate_cost
-    from .task_egress import task_call_groups
+    from .receipt_history import ReceiptHistory, legacy_row
     try:
-        kernel = kernel_call_groups(runtime_root, records=records)
-        groups = task_call_groups(records, runtime_root)
+        rows = ReceiptHistory(records, runtime_root).collect(strict_external=False, include_attempts=False, legacy=True)
     except (OSError, ValueError, sqlite3.Error):
         raise HTTPException(503, 'task_receipts_unavailable') from None
-    covered = set()
-    ask_ids = set()
-    organized = {}
-    for group in kernel:
-        if group['kind'] not in PURPOSES:
-            continue
-        calls = group['calls']
-        covered.update((call['turn_id'], call['model_request_id']) for call in calls)
-        saved = (group['answer'] or {}).get('receipt', {}).get('ask', {})
-        if saved.get('egress_receipt_id'):
-            ask_ids.add(saved['egress_receipt_id'])
-        if group['kind'] == 'memory.organize':
-            for material in group['request'].get('privacy', {}).get('material_refs', []):
-                if material.get('type') == 'original_item':
-                    organized.setdefault(material['id'], []).append(group['request'].get('created_at', ''))
-        usage = aggregate_usage(calls)
-        if usage and usage.get('observed_only'):
-            usage = None
-        models = sorted({call['model_id'] for call in calls if call.get('model_id')})
-        # 辅助 Turn 可复用同一 kind，外发记录按冻结路由中的实际用途显示。
-        purposes = {purpose for call in calls for purpose in (call.get('egress') or {}).get('settings_revision', {})}
-        label = {'rerank': '重排', 'embedding': '向量'}.get(next(iter(purposes)), PURPOSES[group['kind']]) if len(purposes) == 1 else PURPOSES[group['kind']]
-        result.append(_receipt(max(call['completed_at'] for call in calls), label,
-            {'model': ' · '.join(models) or None}, usage=usage,
-            duration=sum(call['duration_ms'] for call in calls) / 1000, model_cost=aggregate_cost(calls)))
-    for calls in groups:
-        calls = [call for call in calls if (call['turn_id'], call['model_request_id']) not in covered]
-        if not calls:
-            continue
-        usage = aggregate_usage(calls)
-        if usage and usage.get('observed_only'):
-            usage = None
-        models = sorted({call['model_id'] for call in calls if call.get('model_id')})
-        result.append(_receipt(max(call['completed_at'] for call in calls), '干活',
-            {'model': ' · '.join(models) or None}, usage=usage,
-            duration=sum(call['duration_ms'] for call in calls) / 1000, model_cost=aggregate_cost(calls)))
-    for row in records.list("workspace_ask_receipts"):
-        payload = row.payload
-        if row.object_id in ask_ids:
-            continue
-        target = payload.get("target", {})
-        if not isinstance(target, dict) or target.get("execution_location") != "remote":
-            continue
-        sources = payload.get("sources")
-        result.append(_receipt(payload.get("created_at"), "问", target,
-            len(sources) if isinstance(sources, list) else None, payload.get("usage")))
-    for row in records.list("workspace_items"):
-        receipts = row.payload.get("remote_processing_receipts", [])
-        if not isinstance(receipts, list):
-            continue
-        for index, receipt in enumerate(receipts):
-            if not isinstance(receipt, dict):
-                continue
-            for purpose, key in (("整理", "generation"), ("转写", "asr")):
-                following = receipts[index + 1].get('consented_at', '') if index + 1 < len(receipts) and isinstance(receipts[index + 1], dict) else ''
-                if key == 'generation' and any(receipt.get('consented_at', '') <= at and (not following or at < following)
-                        for at in organized.get(row.object_id, [])):
-                    continue
-                if isinstance(receipt.get(key), dict):
-                    result.append(_receipt(receipt.get("consented_at"), purpose, receipt[key], 1))
-    return sorted(result, key=lambda row: row["at"] or "", reverse=True)[:limit]
+    return [legacy_row(row) for row in sorted(rows, key=lambda row: row['at'] or '', reverse=True)[:limit]]
 
 
 class _IntegrityRecords(SQLiteStructuredRecordStore):
@@ -266,6 +199,10 @@ def _integrity(runtime_root, records, documents, workspace):
 
 def install_settings_routes(application, *, runtime_root, records, models, documents=None, workspace=None,
                             mutation_lock=None):
+    from .asr_credentials import install_asr_credential_routes
+    install_asr_credential_routes(application, records=records, runtime_root=runtime_root)
+    from .purpose_tests import install_purpose_test_routes
+    install_purpose_test_routes(application, records=records, runtime_root=runtime_root, models=models, workspace=workspace)
     # 配置保存与任务终态复验共用应用写锁；独立路由安装不创建第二套锁。
     mutation_lock = mutation_lock if mutation_lock is not None else nullcontext()
     router = APIRouter(prefix="/api/v2/settings")
@@ -376,7 +313,11 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
         return JSONResponse(status_code=202, content=result)
 
     # Reuse the installed legacy safe projection, without importing backend.api.
-    asr_endpoint = next((route.endpoint for route in application.routes
+    installed = []
+    for route in application.routes:
+        effective = getattr(route, 'effective_route_contexts', None)
+        installed.extend(effective() if callable(effective) else (route,))
+    asr_endpoint = next((route.endpoint for route in installed
         if getattr(route, "path", None) == "/api/rebuild/settings/cloud-asr-provider"
         and "GET" in getattr(route, "methods", set())), None)
 
@@ -474,7 +415,7 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
             raise HTTPException(409, 'provider_store_revision_conflict') from None
         except ModelConfigurationError as error:
             code = str(error)
-            raise HTTPException(409 if code == 'provider_store_configuration_changed' else 400, code) from None
+            raise HTTPException(_model_status(code, conflict=code == 'provider_store_configuration_changed'), code) from None
 
     @router.patch('/fast-model')
     async def settings_fast_model(request: Request):
@@ -487,7 +428,7 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
             raise HTTPException(409, 'fast_model_revision_conflict') from None
         except ModelConfigurationError as error:
             code = str(error)
-            raise HTTPException(409 if code == 'fast_model_configuration_changed' else 400, code) from None
+            raise HTTPException(_model_status(code, conflict=code == 'fast_model_configuration_changed'), code) from None
 
     @router.patch('/vision-mode')
     async def settings_vision_mode(request: Request):
@@ -499,7 +440,7 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
         except SQLiteUnitOfWorkConflict:
             raise HTTPException(409, 'vision_mode_revision_conflict') from None
         except ModelConfigurationError as error:
-            raise HTTPException(400, str(error)) from None
+            raise HTTPException(_model_status(str(error)), str(error)) from None
 
     @router.patch('/model-prices')
     async def settings_model_prices(request: Request):
@@ -514,7 +455,7 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
             raise HTTPException(409, 'model_price_revision_conflict') from None
         except ModelConfigurationError as error:
             code = str(error)
-            raise HTTPException(409 if code == 'model_price_configuration_changed' else 400, code) from None
+            raise HTTPException(_model_status(code, conflict=code == 'model_price_configuration_changed'), code) from None
 
     @router.patch("/privacy")
     async def settings_privacy(request: Request):
@@ -534,7 +475,7 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
                 raise HTTPException(400, "project_not_found")
             for project_id in sorted(set(current["private_projects"]) | wanted):
                 row = tx.read("v2_private_scopes", project_id)
-                set_private_project_in_transaction(tx, project_id, project_id in wanted, row.revision if row else 0)
+                set_private_project_in_transaction(tx, project_id, project_id in wanted, row.revision if row else 0, source_owner=records)
             result = _privacy(tx)
             tx.commit()
         return result
@@ -556,6 +497,38 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
     def receipts_get(limit: int = Query(50, ge=1, le=500)):
         return _receipts(records, limit, runtime_root=runtime_root)
 
+    def receipt_read(method, *args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except ValueError as error:
+            if str(error).startswith('receipt_'):
+                raise HTTPException(400, str(error)) from None
+            raise HTTPException(503, 'receipt_history_unavailable') from None
+        except (OSError, sqlite3.Error, KeyError, TypeError, AttributeError):
+            raise HTTPException(503, 'receipt_history_unavailable') from None
+
+    @router.get('/usage-month')
+    def usage_month_get(month: str | None = Query(None), timezone: str = Query('UTC'), scope: str = Query('egress')):
+        from .receipt_history import ReceiptHistory
+        return receipt_read(ReceiptHistory(records, runtime_root).summary, month=month, zone=timezone, scope=scope)
+
+    @router.get('/receipt-history')
+    def receipt_history_get(month: str | None = Query(None), timezone: str = Query('UTC'),
+                            purpose: str | None = Query(None), limit: int = Query(25, ge=1, le=100), cursor: str | None = Query(None), scope: str = Query('egress')):
+        from .receipt_history import ReceiptHistory
+        return receipt_read(ReceiptHistory(records, runtime_root).page,
+                            month=month, zone=timezone, purpose=purpose, limit=limit, cursor=cursor, scope=scope)
+
+    @router.get('/receipt-history/{identity}')
+    def receipt_detail_get(identity: str, month: str | None = Query(None), timezone: str = Query('UTC'), scope: str = Query('egress')):
+        from .receipt_history import ReceiptHistory
+        if len(identity) > 1024:
+            raise HTTPException(404, 'receipt_not_found')
+        result = receipt_read(ReceiptHistory(records, runtime_root).detail, identity, month=month, zone=timezone, scope=scope)
+        if result is None:
+            raise HTTPException(404, 'receipt_not_found')
+        return result
+
     @router.put('/model')
     async def settings_model_put(request: Request):
         body = await _json(request)
@@ -574,7 +547,7 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
             raise HTTPException(409, 'model_configuration_changed') from None
         except ModelConfigurationError as error:
             code = str(error)
-            raise HTTPException(409 if 'revision' in code or 'conflict' in code else 400, code) from None
+            raise HTTPException(_model_status(code, conflict='revision' in code or 'conflict' in code), code) from None
 
     @router.put('/generation-mode')
     async def settings_generation_mode_put(request: Request):
@@ -590,6 +563,6 @@ def install_settings_routes(application, *, runtime_root, records, models, docum
                 )
         except ModelConfigurationError as error:
             code = str(error)
-            raise HTTPException(409 if code == 'generation_mode_revision_conflict' else 400, code) from None
+            raise HTTPException(_model_status(code, conflict=code == 'generation_mode_revision_conflict'), code) from None
 
     application.include_router(router)

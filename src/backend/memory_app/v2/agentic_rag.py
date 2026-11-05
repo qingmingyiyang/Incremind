@@ -15,6 +15,7 @@ from ..source_egress import SourceEgressService
 from .policies import get
 from .privacy import freeze_turn_materials, egress_allowed
 from .followup import sum_usage
+from .ladder import publication_candidates
 
 
 class RagDecision(BaseModel):
@@ -69,13 +70,49 @@ def candidate_id(candidate):
 
 
 def _candidates(plan):
+    if getattr(_policy(plan), 'explicit_answer_evidence', False):
+        # 同源多次阅读保留全部真实窗口，不能让最后一个片段覆盖先前行动或对象。
+        return _merge_observed([*plan['_rag']['observed'], *plan['chosen']])
     rows = {}
     for candidate in [*plan['_rag']['observed'], *plan['chosen']]:
         rows[candidate_id(candidate)] = candidate
     return list(rows.values())
 
 
-def _descriptors(candidates):
+def _merge_observed(rows):
+    from .policies.ladder import project_sources_v14, source_identity_v14
+    identities, grouped = {}, {}
+    for row in rows:
+        identity = candidate_id(row)
+        binding = source_identity_v14(row)
+        if identity in identities and identities[identity] != binding:
+            raise RecognitionConflict('rag_material_changed')
+        identities[identity] = binding
+        grouped.setdefault(identity, []).append(row)
+    # 复用现有坐标并集：相邻与重叠只拼真实已读文本，分离窗口不填中间空白。
+    result = []
+    for group in grouped.values():
+        if group[0]['kind'] == 'recognition':
+            # 认识的条件及来源说明是原子排版，不可用正文窗口重写excerpt。
+            if any(row['windows'] != group[0]['windows'] or row['excerpt'] != group[0]['excerpt'] for row in group):
+                raise RecognitionConflict('rag_material_changed')
+            result.append(group[0])
+        else:
+            result.extend(project_sources_v14(group))
+    return result
+
+
+def _remember_observed(plan, pool, row):
+    """9同源阅读积累真实窗口；旧策略仍按最后一次阅读覆盖。"""
+    identity = candidate_id(row)
+    old = pool.get(identity)
+    if old is not None and getattr(_policy(plan), 'explicit_answer_evidence', False):
+        row = _merge_observed([old, row])[0]
+    pool[identity] = row
+    return row
+
+
+def _descriptors(candidates, *, source_namespace=None):
     result = {}
     for row in candidates:
         if row['kind'] == 'search':
@@ -83,28 +120,50 @@ def _descriptors(candidates):
         entry = row['entry']
         kind = 'original_source' if row['kind'] == 'source' else row['kind']
         item = {'type': kind, 'id': entry['id'], 'revision': entry['revision'],
-                'project_id': row['scope'].project_id}
-        result[(kind, item['id'], item['project_id'])] = item
+                'project_id': row['scope'].project_id,
+                **({'namespace': row.get('namespace', source_namespace)}
+                    if 'namespace' in row or source_namespace is not None else {})}
+        result[(kind, item['id'], item['project_id'], item.get('namespace'))] = item
     return list(result.values())
+
+
+def answer_candidates(plan, identities):
+    """只交接决策实际看过的窗口，不把目录或全部观察自动变成最终证据。"""
+    available = {candidate_id(row): row for row in _candidates(plan)}
+    if not identities:
+        selected = _merge_observed(plan['chosen'])
+        if len(selected) > _policy(plan)(None, operation='agentic_limits')['results']:
+            raise RecognitionConflict('rag_answer_outside_observed')
+        return publication_candidates(selected)
+    selected = identities
+    if (len(selected) > _policy(plan)(None, operation='agentic_limits')['results']
+            or len(set(selected)) != len(selected) or not set(selected) <= available.keys()):
+        raise RecognitionConflict('rag_answer_outside_observed')
+    return publication_candidates([available[identity] for identity in selected])
 
 
 def _frozen_candidates(rows):
     keys = {'kind', 'id', 'layer', 'scope', 'entry', 'snapshot', 'windows', 'excerpt', 'coordinate_space',
-            'title', 'href', 'match_in', 'document_ids', 'bookshelf', 'validity', 'time_scope', 'validity_revision'}
+            'title', 'href', 'match_in', 'document_ids', 'bookshelf', 'validity', 'time_scope', 'validity_revision',
+            'namespace', 'material_origin'}
     return encode([{key: value for key, value in row.items() if key in keys or row['kind'] == 'search'} for row in rows])
 
 
 def _all_descriptors(query, plan):
-    descriptors = _descriptors(_candidates(plan))
+    namespace = query.source_namespace if query.origin_admission is not None else None
+    descriptors = _descriptors(_candidates(plan), source_namespace=namespace)
     for dependency in plan['_rag'].get('history_dependencies', []):
-        descriptors.extend(_descriptors(dependency.get('chosen', [])))
+        descriptors.extend(_descriptors(dependency.get('chosen', []), source_namespace=namespace))
         for fact in dependency.get('clarifications', []):
             store = query.answer_turns.application.state.ai_turn_store
             saved = store.get_immutable_payload(fact['id'], 'answer-gap-input-' + fact['marker']['invocation'] + '-v1')
             if saved is None:
                 raise RecognitionConflict('rag_clarification_changed')
-            descriptors.extend(saved[1]['material_proof']['privacy']['material_refs'])
-    descriptors.extend({'type': 'recognition', 'id': row['id'], 'revision': row['revision'], 'project_id': 'me'}
+            proof = saved[1]['material_proof']
+            descriptors.extend(proof['selection']['origin_materials'] if query.origin_admission is not None
+                else proof['privacy']['material_refs'])
+    descriptors.extend({'type': 'recognition', 'id': row['id'], 'revision': row['revision'], 'project_id': 'me',
+        **({'namespace': query.origin_admission.personal['namespace']} if query.origin_admission is not None else {})}
         for row in plan.get('profile', {}).get('items', []) if 'id' in row and 'revision' in row)
     return descriptors
 
@@ -169,18 +228,29 @@ def material_input(query, plan, models, *, local_only):
             text = '\n…\n'.join(window.text for window in windows)
             if candidate['excerpt'] != text:
                 raise RecognitionConflict('rag_material_changed')
-        texts.append({'id': candidate_id(candidate), 'layer': candidate['layer'], 'title': candidate['title'], 'text': text})
+        item = {'id': candidate_id(candidate), 'layer': candidate['layer'], 'title': candidate['title'], 'text': text}
+        if getattr(_policy(plan), 'explicit_answer_evidence', False):
+            chosen = next((row for row in _merge_observed(plan['chosen']) if candidate_id(row) == item['id']), None)
+            item['final_evidence'] = chosen is not None and chosen['windows'] == candidate['windows']
+        texts.append(item)
     # 画像和历史虽不是证据，辅助决策及其派生查询仍受完整来源约束。
     descriptors = _all_descriptors(query, plan)
-    allowed, privacy = freeze_turn_materials(query.records, models, plan['project_id'], descriptors,
-        authority=SourceEgressService(query.records), local_only=local_only)
-    if len(allowed) != len(descriptors) or (not local_only and not privacy['allow_remote']):
-        raise RecognitionConflict('rag_egress_unavailable')
     active = ACTIVE_ANSWER.get()
     frozen = active[1].get_request(active[0]['turn_id'])
-    validate_frozen_inputs(query.records, models, {**frozen, 'privacy': privacy}, query=query)
+    origin = None
+    if query.origin_admission is not None:
+        from .shared_rag_materials import freeze_gap_materials
+        allowed, privacy, origin = freeze_gap_materials(query, frozen, plan, models, descriptors, local_only=local_only)
+    else:
+        allowed, privacy = freeze_turn_materials(query.records, models, plan['project_id'], descriptors,
+            authority=SourceEgressService(query.records), local_only=local_only)
+    if (origin is None and len(allowed) != len(descriptors)
+            or not local_only and not privacy['allow_remote']):
+        raise RecognitionConflict('rag_egress_unavailable')
+    if query.origin_admission is None:
+        validate_frozen_inputs(query.records, models, {**frozen, 'privacy': privacy}, query=query)
     skills = plan['_rag']['skills']
-    RagSkills(query.answer_turns.root).validate(plan['project_id'], skills)
+    RagSkills.for_query(query).validate(plan['project_id'], skills)
     state = plan['_rag']
     context = {'question': plan['question'], 'retrieval_question': state['question'],
                'original_task_and_conditions': state['task_text'],
@@ -189,17 +259,31 @@ def material_input(query, plan, models, *, local_only):
                'catalog': state['catalog'], 'round': state['round'],
                'tools': tool_availability(query, plan['project_id']),
                'remaining_decisions': _policy(plan)(None, operation='agentic_limits')['decisions'] - state['round']}
+    if getattr(_policy(plan), 'explicit_answer_evidence', False):
+        context['final_evidence_ids'] = [item['id'] for item in texts if item['final_evidence']]
+    if state.get('fast_path_diagnostics'):
+        context['fast_path_diagnostics'] = state['fast_path_diagnostics']
     proof = {'privacy': privacy, 'candidates': _frozen_candidates(rows), 'skills': deepcopy(skills),
              'history': encode(state['history']), 'profile': encode(plan.get('profile')),
              'tools': tool_availability(query, plan['project_id']),
-             'search': deepcopy(getattr(plan.get('search_guard'), 'frozen_binding', None))}
-    return {'messages': _policy(plan)(None, context, operation='agentic_messages'),
+             'search': deepcopy(getattr(plan.get('search_guard'), 'frozen_binding', None)),
+             **(origin or {})}
+    messages = _policy(plan)(None, context, operation='agentic_messages')
+    if query.origin_admission is not None:
+        messages = query.project_constraint_input.messages(frozen, messages)
+    return {'messages': messages,
             'privacy': privacy, 'selection': proof}
 
 
 def validate_derived_query(query, plan, purpose):
     """模型从本机私密材料推导的新词不能取得远程工具的授权。"""
     descriptors = _all_descriptors(query, plan)
+    if query.origin_admission is not None:
+        from .shared_rag_materials import freeze_derived_gap
+        active = ACTIVE_ANSWER.get()
+        if active is None:
+            raise RecognitionConflict('rag_turn_unavailable')
+        return freeze_derived_gap(query, active[1].get_request(active[0]['turn_id']), plan, purpose, descriptors)
     allowed, privacy = freeze_turn_materials(query.records, query.models, plan['project_id'], descriptors,
         authority=SourceEgressService(query.records), purpose=purpose)
     if len(allowed) != len(descriptors) or not privacy['allow_remote']:
@@ -218,10 +302,14 @@ def validate_material_proof(query, project, target, proof, *, request):
     if proof.get('search'):
         from .search import validate_search_binding
         probe['search_guard'] = lambda: validate_search_binding(query, proof['search'], probe)
-    validate_frozen_inputs(query.records, query.models, {**request, 'privacy': proof['privacy']}, query=query)
+    if query.origin_admission is not None:
+        from .shared_rag_materials import validate_gap_material_proof
+        validate_gap_material_proof(query, project, target, proof, request=request)
+    else:
+        validate_frozen_inputs(query.records, query.models, {**request, 'privacy': proof['privacy']}, query=query)
     query.validate_ask_plan(probe)
     from .rag_skills import RagSkills
-    RagSkills(query.answer_turns.root).validate(project, proof['skills'])
+    RagSkills.for_query(query).validate(project, proof['skills'])
 
 
 def validate_rag_proof(query, plan):
@@ -278,7 +366,8 @@ def _skill_context(query, plan):
     return {'task_text': plan['_rag']['task_text'], 'project_summary': '\n'.join(filter(None, (summary, refs)))}
 
 
-async def investigate(query, project, question, plan, *, turn_id, scene=None, history=None):
+async def investigate(query, project, question, plan, *, turn_id, scene=None, history=None,
+                      initial_memory=None, initial_route=None):
     from .multi_query import fuse_candidates
     from .rag_skills import RagSkills
     from .search import agentic_search, validate_agentic_search_tools
@@ -297,17 +386,88 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
     empty_bookshelf.continuation = {'spines': [], 'version': privacy_version, 'project': project, 'scene': scene}
     empty_bookshelf.frozen_binding = {'hits': [], 'version': privacy_version, 'project': project, 'scene': scene}
     plan['bookshelf_guard'] = empty_bookshelf
+    if initial_route is not None and not getattr(_policy(plan), 'initial_memory_probe', False):
+        raise RecognitionConflict('initial_memory_policy_required')
     if not query.ask_target()['model'] or (query.ask_target()['execution_location'] == 'remote'
             and not egress_allowed(query.records, query.models, project, 'generation')):
+        if initial_route is not None:
+            initial_route['reason'] = 'model_unavailable'
         plan.pop('_rag')
         plan['_rag_summary'] = {'version': 1, 'status': 'skipped', 'stop': 'model_unavailable', 'steps': []}
         return plan, {'usage': {}, 'receipt_ids': [], 'status': 'skipped', 'usage_complete': True}, {'queries': [], 'used': False}
     usages, receipts, seen, no_progress, pool = [], [], set(), 0, {}
+    initial_seed_ids = set()
+    initial_complete = None
+    raw_attempt = {'usage': {}, 'receipt_ids': [], 'usage_complete': True}
+    if initial_memory is not None:
+        query.validate_initial_candidates(project, question, initial_memory, scene=scene)
+        raw_probe = getattr(_policy(plan), 'raw_evidence_probe', False)
+        evidence_probe = getattr(_policy(plan), 'evidence_answer_probe', False)
+        if evidence_probe:
+            from .evidence_fast_path import attempt
+            probe = {**plan, 'chosen': list(plan['chosen'])}
+            raw_attempt = await attempt(query, probe, initial_memory, initial_route)
+            initial_complete = initial_memory
+            if raw_attempt.get('accepted'):
+                plan.update(chosen=probe['chosen'], evidence_source_basis=probe['evidence_source_basis'],
+                            evidence_answer_proof=probe['evidence_answer_proof'],
+                            evidence_retrieved_recognitions=probe['evidence_retrieved_recognitions'])
+                plan['_rag_summary'] = {'version': 1, 'status': 'skipped',
+                                       'stop': 'evidence_answer_accepted', 'steps': []}
+                plan.pop('_rag')
+                return plan, {'usage': {}, 'receipt_ids': [], 'status': 'skipped',
+                              'usage_complete': raw_attempt['usage_complete']}, {'queries': [], 'used': False}
+            if raw_attempt.get('diagnostics'):
+                plan['_rag']['fast_path_diagnostics'] = raw_attempt['diagnostics']
+            assessment = {'status': 'insufficient', 'reason': initial_route['reason']}
+        elif raw_probe:
+            from .raw_fast_path import attempt
+            # The raw contract has its own exact input budget. Do not require
+            # the old dialogue-oriented two-draft fitter to understand it.
+            probe = {**plan, 'chosen': list(initial_memory['candidates'])}
+            raw_attempt = await attempt(query, probe, initial_memory, initial_route)
+            initial_complete = initial_memory  # This probe already included L0.
+            if raw_attempt.get('accepted'):
+                plan.update(chosen=probe['chosen'], raw_source_basis=probe['raw_source_basis'],
+                            raw_answer_proof=probe['raw_answer_proof'])
+                plan['_rag_summary'] = {'version': 1, 'status': 'skipped',
+                                       'stop': 'raw_answer_accepted', 'steps': []}
+                plan.pop('_rag')
+                return plan, {'usage': {}, 'receipt_ids': [], 'status': 'skipped',
+                              'usage_complete': raw_attempt['usage_complete']}, {'queries': [], 'used': False}
+            assessment = {'status': 'insufficient', 'reason': initial_route['reason']}
+        else:
+            from .initial_answer import assess
+            assessment = assess(query, plan, reference=initial_memory.get('rank_reference'))
+        initial_route['reason'] = assessment['reason']
+        if assessment['status'] == 'sufficient':
+            proof = assessment['proof']
+            selected = [row for row in plan['chosen']
+                        if row['kind'] == 'recognition' and row['id'] == proof['source_id']]
+            if query.select_rag_answer(plan, selected):
+                plan['initial_answer_proof'] = proof
+                query.validate_ask_plan(plan)
+                initial_route.update(route='direct', reason='initial_evidence_sufficient')
+                plan['_rag_summary'] = {'version': 1, 'status': 'skipped',
+                                       'stop': 'initial_evidence_sufficient', 'steps': []}
+                plan.pop('_rag')
+                return plan, {'usage': {}, 'receipt_ids': [], 'status': 'skipped',
+                              'usage_complete': True}, {'queries': [], 'used': False}
+            initial_route['reason'] = 'answer_budget_insufficient'
+        # These actual selected windows are displayed to the first real decision.
+        for row in initial_memory['candidates'] if raw_probe or evidence_probe else plan['chosen']:
+            _remember_observed(plan, pool, row)
+            initial_seed_ids.add(candidate_id(row))
+        plan['_rag']['observed'] = list(pool.values())
+        plan['_rag']['catalog'] = _catalog(list(pool.values()), limits['results'])
+        plan['_rag']['depths'] = ['summary', 'body', 'original'] if raw_probe or evidence_probe else ['summary', 'body']
     status, stop = 'completed', 'round_limit'
     for number in range(1, limits['decisions'] + 1):
         _checkpoint()
         plan['_rag']['round'] = number
         invocation = 'rag-decision-' + str(number)
+        if initial_route is not None:
+            initial_route['decision_invocations'] += 1
         try:
             decision, usage = await _decide(query, plan)
             usages.append(usage)
@@ -326,6 +486,11 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                 usages.append(sum_usage(*observation['observations']))
         action = decision['action']
         if action in {'answer', 'clarify'}:
+            if action == 'answer' and getattr(_policy(plan), 'explicit_answer_evidence', False):
+                selected = answer_candidates(plan, decision['ids'])
+                if not query.select_rag_answer(plan, selected):
+                    # 明确选中的必要证据不能被旧chosen替代后继续作答。
+                    raise RagInputBudgetExhausted('rag_answer_input_budget_exhausted')
             stop = action
             plan['_rag_last'] = {'version': 1, 'status': action, 'round': number,
                 'invocation': invocation, 'question': task_text, 'questions': decision['questions']}
@@ -350,7 +515,18 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                     address = str(config.get('base_url') or '')
                     if config.get('enabled') and address and urlsplit(address).hostname not in {'127.0.0.1', 'localhost', '::1'}:
                         validate_derived_query(query, plan, purpose)
-                collected = await settled_call(query.collect_candidates, project, decision['query'], scene=scene)
+                if initial_memory is not None and decision['query'] == question:
+                    if initial_complete is None:
+                        initial_complete = await settled_call(query.collect_initial_remainder,
+                            project, question, initial_memory, scene=scene)
+                        initial_route['remainder_collections'] += 1
+                    else:
+                        await settled_call(query.validate_initial_candidates,
+                            project, question, initial_complete, scene=scene)
+                    collected = initial_complete
+                    initial_route['reused_queries'] += 1
+                else:
+                    collected = await settled_call(query.collect_candidates, project, decision['query'], scene=scene)
                 policy = _policy(plan)
                 depth = policy(None, decision['depth'], plan['_rag']['depths'], operation='agentic_depth')
                 drilldown = getattr(policy, 'empty_layer_drilldown', False)
@@ -361,7 +537,9 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                     candidates = [row for row in candidates if row['layer'] in layers]
                     candidates = sorted(candidates, key=lambda row: -row.get('score', 0))[:limits['results']]
                 if depth != 'summary' or drilldown:
-                    upper = [row for row in pool.values() if row['layer'] in {'L3', 'L2'}]
+                    # A probe observation is not yet a model-selected navigation anchor.
+                    upper = [row for row in pool.values() if row['layer'] in {'L3', 'L2'}
+                             and candidate_id(row) not in initial_seed_ids]
                     if upper:
                         allowed = set()
                         from .insights import source_documents
@@ -385,10 +563,11 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                 plan['_rag']['depths'].extend(depths)
                 result['actual_depth'] = depth
                 for row in rows:
+                    initial_seed_ids.discard(candidate_id(row))
                     old = pool.get(candidate_id(row))
                     if old is not None and old['entry']['revision'] != row['entry']['revision']:
                         raise RecognitionConflict('rag_material_changed')
-                    pool[candidate_id(row)] = row
+                    _remember_observed(plan, pool, row)
                 plan['_rag']['observed'] = list(pool.values())
                 plan['_rag']['catalog'] = _catalog(rows, limits['results'])
                 # 搜索即给真实窗口，下一轮模型读得到本轮事实；read还可单独选目录阅读。
@@ -406,7 +585,7 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                     rebind_agentic_search(query, plan, plan['search_guard'].frozen_binding)
                 result['items'] = _catalog(rows, limits['results'])
             elif action == 'search' and decision['source'] == 'skill':
-                result['items'] = RagSkills(query.answer_turns.root).search(project, decision['query'], limits['results'],
+                result['items'] = RagSkills.for_query(query).search(project, decision['query'], limits['results'],
                                                                           **_skill_context(query, plan))
                 plan['_rag']['catalog'] = result['items']
             elif action == 'search' and decision['source'] == 'web':
@@ -423,17 +602,18 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                     raise RecognitionConflict('rag_read_outside_catalog')
                 for identity in decision['ids']:
                     if identity.startswith('skill:'):
-                        fact = RagSkills(query.answer_turns.root).read(project, identity, **_skill_context(query, plan))
+                        fact = RagSkills.for_query(query).read(project, identity, **_skill_context(query, plan))
                         if fact not in plan['_rag']['skills']:
                             plan['_rag']['skills'].append(fact)
                     elif identity not in pool and not any(candidate_id(row) == identity for row in plan['chosen']):
                         raise RecognitionConflict('rag_read_outside_catalog')
                     else:
                         candidate = pool.get(identity) or next(row for row in plan['chosen'] if candidate_id(row) == identity)
+                        initial_seed_ids.discard(identity)
                         depth = _policy(plan)(None, decision['depth'], plan['_rag']['depths'], operation='agentic_depth')
                         rows = await settled_call(query.rag_read, plan, candidate, depth)
                         for row in rows:
-                            pool[candidate_id(row)] = row
+                            _remember_observed(plan, pool, row)
                             if not any(candidate_id(old) == candidate_id(row) and old['windows'] == row['windows'] for old in plan['chosen']):
                                 plan['chosen'].append(row)
                         plan['_rag']['observed'] = list(pool.values())
@@ -469,8 +649,9 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
         plan['_rag_proof'] = {'turn_id': turn_id, 'invocation': invocation, 'input_ref': prepared[0]}
     # 冻结给最终作答/继续消费者的数据不含可执行闭包和临时选择器。
     plan.pop('_rag', None)
-    return plan, {'usage': sum_usage(*usages), 'receipt_ids': receipts, 'status': status,
-                  'usage_complete': all(answer_observation('rag-decision-' + str(index))['complete']
+    return plan, {'usage': sum_usage(raw_attempt['usage'], *usages),
+                  'receipt_ids': [*raw_attempt['receipt_ids'], *receipts], 'status': status,
+                  'usage_complete': raw_attempt['usage_complete'] and all(answer_observation('rag-decision-' + str(index))['complete']
                       for index in range(1, number + 1))}, {'queries': [step['decision']['query']
                       for step in plan['_rag_summary']['steps'] if step['decision']['action'] == 'search'],
                       'used': bool(plan['_rag_summary']['steps'])}
@@ -486,10 +667,11 @@ def clarification(query, row):
     saved = store.get_immutable_payload(row.object_id, RESULT_KIND)
     request = store.get_request(row.object_id)
     events = tuple(store.events_after(row.object_id))
+    saved_trace = saved[1].get('receipt', {}).get('ask', {}).get('trace', []) if saved is not None else []
     if (saved is None or not request or request['scope']['project_id'] != row.payload['project_id']
             or request['input']['text'] != row.payload['user_text']
             or not events or events[-1]['type'] != 'turn.completed'
-            or saved[1]['receipt']['ask']['trace'][0].get('agentic') != marker):
+            or not saved_trace or saved_trace[0].get('agentic') != marker):
         raise RecognitionConflict('rag_clarification_changed')
     invocation = marker['invocation']
     model = store.get_immutable_payload(row.object_id, 'answer-model-result-' + invocation)
@@ -502,11 +684,12 @@ def clarification(query, row):
     return marker
 
 
-def pending_clarification(query, records, project, thread):
+def pending_clarification(query, records, project, thread, *, rows=None):
     if not thread:
         return None
-    rows = records.list_matching('v2_turns', project_id=project, thread_id=thread)
-    rows = sorted(rows, key=lambda row: (row.payload.get('created_at', ''), row.object_id))
+    if rows is None:
+        from .followup import scoped_history_rows
+        rows = scoped_history_rows(query, records, project, thread)
     if not rows or rows[-1].payload.get('intent') != 'ask':
         return None
     row = rows[-1]

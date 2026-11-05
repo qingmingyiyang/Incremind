@@ -1,7 +1,6 @@
 """Vault snapshots ownership for the product API."""
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
 import time
 
@@ -17,7 +16,6 @@ from core.product_core.local_memory_vault import (
     ListMemorySnapshots,
     MemorySnapshotError,
     PrepareMemoryRestoreConfirmation,
-    RollbackToMemorySnapshot,
     serialize_memory_asset_package,
     serialize_memory_restore_confirmation,
     serialize_memory_rollback_plan,
@@ -25,38 +23,26 @@ from core.product_core.local_memory_vault import (
     serialize_memory_snapshot_summary,
 )
 from core.storage_provider import (
-    JsonObjectStore,
     VaultBackupRestoreError,
     VaultOperationalRecoveryError,
     prepare_vault_recovery,
-    verify_vault_backup,
 )
-
-from core.storage_provider.vault_backup_restore import fingerprint_vault_restore_source
 
 from . import http as product_http
 from . import recovery_points as product_recovery_points
 from . import repositories as product_repositories
-from core.storage_provider.vault_backup_restore import verification_metadata, is_runtime_backup
+from core.storage_provider.vault_backup_restore import verification_metadata
 from backend.memory_app.backup import backup_runtime
+from backend.memory_app.runtime_recovery import (
+    build_restore_plan,
+    ensure_no_pending_recovery,
+    prepare_runtime_recovery,
+    runtime_recovery_summary,
+    server_restore_operation_id,
+)
+from backend.memory_app.runtime_restore_preview import RuntimeRestorePreviews, RestorePreviewError
 
 router = APIRouter(tags=["rebuild-product-core"])
-
-
-def _snapshot_record_for_restore(
-    *, store: JsonObjectStore, snapshots_root: Path, snapshot_id: str
-) -> Mapping[str, object] | None:
-    external = product_recovery_points._recovery_point_record(snapshots_root / snapshot_id)
-    if external is not None:
-        if is_runtime_backup(snapshots_root / snapshot_id):
-            raise MemorySnapshotError("runtime backup requires restore to a new runtime root")
-        return external
-    stored = store.read("memory_snapshots", snapshot_id)
-    if isinstance(stored, Mapping) and stored.get("restorable") is True:
-        raise MemorySnapshotError(
-            "full recovery point payload or catalog is missing"
-        )
-    return stored
 
 
 @router.post("/api/rebuild/memory-assets/export")
@@ -101,7 +87,7 @@ def list_memory_snapshots(request: Request, container: ApiContainerDep) -> JSONR
     """阶段 6：列出所有记忆快照。"""
     store, _settings = product_repositories._object_store(container.root_dir)
     use_case = ListMemorySnapshots(store)
-    _active_root, snapshots_root, _operations_root = product_recovery_points._vault_recovery_roots(
+    _active_root, snapshots_root, operations_root = product_recovery_points._vault_recovery_roots(
         container.root_dir
     )
     external_records = product_recovery_points._external_recovery_point_records(snapshots_root)
@@ -114,6 +100,7 @@ def list_memory_snapshots(request: Request, container: ApiContainerDep) -> JSONR
             {**serialize_memory_snapshot_summary(s), "size_bytes": _snapshot_size(snapshots_root / s.snapshot_id),
              **_verification_view(snapshots_root / s.snapshot_id)} for s in result
         ],
+        "restore_operations": runtime_recovery_summary(operations_root=operations_root),
     }
     return product_http._json_response(200, body, product_http._no_store_headers())
 
@@ -182,40 +169,86 @@ def _verification_view(snapshot):
         None if value['verified'] is True else 'backup_verification_failed'}
 
 
+def _restore_plan(container, snapshot_id):
+    store, settings = product_repositories._object_store(container.root_dir)
+    return build_restore_plan(container.root_dir, snapshot_id, store=store, namespace_id=settings.namespace_id)
+
+
+def _restore_operation_id(request, plan):
+    context = getattr(request.app.state, 'server_context', None)
+    if context is None:
+        return f"restore-{plan.rollback_id.removeprefix('rb-')}"
+    authority = context.restores.confirmation_identity(request)
+    request.scope.setdefault('state', {})['runtime_restore_authority'] = authority
+    return server_restore_operation_id(plan.rollback_id, authority)
+
+
+def _preview_owner(request, container):
+    # 旧 Vault 应用没有每日维护 owner，保留其原确认接口。
+    if not hasattr(request.app.state, 'memory_daily_jobs'):
+        return None
+    owner = getattr(request.app.state, 'runtime_restore_previews', None)
+    if owner is not None:
+        if owner.root != Path(container.root_dir).resolve():
+            raise RestorePreviewError('restore_preview_identity_changed')
+        return owner
+    _store, settings = product_repositories._object_store(container.root_dir)
+    application = request.app
+
+    def identity_for(current):
+        if current.app is not application or application.state.container is not container:
+            raise RestorePreviewError('restore_preview_identity_changed')
+        transfers = getattr(application.state, 'memory_backup_transfers', None)
+        if transfers is not None:
+            transfers.authorize(current)
+        context = getattr(application.state, 'server_context', None)
+        if context is not None:
+            identity = context.restores.confirmation_identity(current)
+        else:
+            from backend.api.desktop_session import desktop_session, current_desktop_session
+            from backend.api.worker_auth import worker_config
+            session, live = desktop_session(), current_desktop_session()
+            if session != live:
+                raise RestorePreviewError('restore_preview_identity_changed')
+            config = worker_config()
+            identity = ('desktop', session, config[1] if config is not None else 'local-runtime')
+        return (str(Path(container.root_dir).resolve()), settings.namespace_id, identity)
+
+    owner = RuntimeRestorePreviews(application, root=container.root_dir,
+        namespace=settings.namespace_id, identity_for=identity_for)
+    application.state.runtime_restore_previews = owner
+    return owner
+
+
 @router.post("/api/rebuild/memory-snapshots/{snapshot_id}/rollback-plan")
-def create_rollback_plan(
+async def create_rollback_plan(
     request: Request,
     container: ApiContainerDep,
     snapshot_id: str,
 ) -> JSONResponse:
     """阶段 6：准备整库回滚计划（需要用户二次确认）。"""
-    store, settings = product_repositories._object_store(container.root_dir)
-    use_case = RollbackToMemorySnapshot(
-        store,
-        namespace_id=settings.namespace_id,
-    )
+    owner, preview = _preview_owner(request, container), None
     try:
-        active_root, snapshots_root, _operations_root = product_recovery_points._vault_recovery_roots(
-            container.root_dir
-        )
-        result = use_case.execute(
-            target_snapshot_id=snapshot_id,
-            current_vault_fingerprint=fingerprint_vault_restore_source(active_root),
-            snapshot_record=_snapshot_record_for_restore(
-                store=store,
-                snapshots_root=snapshots_root,
-                snapshot_id=snapshot_id,
-            ),
-        )
-        if not result.target_vault_fingerprint:
-            raise MemorySnapshotError(
-                "legacy manifest-only snapshot cannot restore Vault contents"
-            )
+        preview = await owner.begin(request, snapshot_id) if owner is not None else None
+        result, runtime, _active, _snapshots, _operations = await run_in_threadpool(_restore_plan, container, snapshot_id)
+        operation_id = _restore_operation_id(request, result)
+        lease = owner.bind(request, preview, result, operation_id) if owner is not None else {}
         return product_http._json_response(
-            200, serialize_memory_rollback_plan(result), product_http._no_store_headers()
+            200, {**serialize_memory_rollback_plan(result), "restore_kind": "runtime" if runtime else "vault",
+                  "operation_id": operation_id, **lease}, product_http._no_store_headers()
         )
+    except RestorePreviewError as error:
+        if preview is not None:
+            await owner.finish(preview)
+        return product_http._json_response(409, {'detail': str(error)}, product_http._no_store_headers())
     except (MemorySnapshotError, VaultBackupRestoreError) as error:
+        if preview is not None:
+            await owner.finish(preview)
         return product_http._json_response(400, {"detail": str(error)}, product_http._no_store_headers())
+    except BaseException:
+        if preview is not None:
+            await owner.finish(preview)
+        raise
 
 
 @router.post("/api/rebuild/memory-snapshots/{snapshot_id}/rollback")
@@ -225,32 +258,20 @@ async def prepare_restore_confirmation(
     snapshot_id: str,
 ) -> JSONResponse:
     """Validate confirmation and prepare a verified offline Vault adoption."""
-    store, settings = product_repositories._object_store(container.root_dir)
     body = await product_http._json_body(request) or {}
     rollback_id = str(body.get("rollback_id", "") or "").strip()
-    confirm = bool(body.get("confirm", False))
+    confirm = body.get("confirm") is True
+    owner = getattr(request.app.state, 'runtime_restore_previews', None)
+    preview = None
     try:
-        active_root, snapshots_root, operations_root = product_recovery_points._vault_recovery_roots(
-            container.root_dir
-        )
-        plan = RollbackToMemorySnapshot(
-            store,
-            namespace_id=settings.namespace_id,
-        ).execute(
-            target_snapshot_id=snapshot_id,
-            current_vault_fingerprint=fingerprint_vault_restore_source(
-                active_root
-            ),
-            snapshot_record=_snapshot_record_for_restore(
-                store=store,
-                snapshots_root=snapshots_root,
-                snapshot_id=snapshot_id,
-            ),
-        )
-        if not plan.target_vault_fingerprint:
-            raise MemorySnapshotError(
-                "legacy manifest-only snapshot cannot restore Vault contents"
-            )
+        if owner is not None:
+            preview = await owner.confirm(request, snapshot_id, rollback_id)
+        plan, runtime, active_root, snapshots_root, operations_root = await run_in_threadpool(_restore_plan, container, snapshot_id)
+        operation_id = _restore_operation_id(request, plan)
+        if getattr(request.app.state, 'server_context', None) is not None:
+            if ((preview is not None and preview.operation_id != operation_id)
+                    or (body.get('execute') is True and body.get('operation_id') != operation_id)):
+                raise MemorySnapshotError('restore_plan_changed')
         result = PrepareMemoryRestoreConfirmation().execute(
             target_snapshot_id=snapshot_id,
             rollback_id=rollback_id,
@@ -261,31 +282,45 @@ async def prepare_restore_confirmation(
             return product_http._json_response(
                 200, serialize_memory_restore_confirmation(result), product_http._no_store_headers()
             )
-        if fingerprint_vault_restore_source(active_root) != plan.current_vault_fingerprint:
-            raise MemorySnapshotError("Vault changed after rollback plan; create a new plan")
-        operation_id = f"restore-{rollback_id.removeprefix('rb-')}"
-        operation = prepare_vault_recovery(
+        ensure_no_pending_recovery(operations_root=operations_root, operation_id=operation_id)
+        authorization = {"server_identity": request.scope.get("state", {}).get("runtime_restore_authority")} if runtime else {}
+        operation = await run_in_threadpool(
+            prepare_runtime_recovery if runtime else prepare_vault_recovery,
             snapshot_root=snapshots_root / snapshot_id,
-            active_root=active_root,
-            operations_root=operations_root,
-            operation_id=operation_id,
+            active_root=container.root_dir if runtime else active_root,
+            operations_root=operations_root, operation_id=operation_id,
             expected_source_fingerprint=plan.current_vault_fingerprint,
+            **authorization,
         )
+        queued = False
+        if runtime and body.get("execute") is True:
+            host = getattr(request.app.state, "runtime_restore_host", None)
+            if host is None:
+                raise VaultOperationalRecoveryError("runtime_restore_host_unavailable")
+            await host.request_execution(operation.operation_id, request=request)
+            queued = True
         return product_http._json_response(
             202,
             {
                 "rollback_id": rollback_id,
                 "target_snapshot_id": snapshot_id,
-                "status": "prepared_restart_required",
+                "status": "restore_queued" if queued else "prepared_restart_required",
                 "restore_executed": False,
                 "requires_confirmation": False,
                 "confirmation_received": True,
                 "operation_id": operation.operation_id,
                 "prepared_file_count": operation.file_count,
-                "reason": "恢复内容已在隔离目录完成校验，应用重启后离线切换 Vault。",
-                "next_step": "确认系统重启提示；切换完成后应用会从所选恢复点重新启动。",
+                "restore_kind": "runtime" if runtime else "vault",
+                "reason": "恢复内容已在隔离目录完成校验，尚未采用。",
+                "next_step": "桌面应用确认重启后离线采用；网页需由运行宿主停止应用并采用恢复操作。",
             },
             product_http._no_store_headers(),
         )
+    except RestorePreviewError as error:
+        return product_http._json_response(400 if str(error) == 'restore_plan_changed' else 409,
+            {'detail': str(error)}, product_http._no_store_headers())
     except (MemorySnapshotError, VaultBackupRestoreError, VaultOperationalRecoveryError) as error:
         return product_http._json_response(400, {"detail": str(error)}, product_http._no_store_headers())
+    finally:
+        if preview is not None:
+            await owner.finish(preview)

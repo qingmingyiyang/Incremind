@@ -15,7 +15,8 @@ it('shows the safe backup failure code in the backup row', async () => {
   render(<SettingsData projectId="alpha" loadSnapshots={async () => ({ snapshots: [] })} createSnapshot={async () => { throw failure; }}/>);
   fireEvent.click(screen.getByRole('button', { name: '备份' })); await act(async () => {});
   fireEvent.click(screen.getByRole('button', { name: '立即备份' })); await act(async () => {});
-  expect(screen.getByRole('alert')).toHaveTextContent('✕ backup_source_changed');
+  expect(screen.getByRole('alert')).toHaveTextContent('✕');
+  expect(screen.getByRole('alert')).toHaveAttribute('title', 'backup_source_changed');
   expect(screen.getByRole('alert').closest('.ui-row')).not.toBeNull();
   expect(screen.queryByText(/private file path/)).not.toBeInTheDocument();
 });
@@ -41,7 +42,7 @@ it('reads real snapshot dates and rereads after creating a backup, keeping size 
 it('shows measured backup bytes and only the backup action', async () => {
   render(<SettingsData projectId="alpha" loadSnapshots={async () => ({ snapshots: [{snapshot_id: 'a', created_at: 'today', size_bytes: 1234}] })}/>);
   fireEvent.click(screen.getByRole('button', { name: '备份' })); await act(async () => {});
-  expect(screen.getByText('1234 B')).toBeInTheDocument();
+  expect(screen.getByText('1.21 KB')).toBeInTheDocument();
   for (const label of ['导入', '导出', '迁移旧记忆']) expect(screen.queryByText(label)).not.toBeInTheDocument();
 });
 

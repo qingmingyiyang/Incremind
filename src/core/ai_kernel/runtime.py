@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, Token, copy_context
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -861,11 +861,12 @@ class SynchronousAIRuntime:
         if len(reserved | set(invocation_ids)) > limit:
             raise AIKernelRuntimeError('frozen tool call budget is exhausted')
 
-    def accept_turn(self, request: Mapping[str, object]) -> TurnReceipt:
+    def accept_turn(self, request: Mapping[str, object], *, admission_bundle=None) -> TurnReceipt:
         """Durably accept a Turn without binding its execution to the caller."""
         payload = validate_turn_request(request)
         try:
-            turn_id, created = self._state.claim_turn(payload)
+            with self._state.admission_bundle(payload,admission_bundle) if admission_bundle is not None else nullcontext():
+                turn_id, created = self._state.claim_turn(payload)
         except TurnStateConflict as error:
             raise AIKernelRuntimeError(str(error)) from error
         existing = tuple(self._events.events_after(turn_id))
@@ -5711,6 +5712,18 @@ class _RuntimeToolDispatchObserver:
         self._intent_ref = intent_ref
         self._attempt = attempt
         self._request = request
+        self._steer_grant_keys = set()
+        self._steer_grants_lock = RLock()
+
+    def reserve_steer_model_grant(self, *, invocation_key, purpose, proof):
+        if (purpose != 'primary' or self._intent.capability_id != 'workbench.answer.execute'
+                or self._request.get('agent_binding') is not None):
+            raise AIKernelRuntimeError('steer model grant is outside the primary answer owner')
+        self._runtime._state.reserve_steer_model_grant(self._intent.turn_id,
+            tool_invocation_id=self._intent.invocation_id, invocation_key=invocation_key, proof=proof,
+            run_lease=self._runtime._run_lease_context.get())
+        with self._steer_grants_lock:
+            self._steer_grant_keys.add(invocation_key)
 
     def nested_model_handle_factory(
         self,
@@ -5718,9 +5731,7 @@ class _RuntimeToolDispatchObserver:
         invocation_key: str = "default",
         purpose: ModelCallPurpose = "primary",
     ) -> _NestedModelCallHandle:
-        # Dispatcher owns uniqueness. Purpose is immutable governance data,
-        # rather than arbitrary provider metadata.
-        del invocation_key
+        # Dispatcher 保留唯一身份，额外授予与实际生成的模型请求在发送前绑定。
         purpose = validate_model_call_purpose(purpose)
         model_request_id = f"model-request-{uuid4().hex}"
         self._runtime._append(
@@ -5734,6 +5745,12 @@ class _RuntimeToolDispatchObserver:
             model_request_id=model_request_id,
             model_call_purpose=purpose,
         )
+        with self._steer_grants_lock:
+            granted = invocation_key in self._steer_grant_keys
+        if granted:
+            self._runtime._state.bind_steer_model_grant(self._intent.turn_id,
+                tool_invocation_id=self._intent.invocation_id, invocation_key=invocation_key,
+                model_request_id=model_request_id, run_lease=self._runtime._run_lease_context.get())
         control = _PlannerExecutionContext(
             turn_id=self._intent.turn_id,
             step_id=self._intent.step_id,

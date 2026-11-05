@@ -6,6 +6,10 @@
 
 # Incremind
 
+Image and PDF recognition support [SoMark OXR-1.0](docs/models.md): select remote vision, set `https://free-oxr.somark.cn/api/v1`, model `OXR-1.0`, and placeholder key `dummy`. Save and enable vision sharing. Text and scanned PDFs retain the original file and use the parsed Markdown for organization and source evidence. Private PDFs and disabled sharing use local text extraction; scanned files without extractable text report a failure. Password-protected and damaged PDFs are rejected on upload.
+
+Linux servers with a compatible NVIDIA GPU can [run SoMark OXR on the same host](docs/oxr-server.md).
+
 **A second brain that remembers what is new.**
 
 Give it the material you choose. It organizes and archives it, extracts what adds to **what you already know**, and turns proposed insights into long-term memory only after you confirm them.
@@ -53,9 +57,11 @@ For example, an introductory article on spaced repetition might produce an insig
 
 ## Features
 
+The homepage shows pending insights and recent conversations, with project templates and `#`, `/`, and `@` input shortcuts. Settings bring model connections, projects, privacy, backups, and devices into six groups, with a preview before applying supported text commands. The shared UI conventions are maintained in [DESIGN.md](DESIGN.md).
+
 | Status | Feature | What it does |
 |---|---|---|
-| ✅ | **One input box** | Automatically handles remembering, asking, and doing tasks. Mixed requests, such as a reminder followed by a question, are split and handled separately. |
+| ✅ | **One input box** | Automatically handles remembering, asking, and doing tasks. Mixed requests are split and handled separately. Personal receipts support changing actions, merging adjacent parts, and removing parts, with source and state checks before execution. Original results are retained. |
 | ✅ | **Automatic organization** | Builds memory in layers: original → organized note + summary → insight. Supports text, links, PDFs, and DOCX files. |
 | ✅ | **Automatic project assignment** | Without an explicit `#Project`, assigns material to the most relevant existing project or creates one for a new topic. Everyday items stay in the Everyday space. Assignment can be undone with one click. |
 | ✅ | **Incremental insights** | Compares material with existing insights and proposes additions, differences, and new methods for confirmation on the receipt. |
@@ -66,8 +72,9 @@ For example, an introductory article on spaced repetition might produce an insig
 | ✅ | **Privacy controls** | Keeps data on the computer or server hosting the application, excludes private projects from external model requests, and records a receipt for each external call. |
 | 🧪 | More input formats | Image OCR, audio and video transcription, and Bilibili favorites import; requires the corresponding models to be configured. |
 | 🧪 | Forgetting and daily organization | Adjusts recall weights by usage and a forgetting curve. Daily organization proposes patterns from recurring material for your confirmation. |
+| 🧪 | Inspiration extraction | Daily extraction defaults to 09:00 China time and can be disabled or rescheduled. It selects up to three eligible notes from one project and scene; unread results appear in the existing tray and bear indicator. Reading clears the alert and leaves viewpoints awaiting confirmation. You can also choose notes manually. Proposed viewpoints retain explanations and exact source passages, and require your confirmation; runtime validation is pending. |
 | 🧪 | Local embeddings | Install EmbeddingGemma from Settings, approximately 1.5 GB, for semantic retrieval without a network connection. |
-| 🧪 | Claude Code, Codex, and DeepSeek Harness | All three clients can access memory tools through plugins. Workbench delegation saves new drafts; server-side delegation is currently limited to DeepSeek Harness. See installation requirements and validation limits in [the agent guide](docs/agents.md) (Chinese). |
+| 🧪 | Claude Code, Codex, and DeepSeek Harness | Settings → Connections provides client setup guides and separate memory and task readiness. Servers also provide native remote MCP with scoped keys and OAuth. Workbench delegation saves new drafts, shows reported steps and usage, and supports stopping. Managed local Codex can use the configured official Terra model; server delegation is limited to DeepSeek Harness. See [the agent guide](docs/agents.md) (Chinese). |
 | 🧪 | Servers and multiple users | Home or cloud server deployment, device pairing, backup, and recovery. See [the server guide](docs/server.md) (Chinese). |
 
 ✅ Basic usage paths are implemented. 🧪 Optional dependencies or further real-environment validation are required. The table below states the actual validation scope; the icons do not establish coverage of every scenario.
@@ -90,7 +97,13 @@ The same frozen 48 questions were run twice on a server with 4 logical CPUs and 
 | Unknown-usage calls | 0 | 1 |
 | Physical model requests | 155 | 192 |
 
-Both batches used `compose@30 / ladder@15 / rerank@2`. The repair makes original material reachable when upper memory layers are empty; `retrieve@8` is now the default. Two independent agents reviewed frozen answers against the complete original conversations. Recall measures evidence in the last dispatched answer input, with one invalid source annotation retained as null and excluded from its 47-question denominator. Time covers each complete server-side Workbench request, including failures and retries. The repair token count is a known subtotal; its complete total remains null because one transport failure has unknown usage. All 347 model attempts have terminal records. The eight Workbench 502 responses and all quality failures are retained.
+Both batches used `compose@30 / ladder@15 / rerank@2`. The repair makes original material reachable when upper memory layers are empty; `retrieve@8` was the repair batch's version. Two independent agents reviewed frozen answers against the complete original conversations. Recall measures evidence in the last dispatched answer input, with one invalid source annotation retained as null and excluded from its 47-question denominator. Time covers each complete server-side Workbench request, including failures and retries. The repair token count is a known subtotal; its complete total remains null because one transport failure has unknown usage. All 347 model attempts have terminal records. The eight Workbench 502 responses and all quality failures are retained.
+
+<!-- current-policy-defaults:start -->
+**Current defaults:** `compose@37 / ladder@15 / retrieve@9 / rerank@2`.
+<!-- current-policy-defaults:end -->
+
+The evaluation results above retain the versions used for their respective runs. Check the current defaults against the policy registry with `python tools/check_doc_defaults.py`; the commit guard checks the staged versions of these documents and `ACTIVE` together.
 
 The [evaluation guide](docs/evaluation.md) (Chinese) records grading, source annotation issues, CPU encoding, failures, and reproduction commands. The [aggregate JSON](docs/images/evaluation-heldout-summary.json) and [`tools/rag_report.py`](tools/rag_report.py) reproduce this chart without model calls. Presentation follows the [OpenViking RAG report](https://github.com/volcengine/OpenViking/blob/main/benchmark/RAG/README.md). Monetary cost was not recorded. [`tools/rag_dataset.py`](tools/rag_dataset.py) freezes the original inputs; [`tools/rag_holdout.py`](tools/rag_holdout.py) runs the normal application workflow on the server.
 
@@ -125,10 +138,11 @@ Engineering verification below is separate from answer quality:
 | **Agentic RAG isolated controls (`retrieve@6`)** | Full application factory using the then-active defaults without policy overrides; temporary SQLite and fixed local HTTP model responses | **31 assertions passed** for repeated retrieval, layered reading, clarification continuity, unconfigured web search, and idempotency. These fixed-response controls do not measure live model or web-search quality. |
 | **Built-in task recall** | Project retrieval, storage, read proofs, drafts, and receipts; synthetic model HTTP | **21 distinct controls passed**, including profile and Library selection, prior-source revocation during retrieval, and a declared final draft. See [scope and retained failures](docs/evaluation.md#内置任务-v2-召回) (Chinese). No new paid model requests. |
 | **DeepSeek Harness task to draft** | Isolated data root on Ubuntu 22.04; real Harness and DeepSeek Flash, including authenticated MCP memory tools | After a fix, one real task passed **29 checks**. Both real attempts used **4,017 input / 1,226 output tokens** in total; the first MCP tool-call failure is retained. |
+| **Claude Code 2.1.316 MCP and connection UI** | Official native client in isolated configuration for tool discovery; separate Python MCP SDK → stdio → HTTP → SQLite write checks; isolated UI and HTTP interactions | The native client discovered seven tools. Independently, the SDK saved one unreviewed original with `client=claude` and verified invalid-input and privacy/egress rejection; **zero model calls; 12 connection and 4 model-warning DOM cases passed**. Real configuration storage and recovery checks passed for provider drafts, endpoint validation, legacy API-mode recovery, plugin toggles, revision conflicts, and daily limits. Recording switches, snapshot generation, native clipboard writes, and frontend user-space invalidation also passed real interactions. Full build, clipboard byte readback, server user switching, paid execution, and remote HTTPS remain pending; [verification scope](docs/agents.md#验证范围). |
 | **Correction after Hy-ASR** | Real SQLite, Turns, and confirmation; simulated ASR delivery and model transport | **30 new checks and 13 existing targeted checks passed**; one pre-existing comment-fetch failure is retained. Real recognition and correction quality await evaluation. |
 | **Server CPU embeddings** | Ubuntu 22.04 instance, real model assets, and device pairing | Loading, encoding, unloading, and reloading verified. GPU and standalone vector-service integration remain unverified. |
 
-The material-analysis candidate has confirmed L1 notes for 7/19 sources; the next source failed quotation validation. No new 12-question answer evaluation was run. Candidates `compose@31, @32 / ladder@16` produced wrong or unpublished answers in retests; the current defaults are `compose@33 / ladder@15`.
+The material-analysis candidate has confirmed L1 notes for 7/19 sources; the next source failed quotation validation. No new 12-question answer evaluation was run. Candidates `compose@31, @32 / ladder@16` produced wrong or unpublished answers in retests; the defaults at that checkpoint were `compose@33 / ladder@15`.
 
 The [RAG pilot report](docs/rag-pilot.md) (Chinese) retains earlier protocols and results.
 
@@ -153,6 +167,8 @@ The [RAG pilot report](docs/rag-pilot.md) (Chinese) retains earlier protocols an
 
 2. Double-click **`start.bat`** in the repository. The first run downloads and installs dependencies and takes several minutes. Later launches take about a minute. Your browser opens at <http://127.0.0.1:4173>. Closing the terminal window stops the application.
 3. Open **Settings → Models** and enter the endpoint URL, model name, and API key. The application interface currently uses Chinese; the names in this guide are English translations of its controls.
+
+For OpenAI Terra, use `https://api.openai.com/v1` and `gpt-6.1-terra`. This configuration uses the official Python SDK and Responses API for synchronous, asynchronous, structured, and streamed output. Keys use the existing encrypted store. See [model configuration](docs/models.md).
 
 Send the example files in [`samples/`](samples/) to the Workbench in order to try organization, project assignment, and incremental insights. The sample material is in Chinese.
 
@@ -208,11 +224,39 @@ $env:PYTHONPATH = "$PWD\src"
 
 One-click startup is currently available for Windows. For Linux server deployment, see [the server guide](docs/server.md) (Chinese).
 
+### Optional Python installation sets
+
+Create a Python 3.12 environment at the repository root, then choose the required set:
+
+```powershell
+py -3.12 -m venv .venv
+```
+
+Check the environment's bundled SQLite before launching:
+
+```powershell
+.\.venv\Scripts\python.exe tools/sqlite_check.py
+```
+
+The supported SQLite versions are 3.50.x from 3.50.7 onward, or 3.51.3 and later. If this check fails, use a Python runtime containing a supported SQLite version; installing Python packages does not update its bundled SQLite.
+
+| Set | Install command | Includes |
+|---|---|---|
+| Web | `.\.venv\Scripts\python.exe -m pip install -r requirements-web.txt` | Workbench, API, MCP, PDF and DOCX text extraction |
+| Full media | `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` | Web plus local transcription, video/download adapters and their existing FastEmbed retrieval dependencies |
+| Local vectors | `.\.venv\Scripts\python.exe -m pip install -r requirements-web.txt -r requirements-local-vectors.txt` | Web plus SQLite vector support, PyTorch and EmbeddingGemma runtime dependencies |
+
+The web set is included in the full-media set. Local vectors can be added to either set, including `.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-local-vectors.txt` for all capabilities in one environment. Add `-r requirements-dev.txt` when development tools are needed. Installing packages does not download model weights; install and load the vector model in Settings separately.
+
+The full-media set requires FastEmbed ≥ 0.7.4: [versions 0.7.0–0.7.3](https://pypi.org/pypi/fastembed/0.7.3/json) required `huggingface-hub<1`, while [0.7.4](https://pypi.org/pypi/fastembed/0.7.4/json) permits Hub 1. [Faster Whisper 1.1.1](https://pypi.org/pypi/faster-whisper/1.1.1/json) imposes no upper Hub limit. The local-vector set uses the shared `huggingface-hub>=1.31,<2` range required by [Transformers 5.19](https://pypi.org/pypi/transformers/5.19.0/json) and [Sentence Transformers 6.1](https://pypi.org/pypi/sentence-transformers/6.1.0/json), so these sets can be installed together.
+
 Recommended synchronization: use local development commits as the code source, and publish filtered code changes along the public repository's existing clean AGPL history. Update servers to a fixed release, record `deployment-version.json`, back up code before restarting, check health, and retain a rollback path. Do not push private development history, `runtime/`, credentials, model configuration, or personal material from the server. Handle data backups and migration separately.
 
 Load or unload the vector model on your computer, or use a standalone private server for vector computation while keeping the library on your computer. The standalone vector service and full application deployment are separate options. See [Private server vectors](docs/vector-server.md) (Chinese) for configuration and Linux templates. Self-hosted mode still follows the vector egress switch and privacy rules; it fills the cache on demand during questions. Real-server integration remains unverified.
 
 Full server deployment keeps both the application and its data on the server. Users share the server's local vector model while retaining separate libraries and caches. The model starts unloaded; an administrator controls loading and unloading. See [Server deployment](docs/server.md) (Chinese) for CPU/CUDA configuration, model installation, and device pairing. Installation, device pairing, CPU vector loading, encoding, unloading, and reloading, trusted HTTPS for the public IP address, and multi-user API isolation have been verified on an Ubuntu 22.04 instance. GPU and standalone vector-service integration remain unverified.
+
+Server accounts use passwords and are created directly by an administrator. Administrators reset passwords, enter user spaces to manage content, and assign individual APIs or server APIs with CNY balances. Shared calls reserve funds before sending and settle using frozen administrator prices; supported providers and pending-usage handling are documented in [Account login and API allocation](docs/server.md#账号登录与-api-分配) (Chinese). Initial administrator setup retains the device-pairing flow.
 
 ## Usage
 
@@ -227,6 +271,14 @@ The **Workbench** provides a single input box.
 | Begin with `#ProjectName` or `#ProjectName/Scene` | Specify the assignment or retrieval scope. Otherwise, the system infers it. |
 
 While Ask or built-in Do is running, use the square Stop button on its receipt. Once it shows Stopped, Continue resumes the same task and keeps completed work. Model costs already incurred remain recorded.
+
+Project constraints in Settings apply to ordinary Ask and built-in Do within that project. Enabled constraints and their validity dates are frozen with the request and included in its input budget. Start a new request after changing a constraint to use the new settings.
+
+Stream delivery resumes from the last displayed cursor when the connection is interrupted or its notification queue fills. Accepted work continues in the background.
+
+In Settings → Models, returning to a pending subscription sign-in restores its original authorization link until it expires or its callback is claimed. Shared consumption details retain reported zero values and label missing measurements as unreported.
+
+If a reminder submission loses its connection, read its saved submission before continuing or abandoning it. Refreshing the reminder list clears recovered list errors while retaining unresolved submission errors.
 
 After a note used in a clarification is edited or forgotten, new input uses the current materials. The original clarification and receipt remain available in the conversation.
 
@@ -276,19 +328,21 @@ Uploaded files retain their extension when a long display name is shortened.
 
 Workbench input and mobile sharing support links with Chinese paths and query text, while preserving existing percent encoding and signed query parameters.
 
-**Settings** contains model configuration, privacy controls, projects, data, backups, devices, and websites. The theme selector below the settings groups offers system, light, and dark modes on desktop and phones, and remembers the choice in the current browser.
+**Settings** has six groups: Models, Connections, Projects, Privacy, Data, and Devices. Connections contains external agents and website logins; Data contains backups. The generation-provider form accepts HTTPS services; configure local generation through its Local mode. Provider drafts and typed keys are retained when model settings change: review the current configuration before saving again. External-agent daily limits use the same explicit review step, and plugin switches reread their saved state. The theme selector below the settings groups offers system, light, and dark modes on desktop and phones, and remembers the choice in the current browser.
 
 **Speech vocabulary:** manage a personal vocabulary in Settings → Models → Transcription. Paste a batch or import UTF-8 TXT, CSV, or JSON, preview it, then add or update terms. Built-in faster-whisper transcription uses hotword hints for uploaded audio and video, prioritizes whole terms by weight, and records how many fit within the model's token capacity. Realtime Qwen uses its native vocabulary. The current Hy-ASR synchronous endpoint does not support hotwords. Local transcription still needs its dependencies and model assets; importing terms does not install or switch a model.
+
+Individual vocabulary terms can be renamed, reweighted, deactivated, or restored through a preview and explicit confirmation. Concurrent changes preserve unsaved edits and require a fresh preview. Independent Hy-ASR accounts can save credentials from the web transcription settings; unknown results are recovered through the original operation, and successful saves clear the credential input.
 
 **Vocabulary correction after Hy-ASR:** the default `organize@1` pipeline sends uploaded audio or video transcripts and the same personal vocabulary to the configured auxiliary generation model for proposed local term corrections. The program validates allowed terms, original positions, overlapping edits, literal similarity, and protected content before applying edits. It accepts no free rewriting and preserves numbers, dates, negation, and already correct terms; ambiguous cases remain uncertainties. Organized notes include the corrected transcript and edit positions. Original media, raw transcripts, and quotation coordinates stay intact. Confirmation freezes the correction version, so later vocabulary changes cannot rewrite confirmed notes; retries reuse completed transcription.
 
 Correction uses the existing transmission settings, privacy guards, receipts, actual auxiliary capacity, and shared context preparation. Model failures or invalid edit proposals retain the raw transcript; capacity and source changes have explicit states. Empty vocabularies, native local hotword transcription, and ordinary text add no correction call. Long inputs may require several calls, with known usage and unknown costs recorded separately. Automated checks use synthetic ASR delivery and model transport; real recognition and correction quality remain to be evaluated. Optional `organize@2 / material_analysis@1–4` pipelines do not yet use this correction stage.
 
-**Agent data operations:** a bundled skill exposes scoped vocabulary read, preview, import, and verification tools. Saving requires a complete vocabulary explicitly supplied by the user; automatically discovered terms remain suggestions. Tools do not accept arbitrary SQL or database paths. See [Agent data operations](docs/agent-data-tools.md) (Chinese) for the instruction format and permission boundaries.
+**Agent data operations:** ask the workbench to read your vocabulary or propose additions, renames, weight changes, deactivation, and restoration. Review the exact changes and confirm to save; Settings uses the same user-owned SQLite vocabulary. A bundled skill defines the allowed data, fields, confirmation steps, and verified readback through three scoped tools. Explicit TXT, CSV, and JSON-array imports remain supported. Tools accept scoped vocabulary operations. See [Agent data operations](docs/agent-data-tools.md) (Chinese) for the workflow and permissions. Enabled `route@4 / agent_data@4` identifies vocabulary tasks in automatic and explicit task mode, with real domain results required for completion. Vocabulary operations use data receipts; document editing retains its original delivery contract. Isolated real-model validation passed approval, cancellation, five-action batch maintenance, stale-preview cancellation, and read-only lookup, with 20 desktop/mobile theme checks. Saving also completed after a page refresh while approval was still processing, and replay preserved the same result. The production vocabulary is preserved.
 
 **Mobile sharing:** install the HTTPS web app on Android to send text, links, images, and videos from other apps; use Shortcuts on iPhone. Full Xiaohongshu and Bilibili share text is accepted, and multiple images can form one original. After pairing, refreshing keeps the current page and route parameters. See [mobile sharing](docs/mobile-share.md) (Chinese) for pairing, retries, and shortcut setup.
 
-**Website login:** import Bilibili or Xiaohongshu cookies in Settings → Websites so the server can reuse the session when reading that website. Bilibili also displays an official QR code for confirmation on your phone, then saves the session encrypted. Xiaohongshu browser login needs an optional runtime; a real QR code has not yet been obtained. See [website login](docs/platform-login.md) (Chinese) for usage and verification limits.
+**Website login:** import Bilibili or Xiaohongshu cookies in Settings → Connections so the server can reuse the session when reading that website. Bilibili also displays an official QR code for confirmation on your phone, then saves the session encrypted. Xiaohongshu browser login needs an optional runtime; a real QR code has not yet been obtained. See [website login](docs/platform-login.md) (Chinese) for usage and verification limits.
 
 Open the **Companion** through the bear avatar in the upper-left corner to chat, review what you remembered this week, focus, or plan.
 
@@ -386,7 +440,7 @@ Further documentation is available in [ARCHITECTURE.md](ARCHITECTURE.md) for arc
 
 ## How a question finds its evidence
 
-Default `retrieve@8` lets the model decide whether to retrieve, inspect actual tool results, then search or read again, answer, or ask for missing conditions. When the current memory layer has no eligible candidates, the same query checks successive lower layers and stops at the first nonempty layer. The loop retains the existing budgets, source eligibility, evidence selection, and answer checks. See [the S1–S4 stages and validation scope](docs/agentic-rag.md) (Chinese).
+The active retrieval policy lets the model decide whether to retrieve, inspect actual tool results, then search or read again, answer, or ask for missing conditions. When the current memory layer has no eligible candidates, the same query checks successive lower layers and stops at the first nonempty layer. The loop retains the existing budgets, source eligibility, evidence selection, and answer checks. See [the S1–S4 stages and validation scope](docs/agentic-rag.md) (Chinese).
 
 ```mermaid
 flowchart TB
@@ -412,9 +466,9 @@ flowchart TB
 
 **How the ladder selects**
 
-- **Default combination.** `compose@33 / ladder@15 / retrieve@8 / rerank@2`. The model controls whether and where to search; local retrieval follows insights → summaries → organized notes → originals, checking lower layers within the same query when the current layer is empty. It selects limited evidence by the facts, dates, relationships, and list requirements in the question, without fixed ordinary-source counts. Your "Me" profile uses a separate background block of at most 600 tokens, retaining each insight and its conditions together. Related, supporting, and contradicting neighbors are admitted by new information and available budget, with contradicting neighbors expanded first. All require eligible sources and available capacity, so a tight budget can prevent both sides from reaching the model.
+- **Default combination.** Version numbers are listed in the marked Current defaults paragraph in Evaluation and verification. The model controls whether and where to search; local retrieval follows insights → summaries → organized notes → originals, checking lower layers within the same query when the current layer is empty. It selects limited evidence by the facts, dates, relationships, and list requirements in the question, without fixed ordinary-source counts. Your "Me" profile uses a separate background block of at most 600 tokens, retaining each insight and its conditions together. Related, supporting, and contradicting neighbors are admitted by new information and available budget, with contradicting neighbors expanded first. All require eligible sources and available capacity, so a tight budget can prevent both sides from reaching the model.
 - **Actual budget.** Evidence uses the remainder after output reserve, instructions, Schema, the question, profile, history, and message framing; the complete input is checked too. The supported official `deepseek-flash` route at `api.deepseek.com` has a 200,000-token total cap; a 7,000-token output reserve leaves at most 193,000 input tokens. Unknown routes retain a conservative 16,000-token total window. If valid window and reserve information is unavailable, the input fallback is 4,000 tokens. UTF-8 bytes divided by three, rounded up, estimates the budget; it is not exact provider tokenization or billed usage. Filling the window is not a goal.
-- **Investigation and stopping.** `retrieve@8` returns actual search and reading results to the next model decision. Local reading follows eligible summary, body, and original-source links; skills provide read-only guidance, and web search requires its configured permission. Up to six decisions can choose another tool, the existing answer flow, or an explicit clarification. Repeated tools, two steps without new material or depth, exhausted capacity, a decision timeout, or the decision limit stop investigation. Only the latest verified clarification in the same project and conversation accepts a follow-up without a question mark; resolved questions do not reopen. Stopping does not prove answer sufficiency. Old retrieval versions remain available for explicit replay.
+- **Investigation and stopping.** The active retrieval policy returns actual search and reading results to the next model decision. Local reading follows eligible summary, body, and original-source links; skills provide read-only guidance, and web search requires its configured permission. Up to six decisions can choose another tool, the existing answer flow, or an explicit clarification. Repeated tools, two steps without new material or depth, exhausted capacity, a decision timeout, or the decision limit stop investigation. Only the latest verified clarification in the same project and conversation accepts a follow-up without a question mark; resolved questions do not reopen. Stopping does not prove answer sufficiency. Old retrieval versions remain available for explicit replay.
 - **De-duplication.** Material without qualifying new information is checked for near-duplicates at similarity ≥ 0.8, using existing comparable cached vectors or adjacent-character overlap. Passages qualifying for a new demand or relationship under the dynamic policy are not merged merely because they share terms. Active contradiction pairs are also exempt from similarity-based removal, and layers of the same source are not compared with each other. De-duplication never computes new vectors; the new-information rules remain heuristic.
 - **How contradictions are identified.** After insight confirmation and during startup maintenance, the model proposes supporting, contradicting, or superseding links. They become active only after you accept them in the Library. Retrieval reads these active `refutes` links and asks the answer model to explain both sides' evidence and disagreement; vector similarity does not establish logical contradiction. Only related links can be created automatically.
 
@@ -424,7 +478,7 @@ flowchart TB
 
 **Two-stage answers and provenance checks**
 
-`compose@33` uses two primary model calls to draft facts, then review, correct, and answer. Conversation-date context is checked against the same frozen source; event dates retain their validation. The draft requests each independent, relevant fact once. Fact questions preserve original terms where possible; inference questions provide supported premises; time questions refer to complete date ranges calculated by the program. Instructions require checking the full evidence catalog before unknown or negative answers, identifying people by the actual speaker, and retaining each independent item in open lists.
+The recorded `compose@33` implementation uses two primary model calls to draft facts, then review, correct, and answer; the active version retains this structure. Conversation-date context is checked against the same frozen source; event dates retain their validation. The draft requests each independent, relevant fact once. Fact questions preserve original terms where possible; inference questions provide supported premises; time questions refer to complete date ranges calculated by the program. Instructions require checking the full evidence catalog before unknown or negative answers, identifying people by the actual speaker, and retaining each independent item in open lists.
 
 Fact and inference statements should use empty `date_refs`. If valid references are attached, the program first verifies their real units, quotations, and calculation records, then treats them as incidental metadata without calculation authority. Original model outputs remain unchanged. These references produce no derived date notes, calculation bindings, or later precision authorization. Converting relative time into absolute dates or ranges still requires an actual date statement and precise binding to the corresponding original text, relative expression, and record date. Invalid references, references borrowed across units, and calculations claiming authority from incidental references remain rejected.
 

@@ -16,9 +16,12 @@ from backend.shared.llm.litellm_gateway import _is_consumer_cancellation
 
 
 class ReadProvider:
-    def __init__(self, inner, capability, records):
+    def __init__(self, inner, capability, records, *, shared_reads=None):
         self.inner,self.capability,self.records=inner,capability,records
+        self.shared_reads = shared_reads
     def invoke(self, request):
+        if self.shared_reads is not None and self.shared_reads.provider_root(request) is not None:
+            return self.shared_reads.invoke(self.capability, self.inner, request)
         scope=scope_for(request)
         prepare = getattr(self.inner, 'prepare_research_read', None)
         prepared = prepare(request) if callable(prepare) else None
@@ -31,7 +34,7 @@ class ReadProvider:
             with self.records.begin() as reader:
                 records = TransactionRecords(reader)
                 snapshot, styles = recall_snapshots(records, scope, binding,
-                    authority=SourceEgressService(records))
+                    authority=SourceEgressService(self.records, reader=reader))
                 proof = {'turn_id': request['turn_id'], 'tool_call_id': identity,
                     'project_id': scope.project_id, 'capability_id': self.capability,
                     'source_egress': snapshot, 'documents': [], 'style_sources': styles,
@@ -168,10 +171,16 @@ class ReadProvider:
 
 
 class ReadRegistry:
-    def __init__(self, inner, records): self.inner,self.records=inner,records
+    def __init__(self, inner, records, *, shared_reads=None):
+        self.inner,self.records,self.shared_reads=inner,records,shared_reads
+    def with_shared_reads(self, shared_reads):
+        from .v2.shared_task_reads import SharedTaskReads
+        if not isinstance(shared_reads, SharedTaskReads) or shared_reads.records is not self.records:
+            raise RecognitionConflict('shared_task_read_actor_owner_changed')
+        return ReadRegistry(self.inner, self.records, shared_reads=shared_reads)
     def register(self, definition, provider):
         if definition.capability_id in READS:
-            provider=ReadProvider(provider,definition.capability_id,self.records)
+            provider=ReadProvider(provider,definition.capability_id,self.records,shared_reads=self.shared_reads)
         return self.inner.register(definition,provider)
     register_core=register
 
@@ -280,13 +289,19 @@ class _SourceWireAttempt:
 
 
 class ReadControl:
-    def __init__(self, inner, records, turns, agents, request, *, validator=None):
+    def __init__(self, inner, records, turns, agents, request, *, validator=None, shared_reads=None):
         self.inner,self.records,self.turns,self.agents,self.request=inner,records,turns,agents,request
         self.validator = validator
+        self.shared_reads = shared_reads
     def with_validator(self, validator):
-        return ReadControl(self.inner, self.records, self.turns, self.agents, self.request, validator=validator)
+        return ReadControl(self.inner, self.records, self.turns, self.agents, self.request,
+            validator=validator, shared_reads=self.shared_reads)
     def __getattr__(self,name): return getattr(self.inner,name)
     def validate(self):
+        if self.shared_reads is not None and self.shared_reads.root(self.request) is not None:
+            with self.shared_reads.qualified_sources(self.request, validator=self.validator):
+                pass
+            return
         scope=scope_for(self.request)
         proofs=read_dependencies(self.records,self.turns,self.agents,self.request['turn_id'],scope.project_id)
         validate_reads(self.records,scope,proofs,authority=SourceEgressService(self.records),remote=self.request.get('privacy',{}).get('allow_remote') is True)
@@ -297,6 +312,10 @@ class ReadControl:
         return self.inner.checkpoint()
     @contextmanager
     def _qualified_sources(self):
+        if self.shared_reads is not None and self.shared_reads.root(self.request) is not None:
+            with self.shared_reads.qualified_sources(self.request, validator=self.validator):
+                yield
+            return
         from .transaction_records import TransactionRecords
         scope=scope_for(self.request)
         with self.records.begin() as reader, ExitStack() as locks:
@@ -312,7 +331,7 @@ class ReadControl:
                 collector.proof(proof)
             for collection,identity in sorted(collector.identities):
                 locks.enter_context(source_store(reader).locked(collection,identity))
-            authority = SourceEgressService(records)
+            authority = SourceEgressService(self.records, reader=reader)
             remote = self.request.get('privacy', {}).get('allow_remote') is True
             for snapshot in snapshots:
                 own = WorkScope(**snapshot['scope'])
@@ -333,12 +352,18 @@ class ReadControl:
 
 
 class ReadPlanner:
-    def __init__(self, inner, records, turns, agents):
+    def __init__(self, inner, records, turns, agents, *, shared_reads=None):
         self.inner,self.records,self.turns,self.agents=inner,records,turns,agents
+        self.shared_reads = shared_reads
+    def with_shared_reads(self, shared_reads):
+        from .v2.shared_task_reads import SharedTaskReads
+        if not isinstance(shared_reads, SharedTaskReads) or shared_reads.records is not self.records:
+            raise RecognitionConflict('shared_task_read_actor_owner_changed')
+        return ReadPlanner(self.inner, self.records, self.turns, self.agents, shared_reads=shared_reads)
     def __getattr__(self,name): return getattr(self.inner,name)
     def plan(self, request, events, capabilities, payloads, execution_control=None):
         if execution_control is None or request.get('scope',{}).get('project_id') is None:
             return self.inner.plan(request,events,capabilities,payloads,execution_control=execution_control)
-        control=ReadControl(execution_control,self.records,self.turns,self.agents,request)
+        control=ReadControl(execution_control,self.records,self.turns,self.agents,request,shared_reads=self.shared_reads)
         control.validate()
         return self.inner.plan(request,events,capabilities,payloads,execution_control=control)

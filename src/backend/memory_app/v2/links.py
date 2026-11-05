@@ -1,6 +1,7 @@
 """Derived relevance edges and human-reviewed semantic connections."""
 
 from datetime import datetime, timezone
+from functools import partial
 from hashlib import sha1
 import json
 import logging
@@ -14,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from backend.recognition_retrieval import retrieve, SQLiteEmbeddingCache
 from backend.recognition import RecognitionConflict, RecognitionError, WorkScope
 from core.search_and_recall.evidence_windows import query_terms
-from ..relations import RelationProposalService
+from ..relations import RelationProposalService, _proposal
 from ..source_egress import SourceEgressService
 from ..generation_sources import generation_source_guard
 from .memory_turn import MemoryTurn, embedding_request
@@ -62,9 +63,16 @@ class RelationSuggestions(BaseModel):
 
 
 class InsightLinks:
-    def __init__(self, records, service, models=None, *, maintenance_guard=None):
+    def __init__(self, records, service, models=None, *, maintenance_guard=None, source_owner=None):
         self.records, self.service, self.models = records, service, models
         self.maintenance_guard = maintenance_guard
+        self.source_owner = records if source_owner is None else source_owner
+        if isinstance(self.source_owner, TransactionRecords):
+            raise RecognitionConflict('link_actual_owner_unavailable')
+
+    def _authority(self, reader=None):
+        current = self.records if reader is None and isinstance(self.records, TransactionRecords) else reader
+        return SourceEgressService(self.source_owner, reader=current)
 
     def endpoint(self, project, identity, *, reader=None):
         reader = reader or self.records
@@ -81,7 +89,9 @@ class InsightLinks:
         scope = WorkScope("local-user", row.payload["project_id"])
         if is_recall_excluded(self.records, scope, identity):
             return None
-        entry = self.service.get_recognition(scope=scope, recognition_id=identity)
+        entry = (self.service._qualified_recognition(self.records, row)
+            if isinstance(self.records, TransactionRecords)
+            else self.service.get_recognition(scope=scope, recognition_id=identity))
         return row if entry is not None and entry.authorized else None
 
     def _edges(self, project, identity=None):
@@ -165,7 +175,7 @@ class InsightLinks:
     def neighbors(self, project, identity):
         return [r for r in self.list(project, identity) if r["state"] == "active"]
 
-    def propose(self, project, a, b, kind, evidence, *, expected_revisions=None):
+    def propose(self, project, a, b, kind, evidence, *, expected_revisions=None, _steer_candidate_proof=None):
         if kind not in {"supports", "refutes", "supersedes"}:
             raise RecognitionError("invalid_link_kind")
         if self.eligible(project, a) is None or self.eligible(project, b) is None:
@@ -178,15 +188,34 @@ class InsightLinks:
                 if row is None or type(wanted) is not int or row.revision != wanted:
                     raise RecognitionConflict("link_endpoint_changed")
                 scope = WorkScope("local-user", row.payload["project_id"])
-                snapshots.append((scope, SourceEgressService(self.records).snapshot(scope,
+                snapshots.append((scope, self._authority().snapshot(scope,
                     [{"type": "recognition", "id": identity, "revision": row.revision}])))
         with self.records.begin() as tx:
             for scope, snapshot in snapshots:
-                SourceEgressService(TransactionRecords(tx)).validate_snapshot(scope, snapshot)
+                self._authority(tx).validate_snapshot(scope, snapshot)
+            if _steer_candidate_proof is not None:
+                learning = getattr(self.source_owner, 'product_steer_learning', None)
+                candidate = tx.read('recognition_candidates', _steer_candidate_proof['candidate_id'])
+                if (learning is None or candidate is None or candidate.payload.get('recognition_id') != a
+                        or learning.sources.candidate_relation(tx, WorkScope('local-user', project), candidate)
+                            != _steer_candidate_proof):
+                    raise RecognitionConflict('steer_learning_candidate_relation_changed')
+                previous = [item for item in tx.list(SUGGESTIONS)
+                    if item.payload.get('steer_candidate_proof', {}).get('candidate_id') == candidate.object_id]
+                if previous:
+                    proposal = tx.read('recognition_relation_proposals', previous[0].object_id)
+                    if (len(previous) != 1 or previous[0].payload != {'project_id': project,
+                            'steer_candidate_proof': _steer_candidate_proof} or proposal is None
+                            or any(proposal.payload.get(key) != value for key, value in
+                                {'from_id': a, 'to_id': b, 'relation': kind, 'evidence': evidence}.items())):
+                        raise RecognitionConflict('steer_learning_candidate_relation_changed')
+                    return _proposal(proposal)
             result = RelationProposalService(TransactionRecords(tx), allow_persona=True).propose(
                 WorkScope("local-user", project), a, b, kind, evidence, source="model"
             )
-            tx.put(SUGGESTIONS, result["id"], {"project_id": project}, expected_revision=0)
+            tx.put(SUGGESTIONS, result["id"], {"project_id": project,
+                **({'steer_candidate_proof': _steer_candidate_proof} if _steer_candidate_proof is not None else {})},
+                expected_revision=0)
             tx.commit()
         return result
 
@@ -206,14 +235,14 @@ class InsightLinks:
                 snapshots.append(
                     (
                         scope,
-                        SourceEgressService(self.records).snapshot(
+                        self._authority().snapshot(
                             scope, [{"type": "recognition", "id": row.object_id, "revision": row.revision}]
                         ),
                     )
                 )
         with self.records.begin() as tx:
             for scope, snapshot in snapshots:
-                SourceEgressService(TransactionRecords(tx)).validate_snapshot(scope, snapshot)
+                self._authority(tx).validate_snapshot(scope, snapshot)
             marker = tx.read(SUGGESTIONS, identity)
             if marker is None or marker.payload.get("project_id") != project:
                 raise RecognitionConflict("link_suggestion_unavailable")
@@ -221,60 +250,38 @@ class InsightLinks:
                 WorkScope("local-user", project), identity, revision, "approved" if accept else "rejected"
             )
             if accept:
-                # The proposal review, active edge and recall interference commit together.
-                edge_id = "relation-" + uuid4().hex
-                tx.put(
-                    "recognition_relations",
-                    edge_id,
-                    {
-                        "id": edge_id,
-                        "scope": {"user_id": "local-user", "project_id": project},
-                        "project_id": project,
-                        "from_id": result["from_id"],
-                        "to_id": result["to_id"],
-                        "relation": result["relation"],
-                        "created_at": now(),
-                    },
-                    expected_revision=0,
-                )
-                if result["relation"] == "supersedes":
-                    old = self.endpoint(project, result["to_id"], reader=tx)
-                    from .insight_validity import close
-                    close(tx, old.object_id, result["from_id"], tx.read('recognition_relations', edge_id).payload['created_at'])
-                    previous = tx.read("recognition_recall_preferences", old.object_id)
-                    if previous is None or previous.payload.get("state") != "forgotten":
-                        mark_interference(tx, old.object_id, result["from_id"], now())
-                        tx.put(
-                            "recognition_recall_preferences",
-                            old.object_id,
-                            {
-                                "id": old.object_id,
-                                "user_id": "local-user",
-                                "project_id": old.payload["project_id"],
-                                "state": "cooled",
-                                "by": "auto",
-                                "changed_at": now(),
-                            },
-                            expected_revision=previous.revision if previous else 0,
-                        )
-                        activity = "activity-" + uuid4().hex
-                        tx.put(
-                            "v2_activity",
-                            activity,
-                            {
-                                "kind": "cool",
-                                "by": "auto",
-                                "project_id": old.payload["project_id"],
-                                "object_kind": "insight",
-                                "object_id": old.object_id,
-                                "created_at": now(),
-                            },
-                            expected_revision=0,
-                        )
+                self._activate_reviewed(tx, project, result)
             tx.commit()
         return result
 
-    def _rank(self, project, anchor, entries, *, source_refs=None, validate_current=None, limit=5, keyword_threshold=KEYWORD_THRESHOLD):
+    def _activate_reviewed(self, tx, project, result, *, edge_id=None):
+        # 关系、旧认识有效期和召回降权由同一个写入者提交。
+        if result['state'] != 'approved' or result['project_id'] != project:
+            raise RecognitionConflict('link_suggestion_unavailable')
+        edge_id = edge_id or 'relation-' + uuid4().hex
+        edge = tx.put('recognition_relations', edge_id, {
+            'id': edge_id, 'scope': {'user_id': 'local-user', 'project_id': project}, 'project_id': project,
+            'from_id': result['from_id'], 'to_id': result['to_id'], 'relation': result['relation'], 'created_at': now(),
+        }, expected_revision=0)
+        if result['relation'] == 'supersedes':
+            old = self.endpoint(project, result['to_id'], reader=tx)
+            from .insight_validity import close
+            close(tx, old.object_id, result['from_id'], edge.payload['created_at'])
+            previous = tx.read('recognition_recall_preferences', old.object_id)
+            if previous is None or previous.payload.get('state') != 'forgotten':
+                mark_interference(tx, old.object_id, result['from_id'], now())
+                tx.put('recognition_recall_preferences', old.object_id, {
+                    'id': old.object_id, 'user_id': 'local-user', 'project_id': old.payload['project_id'],
+                    'state': 'cooled', 'by': 'auto', 'changed_at': now(),
+                }, expected_revision=previous.revision if previous else 0)
+                tx.put('v2_activity', 'activity-' + uuid4().hex, {
+                    'kind': 'cool', 'by': 'auto', 'project_id': old.payload['project_id'],
+                    'object_kind': 'insight', 'object_id': old.object_id, 'created_at': now(),
+                }, expected_revision=0)
+        return edge
+
+    def _rank(self, project, anchor, entries, *, source_refs=None, validate_current=None, limit=5,
+              keyword_threshold=KEYWORD_THRESHOLD, embedding_wire=None, embedding_allowed=None):
         scores = {row.object_id: similarity(anchor.payload["content"], row.payload["content"]) for row in entries}
         threshold = keyword_threshold
         public = self.models.public() if self.models is not None else {}
@@ -283,9 +290,9 @@ class InsightLinks:
         if configured.get("configured") and configured.get("enabled"):
             # Source snapshots and the exact model config are checked on both sides of every wire.
             rows = [anchor, *entries]
-            egress = SourceEgressService(self.records)
+            egress = self._authority()
             snapshots = []
-            for row in rows:
+            for row in (() if embedding_wire is not None else rows):
                 refs = source_refs(row) if source_refs else [{"type": "recognition", "id": row.object_id, "revision": row.revision}]
                 if not refs:
                     if validate_current is None:
@@ -300,8 +307,11 @@ class InsightLinks:
                 if validate_current:
                     validate_current()
                 for own_project in {row.payload["project_id"] for row in rows}:
-                    if remote and not egress_allowed(self.records, self.models, own_project, "embedding"):
-                        raise RecognitionConflict("embedding_remote_disabled")
+                    if remote:
+                        allowed = (embedding_allowed(own_project) if embedding_allowed is not None else
+                            egress_allowed(self.records, self.models, own_project, "embedding"))
+                        if not allowed:
+                            raise RecognitionConflict("embedding_remote_disabled")
                 for scope, snapshot in snapshots:
                     egress.validate_snapshot(scope, snapshot)
                     if remote:
@@ -311,6 +321,12 @@ class InsightLinks:
                 validate()
                 provider = configured_adapter(self.models, "embedding", validate_current=validate)
                 original = provider.client
+                projected = [{"id": row.object_id, "revision": row.revision,
+                    "content": row.payload["content"], "project_id": project, "source_refs": []} for row in entries]
+                wire_batch = None
+                if embedding_wire is not None:
+                    from .shared_rendered_preparation import RenderedEmbeddingBatch
+                    wire_batch = RenderedEmbeddingBatch(projected)
 
                 class ObservedTransport:
                     def post_json(inner, **kwargs):
@@ -320,9 +336,12 @@ class InsightLinks:
                         ]
                         # Reuse the actual provider batch as the idempotency input;
                         # no credentials or transport headers enter the key.
-                        return embedding_request(self.records, self.models, project, materials,
-                            {"embedding": kwargs["payload"]["input"], "materials": materials,
-                             "configuration_revision": configured.get("revision")}, validate,
+                        key = {"embedding": kwargs["payload"]["input"], "materials": materials,
+                            "configuration_revision": configured.get("revision")}
+                        if embedding_wire is not None:
+                            return embedding_wire(self.records, self.models, project, materials, key, validate,
+                                original, kwargs, missing_ids=wire_batch.missing_ids)
+                        return embedding_request(self.records, self.models, project, materials, key, validate,
                             original, kwargs)
 
                 from dataclasses import replace
@@ -335,7 +354,10 @@ class InsightLinks:
                 class ScopedCache:
                     # Retrieval ranks the combined view; cache ownership remains each endpoint's real scope.
                     def read(inner, *, model_id, entry):
-                        return cache.read(model_id=model_id, entry=replace(entry, project_id=actual_scopes[entry.id]))
+                        value = cache.read(model_id=model_id, entry=replace(entry, project_id=actual_scopes[entry.id]))
+                        if wire_batch is not None:
+                            wire_batch.observe(entry, value)
+                        return value
 
                     def write(inner, *, model_id, entry, vector):
                         return cache.write(
@@ -346,16 +368,7 @@ class InsightLinks:
                     result = retrieve(
                         project,
                         anchor.payload["content"],
-                        [
-                            {
-                                "id": r.object_id,
-                                "revision": r.revision,
-                                "content": r.payload["content"],
-                                "project_id": project,
-                                "source_refs": [],
-                            }
-                            for r in entries
-                        ],
+                        projected,
                         limit=limit,
                         vector_candidate_limit=limit,
                         keyword_enabled=False,
@@ -390,7 +403,7 @@ class InsightLinks:
             if own != 'me' and not get('scope')(ScopeInput(scene, view['scene'])):
                 continue
             try:
-                authority = SourceEgressService(self.records)
+                authority = self._authority()
                 authority.require(authority.snapshot(WorkScope('local-user', own),
                     [{'type': 'recognition', 'id': row.object_id, 'revision': row.revision}]), 'generation')
             except RecognitionConflict:
@@ -407,11 +420,11 @@ class InsightLinks:
         """Reuse human-reviewed evidence support; no recognition or edge is published."""
         from .consolidation import evidence_guard
         scope = WorkScope('local-user', project)
-        authority = SourceEgressService(self.records)
+        authority = self._authority()
         target_row = self.eligible(project, target)
         if target_row is None:
             raise RecognitionConflict('link_endpoint_unavailable')
-        return RelationProposalService(self.records, allow_persona=True, evidence_guard=evidence_guard).propose_evidence(
+        return RelationProposalService(self.records, allow_persona=True, evidence_guard=partial(evidence_guard, self.source_owner)).propose_evidence(
             scope, target, [experience.id], [document], evidence, proposal_id=identity,
             snapshots=[{'project_id': project, 'snapshot': authority.snapshot(scope,
                 [{'type': 'experience', 'id': experience.id, 'revision': experience.revision}])},
@@ -422,6 +435,17 @@ class InsightLinks:
     def propose_candidate_hint(self, project, candidate_id, recognition_id):
         """After publication, reuse only the still-matching frozen neighbor."""
         candidate = self.records.read('recognition_candidates', candidate_id)
+        if self.records.read('v2_steer_learning_candidate_sources', candidate_id) is not None:
+            learning = getattr(self.source_owner, 'product_steer_learning', None)
+            if learning is None or candidate is None or candidate.payload.get('recognition_id') != recognition_id:
+                raise RecognitionConflict('steer_learning_candidate_relation_owner_unavailable')
+            with learning.freshness._read_scope(None if self.records is learning.records else self.records) as current:
+                proof = learning.sources.candidate_relation(current, WorkScope('local-user', project), candidate)
+            if proof is None:
+                return None
+            kind = {'supplement': 'supports', 'differs': 'refutes', 'may_supersede': 'supersedes'}[proof['relation']]
+            return self.propose(project, recognition_id, proof['target_id'], kind, candidate.payload['content'],
+                expected_revisions={proof['target_id']: proof['target_revision']}, _steer_candidate_proof=proof)
         hint = self.records.read('v2_candidate_hints', candidate_id)
         if candidate is None or hint is None or hint.payload.get('project_id') != project:
             return None
@@ -513,7 +537,7 @@ class InsightLinks:
         try:
             guards = [
                 generation_source_guard(
-                    SourceEgressService(self.records),
+                    self._authority(),
                     self.models,
                     WorkScope("local-user", r.payload["project_id"]),
                     [{"type": "recognition", "id": r.object_id, "revision": r.revision}],

@@ -15,12 +15,12 @@ _PURPOSES = ("generation", "embedding", "rerank", "asr", "vision", "search")
 
 def set_private_project(records, project_id, private, expected_revision):
     with records.begin() as tx:
-        saved = set_private_project_in_transaction(tx, project_id, private, expected_revision)
+        saved = set_private_project_in_transaction(tx, project_id, private, expected_revision, source_owner=records)
         tx.commit()
     return saved
 
 
-def set_private_project_in_transaction(tx, project_id, private, expected_revision):
+def set_private_project_in_transaction(tx, project_id, private, expected_revision, *, source_owner=None):
     """Enlist a privacy change with the caller's project/settings CAS write."""
     if not isinstance(project_id, str) or not project_id or type(private) is not bool:
         raise RecognitionError("project privacy is invalid")
@@ -34,8 +34,8 @@ def set_private_project_in_transaction(tx, project_id, private, expected_revisio
     counter = tx.read(_STATE, _STATE_ID)
     next_revision = privacy_revision(tx) + 1
     from .cache_sources import invalidate_sources
-    invalidate_sources(tx, project_id=project_id)
-    # Retain the false row so removing privacy does not reset its CAS token.
+    invalidate_sources(tx, project_id=project_id, source_owner=source_owner)
+    # 保留非私密记录，使取消私密后的修订继续递增。
     saved = tx.put(_SCOPES, project_id, {"project_id": project_id, "private": private},
                    expected_revision=expected_revision)
     tx.put(_STATE, _STATE_ID, {"revision": next_revision},
@@ -48,8 +48,18 @@ def egress_allowed(records, models, project_id, purpose) -> bool:
         raise RecognitionError("model egress purpose is invalid")
     if is_private_project(records, project_id):
         return False
-    configuration = models.public()
-    model = configuration.get(purpose) if isinstance(configuration, Mapping) else None
+    return global_egress_allowed(models, purpose)
+
+
+def global_egress_allowed(models, purpose) -> bool:
+    if purpose not in _PURPOSES:
+        raise RecognitionError("model egress purpose is invalid")
+    narrow = getattr(models, 'public_for_purpose', None)
+    if purpose == 'generation' and callable(narrow):
+        model = narrow(purpose)
+    else:
+        configuration = models.public()
+        model = configuration.get(purpose) if isinstance(configuration, Mapping) else None
     if not isinstance(model, Mapping):
         return False
     return model.get("enabled" if purpose == "asr" else "allow_remote") is True

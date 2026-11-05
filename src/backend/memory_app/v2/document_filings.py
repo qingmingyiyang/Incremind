@@ -86,7 +86,7 @@ class DocumentFilings:
                 scope = WorkScope('local-user', source_project)
                 source_experience, revision = ensure_document_experience(repository, writer, source_project, document_id)
                 experience = tx.read('recognition_experiences', source_experience)
-                authority = SourceEgressService(enlisted)
+                authority = SourceEgressService(self.records, reader=tx)
                 snapshot = authority.snapshot(scope, [{'type': 'experience', 'id': source_experience,
                     'revision': experience.revision}])
                 authority.require(snapshot, 'generation')

@@ -30,7 +30,8 @@ it('shows the total and expands only the reason codes and counts', async () => {
   expect(screen.queryByText('sqlite_corrupt')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '检查' }));
   for (const code of ['sqlite_corrupt', 'source_file_missing', 'source_without_document']) {
-    expect(screen.getByText(code).closest('.ui-row')).toHaveClass('settings-integrity-reason');
+    expect(screen.getByTitle(code).closest('.ui-row')).toHaveClass('settings-integrity-reason');
+    expect(screen.queryByText(code)).toBeNull();
   }
   expect(screen.getByRole('button', { name: '检查' })).toHaveAttribute('aria-expanded', 'true');
 });

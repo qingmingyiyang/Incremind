@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { verifySidecarMetadata } = require("./verify-sidecar.cjs");
-const { assertPackageClean, assertPythonRuntime, clearSidecarStage } = require("./package-guard.cjs");
+const { assertPackageClean, assertPythonRuntime, assertSqliteRuntime, clearSidecarStage } = require("./package-guard.cjs");
 
 const ELECTRON_ROOT = path.resolve(__dirname, "..");
 const PROJECT_ROOT = path.resolve(ELECTRON_ROOT, "..", "..");
@@ -18,6 +18,8 @@ const INPUTS = [
   [path.join(PROJECT_ROOT, "config", "settings.toml.example"), path.join(STAGE_ROOT, "config", "settings.toml"), true],
   [path.join(PROJECT_ROOT, "config", "codex-hooks.toml"), path.join(STAGE_ROOT, "config", "codex-hooks.toml"), true],
   [path.join(PROJECT_ROOT, "requirements.txt"), path.join(STAGE_ROOT, "requirements.txt"), true],
+  [path.join(PROJECT_ROOT, "requirements-web.txt"), path.join(STAGE_ROOT, "requirements-web.txt"), true],
+  [path.join(PROJECT_ROOT, "requirements-memory.txt"), path.join(STAGE_ROOT, "requirements-memory.txt"), true],
   [path.join(PROJECT_ROOT, "tools", "scripts", "verify-runtime-dependencies.py"), path.join(STAGE_ROOT, "verify-runtime-dependencies.py"), true],
 ];
 const RUNTIME_SOURCE = INPUTS[0][0];
@@ -141,6 +143,7 @@ const APPLICATION_STAGE_POLICY = `stage-sidecar-application:${policyDigest({
   application_entries: String(collectApplicationSourceEntries),
   package_guard: fs.readFileSync(path.join(__dirname, "package-guard.cjs"), "utf8"),
   application_compile: String(compileApplicationBytecode),
+  requirements_compile: String(compileRuntimeRequirements),
 })}`;
 
 function isRuntimePathExcluded(sourcePath) {
@@ -292,6 +295,22 @@ function pruneUnstagedArtifacts(root, { preserveBytecode = false } = {}) {
       pruneUnstagedArtifacts(full, { preserveBytecode });
     }
   }
+}
+
+function compileRuntimeRequirements(stageRoot = STAGE_ROOT, {
+  buildPython = process.env.CHRIPTMAS_BUILD_PYTHON || path.join(PROJECT_ROOT, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python"),
+} = {}) {
+  // 构建 Python 保留 pip；安装包只读取展开后的声明，不依赖被裁剪的 pip。
+  const result = spawnSync(buildPython, [
+    path.join(stageRoot, "verify-runtime-dependencies.py"),
+    "--requirements", path.join(stageRoot, "requirements.txt"),
+    "--compile-output", path.join(stageRoot, "runtime-requirements.txt"),
+  ], { cwd: stageRoot, encoding: "utf8", timeout: 60000, windowsHide: true });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`runtime requirements compilation failed (${result.status}): ${(result.stderr || result.stdout || "").trim()}`);
+  }
+  return result.stdout.trim();
 }
 
 function compileApplicationBytecode(stageRoot = STAGE_ROOT, run = spawnSync) {
@@ -1138,12 +1157,14 @@ async function stageSidecar(argv) {
       copy(source, target, refresh, isApplicationSource(source) ? trackedFiles : null);
     }
   }
+  if (!applicationReuse.hit) console.log(`[stage-sidecar] ${compileRuntimeRequirements(STAGE_ROOT)}`);
   const postCopySnapshot = snapshotRuntimeSource();
   if (postCopySnapshot.fingerprint !== runtimeSnapshot.fingerprint) {
     throw new Error("runtime input changed while sidecar staging was in progress");
   }
   if (!applicationReuse.hit) pruneUnstagedArtifacts(STAGE_ROOT, { preserveBytecode: true });
   assertPackageClean(STAGE_ROOT, { runtimeRoots: [RUNTIME_TARGET], cleanupStageRoot: STAGE_ROOT });
+  assertSqliteRuntime(RUNTIME_TARGET, { cleanupStageRoot: STAGE_ROOT });
   console.log(`[stage-sidecar] canonical inputs copied in ${elapsedMs(copyStartedAt)} ms`);
   const bytecodeStartedAt = Date.now();
   const bytecodeCache = stageReuse.hit
@@ -1262,7 +1283,7 @@ async function stageSidecar(argv) {
     build_kind: "windows-cpu-sidecar",
     pack: BASE_PACK,
     generated_at: new Date().toISOString(),
-    inputs: ["runtime", "src/backend", "src/core", "src/rebuild", "config/rebuild.toml.example", "config/settings.toml.example", "config/codex-hooks.toml", "requirements.txt", "verify-runtime-dependencies.py"],
+    inputs: ["runtime", "src/backend", "src/core", "src/rebuild", "config/rebuild.toml.example", "config/settings.toml.example", "config/codex-hooks.toml", "requirements.txt", "requirements-web.txt", "requirements-memory.txt", "runtime-requirements.txt", "verify-runtime-dependencies.py"],
     files,
     content_set_sha256: contentSetSha256(files),
     total_size: files.reduce((total, file) => total + file.size, 0),
@@ -1317,6 +1338,7 @@ module.exports = {
   assertNoLinkedEntries,
   buildProfile,
   compileApplicationBytecode,
+  compileRuntimeRequirements,
   collectApplicationSourceEntries,
   copy,
   contentSetSha256,

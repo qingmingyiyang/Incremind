@@ -28,17 +28,43 @@ from backend.shared.llm.chat_stream import ChatCompletionStreamChunk
 from backend.shared.llm.base_url import resolve_openai_compatible_api_base_url
 from backend.shared.llm.json_mode import (PartialJSONField, StructuredResponseDecodeError,
     describe_validation_error, validate_json_response)
-from backend.shared.llm.model_capabilities import ModelCapabilities, resolve_model_capabilities
+from backend.shared.llm.model_capabilities import ModelCapabilities, resolve_model_capabilities, is_official_terra
 from backend.shared.llm.model_transport import ModelTransportError, ModelTransportTimeout, complete_with_owned_transport
 from backend.shared.llm.openai_responses import (
     ProviderBackgroundOptions, ResponsesBackgroundInterrupted, ResponsesCompletion, ResponsesError, _provider_error,
 )
+from backend.shared.llm.openai_sdk import ResponsesIncompleteError
 
 
 StructuredResponseT = TypeVar("StructuredResponseT", bound=BaseModel)
 CompletionFn = Callable[..., Any]
 AsyncCompletionFn = Callable[..., Awaitable[Any]]
 ProviderAttemptObserver = Callable[[str, BaseException | None], None]
+
+
+def _incomplete_response_metadata(error):
+    if not isinstance(error, ResponsesIncompleteError):
+        return {}, None
+    reported = {'usage': error.usage}
+    return _extract_normalized_usage(reported), _extract_prompt_cache_observation(reported)
+
+
+def _record_structured_failure(wire, error, retry_state):
+    usage, cache = _incomplete_response_metadata(error)
+    if retry_state is not None:
+        usage, cache = retry_state.attempt_usage, retry_state.attempt_cache
+    if _is_consumer_cancellation(error):
+        if retry_state is not None and usage:
+            wire.consumer_cancelled(usage=usage, cache_observation=cache)
+            retry_state.recorded_usage(usage)
+        else:
+            wire.consumer_cancelled()
+    elif usage or isinstance(error, ResponsesIncompleteError) and cache is not None:
+        wire.failed_transport(error_code='ai.provider_stream_failed', usage=usage or None, cache_observation=cache)
+        if retry_state is not None:
+            retry_state.recorded_usage(usage)
+    else:
+        wire.failed_transport(error_code='ai.provider_stream_failed')
 
 
 class ModelRetryControl:
@@ -55,11 +81,12 @@ class ModelRetryControl:
                  jitter: Callable[[], float] = random.random,
                  wall_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
                  on_retry: Callable[[Mapping[str, object]], None] | None = None,
-                 owned_client_factory=None) -> None:
+                 owned_client_factory=None, interruption=None) -> None:
         self.policy, self.checkpoint, self.clock = policy, checkpoint, clock
         self.wait, self.jitter, self.wall_clock = wait, jitter, wall_clock
         self.on_retry = on_retry
         self.owned_client_factory = owned_client_factory
+        self.interruption = interruption
         self.limits = dict(policy({'kind': 'limits'}))
         self.counts: dict[str, int] = {}
         self.retry_number = 0
@@ -101,6 +128,9 @@ class ModelRetryControl:
     def provider_failed(self, error: BaseException, *, closed: bool = True) -> None:
         if isinstance(error, ModelTransportError) and error.kind == 'provider_close_failed':
             return
+        usage, cache = _incomplete_response_metadata(error)
+        if usage or cache is not None:
+            self.attempt_usage, self.attempt_cache = usage, cache
         if closed and not _is_consumer_cancellation(error):
             self._provider_failure = error
 
@@ -137,7 +167,8 @@ class ModelRetryControl:
     def transport_timeout(self):
         return ModelTransportTimeout(remaining=self.remaining, limits=self.limits,
                                      header_retry=self.counts.get('header', 0) > 0,
-                                     owned_client_factory=self.owned_client_factory)
+                                     owned_client_factory=self.owned_client_factory,
+                                     interruption=self.interruption)
 
     def retry(self, error: BaseException) -> bool:
         if error is not self._provider_failure:
@@ -378,7 +409,8 @@ class _ProviderAttemptTerminal:
         self._finish("succeeded", None, None, usage, cache_observation)
 
     def failed(self, error: BaseException, *, error_code: str) -> None:
-        self._finish("failed", error, error_code, None, None)
+        usage, cache = _incomplete_response_metadata(error)
+        self._finish("failed", error, error_code, usage or None, cache)
 
     def cancelled(self, error: BaseException) -> None:
         self._finish("cancelled", error, "consumer_cancelled", None, None)
@@ -406,8 +438,10 @@ class _ProviderAttemptTerminal:
                 elif status == "cancelled":
                     self._wire_attempt.consumer_cancelled()
                 else:
+                    reported = ({'usage': usage, 'cache_observation': cache_observation}
+                        if usage is not None or cache_observation is not None else {})
                     self._wire_attempt.failed_transport(
-                        error_code=f"ai.{error_code or 'provider_request_failed'}"
+                        error_code=f"ai.{error_code or 'provider_request_failed'}", **reported
                     )
             except BaseException as attempt_error:
                 wire_error = attempt_error
@@ -541,12 +575,22 @@ class LiteLLMCompletionGateway:
         return value.strip()
 
     def _compatible_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        if (is_official_terra(self._provider, self._model, self._base_url)
+                and request.get('reasoning_effort') != 'none'):
+            for key in ('temperature', 'top_p', 'top_logprobs', 'logprobs'):
+                request.pop(key, None)
         if not self.capabilities.developer_role:
             request["messages"] = [dict(message, role="system") if message.get("role") == "developer"
                                    else message for message in request["messages"]]
         if "max_tokens" in request and self.capabilities.max_tokens_field != "max_tokens":
             request[self.capabilities.max_tokens_field] = request.pop("max_tokens")
         return request
+
+    def _structured_modes(self, response_model):
+        if (is_official_terra(self._provider, self._model, self._base_url)
+                and response_model.model_json_schema().get('type') != 'object'):
+            return ('prompt',)
+        return self.capabilities.structured_modes
 
     def _stream_options(self) -> dict[str, Any]:
         return {"stream": True, **({"stream_options": {"include_usage": True}}
@@ -833,7 +877,8 @@ class LiteLLMCompletionGateway:
         except BaseException as error:
             close_attempted = True
             closed = _close_sync_stream(stream)
-            if closed and _retry_state is not None:
+            if (closed and _retry_state is not None
+                    and not (isinstance(error,ModelTransportError) and error.kind == 'provider_close_failed')):
                 from .model_transport import _provider_closed_witness
                 _retry_state.closed_witness = _provider_closed_witness()
             if _is_consumer_cancellation(error):
@@ -1014,7 +1059,7 @@ class LiteLLMCompletionGateway:
             return _with_model_retries(retry_control, wire_attempt_sink, timeout, attempt)
         modes = _build_structured_request_modes(cache_key=self._structured_mode_cache_key,
             messages=messages, response_model=response_model, validation_error=None,
-            supported=self.capabilities.structured_modes)
+            supported=self._structured_modes(response_model))
         # Streams cannot replay format fallbacks after delivering a prefix.
         selected = next((mode for mode in modes if mode[0] == "json_object"),
                         next(mode for mode in modes if mode[0] == "prompt"))
@@ -1055,21 +1100,7 @@ class LiteLLMCompletionGateway:
                     # Handler 正常返回后，真实模型 Effect 才能提交完成状态。
                     return error, usage
                 if wire is not None:
-                    if _is_consumer_cancellation(error):
-                        if _retry_state is not None and _retry_state.attempt_usage:
-                            wire.consumer_cancelled(usage=_retry_state.attempt_usage,
-                                cache_observation=_retry_state.attempt_cache)
-                            _retry_state.recorded_usage(_retry_state.attempt_usage)
-                        else:
-                            wire.consumer_cancelled()
-                    else:
-                        if _retry_state is not None and _retry_state.attempt_usage:
-                            wire.failed_transport(error_code="ai.provider_stream_failed",
-                                usage=_retry_state.attempt_usage,
-                                cache_observation=_retry_state.attempt_cache)
-                            _retry_state.recorded_usage(_retry_state.attempt_usage)
-                        else:
-                            wire.failed_transport(error_code="ai.provider_stream_failed")
+                    _record_structured_failure(wire, error, _retry_state)
                 raise
             finally:
                 stream.close()
@@ -1128,7 +1159,7 @@ class LiteLLMCompletionGateway:
                 messages=messages,
                 response_model=response_model,
                 validation_error=validation_error,
-                supported=self.capabilities.structured_modes,
+                supported=self._structured_modes(response_model),
             )
             mode_errors: list[str] = []
             for mode_name, structured_messages, response_format in modes:
@@ -1199,7 +1230,7 @@ class LiteLLMCompletionGateway:
                 messages=messages,
                 response_model=response_model,
                 validation_error=validation_error,
-                supported=self.capabilities.structured_modes,
+                supported=self._structured_modes(response_model),
             )
             mode_errors: list[str] = []
             for mode_name, structured_messages, response_format in modes:
@@ -1251,6 +1282,9 @@ def _load_litellm_completion() -> CompletionFn:
     except ModuleNotFoundError as error:
         raise RuntimeError("缺少 litellm 依赖，无法调用模型。") from error
     def complete(**request):
+        if is_official_terra('openai', str(request.get('model', '')), str(request.get('api_base', ''))):
+            from .openai_sdk import OpenAIResponsesCompletion
+            return OpenAIResponsesCompletion()(**request)
         return complete_with_owned_transport(completion, request)
     return complete
 
@@ -1260,7 +1294,12 @@ def _load_litellm_acompletion() -> AsyncCompletionFn:
         from litellm import acompletion
     except ModuleNotFoundError as error:
         raise RuntimeError("缺少 litellm 依赖，无法调用模型。") from error
-    return acompletion
+    async def complete(**request):
+        if is_official_terra('openai', str(request.get('model', '')), str(request.get('api_base', ''))):
+            from .openai_sdk import OpenAIResponsesCompletion
+            return await OpenAIResponsesCompletion().acomplete(**request)
+        return await acompletion(**request)
+    return complete
 
 
 def _is_consumer_cancellation(error: BaseException) -> bool:
@@ -1489,7 +1528,7 @@ def _normalize_reasoning_effort(value: str | None, supported: tuple[str, ...] = 
     normalized = value.strip().lower()
     if not normalized:
         return None
-    if normalized == "none":
+    if normalized == "none" and normalized not in supported:
         return None
     if normalized not in supported:
         raise RuntimeError(f"unsupported reasoning_effort '{value}'")
@@ -1557,6 +1596,8 @@ def _append_validation_retry_messages(
 
 
 def _is_response_format_error(error: Exception) -> bool:
+    if isinstance(error, ResponsesError):
+        return error.response_format_rejected
     text = str(error).lower()
     return any(marker in text for marker in STRUCTURED_RESPONSE_FORMAT_ERROR_MARKERS)
 
@@ -1689,6 +1730,7 @@ def _extract_prompt_cache_observation(response: Any) -> dict[str, int] | None:
     nested_creation_tokens = _nested_nonnegative_int(
         usage,
         ("input_tokens_details", "cache_write_tokens"),
+        ("prompt_tokens_details", "cache_write_tokens"),
     )
     if (
         root_read_tokens is not None

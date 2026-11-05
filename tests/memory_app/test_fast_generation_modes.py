@@ -63,21 +63,13 @@ def test_fast_subscription_uses_catalog_and_native_responses_without_api_fallbac
     assert len(wires) == 1
 
 
-def test_fast_local_choice_keeps_fixed_profile_and_exact_internal_endpoint(tmp_path, monkeypatch):
-    config, auth, client, inference, keys = local_application(tmp_path, monkeypatch, 8765)
+def test_incomplete_local_choice_keeps_primary_and_exact_internal_endpoint(tmp_path):
+    config, auth, _, keys = local_application(tmp_path, 8765)
     primary = config.records.read('recognition_model_config', 'generation')
-    with pytest.raises(ModelConfigurationError, match='fast_local_model_unavailable'):
-        choose(config, 'other-model')
-    choose(config, 'qwen2.5-1.5b-instruct')
-    selected = config.for_auxiliary(config.freeze_auxiliary_binding())
-    route = _route(selected)
-    route['execution_location'] = 'local_loopback'
-    output, metadata = selected.complete_governed([{'role': 'user', 'content': 'Synthetic'}],
-        routing_snapshot=route, execution_control=Control(), metadata_sink=Metadata(),
-        wire_attempt_sink=WireSink(), purpose='aux')
-    assert output == 'done' and metadata['model'] == 'qwen2.5-1.5b-instruct'
-    assert len(inference) == 1 and keys[0] != 'local-model'
-    assert client.get('/api/private', headers={'Authorization': 'Bearer ' + keys[0]}).status_code == 401
+    with pytest.raises(ModelConfigurationError, match='local_model_assets_missing'):
+        config.update_generation_mode(mode='local', local_enabled=True,
+            local_base_url='http://127.0.0.1:8765/local-model/v1', expected_revision=0)
+    assert config.records.list('v2_generation_fast_model') == () and keys == []
     assert auth.internal_key_for('http://127.0.0.1:8001/local-model/v1') is None
     assert config.records.read('recognition_model_config', 'generation') == primary
 

@@ -67,10 +67,12 @@ class ResponsesBackgroundInterrupted(RuntimeError):
 class ResponsesError(ValueError):
     """Safe protocol facts for the Turn's retry policy; never retains provider text."""
 
-    def __init__(self, message, *, status_code, code=None, category="unknown", output_started=False):
+    def __init__(self, message, *, status_code, code=None, category="unknown", output_started=False,
+            response_format_rejected=False):
         super().__init__(message)
         self.status_code, self.code, self.category = status_code, code, category
         self.output_started = output_started
+        self.response_format_rejected = response_format_rejected
         self.retryable = not output_started and category in {"capacity", "transient", "rate_limit"}
 
 
@@ -79,7 +81,8 @@ class ResponsesProviderError(ResponsesError):
     def __init__(self, response):
         facts = _provider_error(response.status_code, None)
         super().__init__(str(facts), status_code=facts.status_code, code=facts.code,
-                         category=facts.category, output_started=facts.output_started)
+                         category=facts.category, output_started=facts.output_started,
+                         response_format_rejected=facts.response_format_rejected)
         self.headers = {'retry-after': response.headers['retry-after']} if 'retry-after' in response.headers else {}
         try:
             raw = bytearray()
@@ -92,15 +95,18 @@ class ResponsesProviderError(ResponsesError):
             return
         facts = _provider_error(response.status_code, value)
         super().__init__(str(facts), status_code=facts.status_code, code=facts.code,
-                         category=facts.category, output_started=facts.output_started)
+                         category=facts.category, output_started=facts.output_started,
+                         response_format_rejected=facts.response_format_rejected)
         error = value.get('error', value) if isinstance(value, dict) else None
         code = (error.get('code') or error.get('type')) if isinstance(error, dict) else None
-        if isinstance(code, str) and code in {'insufficient_quota', 'quota_exceeded', 'billing_hard_limit_reached',
+        if isinstance(code, str) and code in {'subscription_sharing_workplace_individual_usage_limit_exceeded',
+                    'insufficient_quota', 'quota_exceeded', 'billing_hard_limit_reached',
                     'usage_limit_reached', 'content_filter', 'content_policy_violation', 'safety', 'refusal'}:
             self.code = code
 
 
 _ERROR_CATEGORIES = {
+    "subscription_sharing_workplace_individual_usage_limit_exceeded": "usage_limit",
     "subscription_sharing_usage_limit_exceeded": "usage_limit", "insufficient_quota": "usage_limit",
     "subscription_sharing_user_not_eligible": "authorization", "subscription_sharing_invalid_user": "authorization",
     "authentication_error": "authorization", "invalid_api_key": "authorization", "permission_denied": "authorization",
@@ -156,7 +162,13 @@ def _provider_error(status_code, body, *, output_started=False, message="subscri
             category = "rate_limit"
         elif 500 <= status_code <= 599:
             category = "transient"
-    return ResponsesError(message, status_code=status_code, code=code, category=category, output_started=output_started)
+    param = value.get('param')
+    format_rejected = (status_code in {400, 422} and not output_started
+        and category in {'unknown', 'unsupported'} and isinstance(param, str)
+        and (param in {'text.format', 'response_format'}
+            or param.startswith(('text.format.', 'response_format.'))))
+    return ResponsesError(message, status_code=status_code, code=code, category=category,
+        output_started=output_started, response_format_rejected=format_rejected)
 
 
 def _failure_body(response):
@@ -193,7 +205,7 @@ class ResponsesCompletion:
     def background_resume_capable(self):
         return self.api_base is not None and self.capabilities.background_resume
 
-    def __call__(self, **request):
+    def prepare_body(self, request):
         body = {"model": str(request["model"]).removeprefix("openai/"),
                 "input": [{"role": "developer" if m["role"] == "system" else m["role"], "content": m["content"]}
                           for m in request["messages"]], "stream": True}
@@ -215,6 +227,10 @@ class ResponsesCompletion:
             body["text"] = {"format": fmt}
         if request.get("reasoning_effort"):
             body["reasoning"] = {"effort": request["reasoning_effort"]}
+        return body
+
+    def __call__(self, **request):
+        body = self.prepare_body(request)
         headers = {"Authorization": "Bearer " + request["api_key"]}
         timeout = request.get("timeout", 60)
         options = request.get('provider_background')
@@ -327,6 +343,8 @@ class ResponsesCompletion:
         finally:
             if attempt is not None:
                 attempt.close()
+                if attempt.failure == 'steer':
+                    attempt.check()
             elif self.client is None:
                 try:
                     client.close()
@@ -454,6 +472,8 @@ class ResponsesCompletion:
                 # Closing the previous response/socket and joining its timers is
                 # mandatory even for cancel, malformed events or checkpoint failure.
                 attempt.close()
+                if attempt.failure == 'steer':
+                    attempt.check()
             options.checkpoint()
             try:
                 remaining = timeout.remaining()
@@ -508,10 +528,24 @@ def _text(value):
 
 
 def _usage(value):
-    usage = value.get("usage") or {}
-    return {"prompt_tokens": usage.get("input_tokens", 0), "completion_tokens": usage.get("output_tokens", 0),
-            "total_tokens": usage.get("total_tokens", 0),
-            "prompt_tokens_details": {"cached_tokens": (usage.get("input_tokens_details") or {}).get("cached_tokens", 0)}}
+    usage = value.get('usage')
+    if not isinstance(usage, dict):
+        return {}
+    result = {}
+    for source, target in (('input_tokens', 'prompt_tokens'),
+            ('output_tokens', 'completion_tokens'), ('total_tokens', 'total_tokens')):
+        amount = usage.get(source)
+        if type(amount) is int and amount >= 0:
+            result[target] = amount
+    for source, target, fields in (
+            ('input_tokens_details', 'prompt_tokens_details', ('cached_tokens', 'cache_write_tokens')),
+            ('output_tokens_details', 'completion_tokens_details', ('reasoning_tokens',))):
+        details = usage.get(source)
+        if isinstance(details, dict):
+            actual = {key: details[key] for key in fields if type(details.get(key)) is int and details[key] >= 0}
+            if actual:
+                result[target] = actual
+    return result
 
 
 def _events(response):

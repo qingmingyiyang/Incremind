@@ -24,7 +24,7 @@ export function createCompanionApi({ request = productFetch, basePath = DEFAULT_
   if (typeof request !== "function") throw new TypeError("Companion API requires a request function");
   if (basePath !== DEFAULT_BASE_PATH) throw new TypeError("Companion API base path is fixed");
 
-  async function requestJson(path, { method = "GET", body, signal, v2 = false } = {}) {
+  async function requestJson(path, { method = "GET", body, signal, v2 = false, allowArray = false } = {}) {
     if (!path.startsWith("/") || path.includes("..") || path.includes("://")) {
       throw new TypeError("Companion API path is invalid");
     }
@@ -62,7 +62,7 @@ export function createCompanionApi({ request = productFetch, basePath = DEFAULT_
       throw new CompanionApiError(error.message, { status: response.status, code: error.code, retryable: true });
     }
     if (!response.ok) throw errorFromResponse(response.status, payload);
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    if (!payload || typeof payload !== "object" || (allowArray ? !Array.isArray(payload) : Array.isArray(payload))) {
       throw new CompanionApiError("陪伴服务返回了无法识别的结果", {
         kind: "failed",
         status: response.status,
@@ -137,6 +137,13 @@ export function createCompanionApi({ request = productFetch, basePath = DEFAULT_
       signal,
     }),
     listReminders: ({ signal } = {}) => requestJson("/reminders", { signal }),
+    listReminderCenter: ({ projectId, signal }) => requestJson(`/reminder-center?${new URLSearchParams({project_id:projectId})}`, {signal, v2:true}),
+    readReminderOperation: ({ id, projectId, signal }) => requestJson(`/reminder-center/operations/${encodeURIComponent(id)}?${new URLSearchParams({project_id:projectId})}`, {signal, v2:true}),
+    applyReminderOperation: ({ id, body, signal }) => requestJson(`/reminder-center/operations/${encodeURIComponent(id)}`, {method:'POST', body, signal, v2:true}),
+    abandonReminderOperation: ({ id, body, signal }) => requestJson(`/reminder-center/operations/${encodeURIComponent(id)}/abandon`, {method:'POST', body, signal, v2:true}),
+    resumeReminderOperation: ({ id, body, signal }) => requestJson(`/reminder-center/operations/${encodeURIComponent(id)}/resume`, {method:'POST', body, signal, v2:true}),
+    listDeliveredReminders: ({ projectId, signal }) => requestJson(`/nudges?${new URLSearchParams({project_id:projectId})}`, {signal, v2:true, allowArray:true}),
+    reminderFeedback: ({ id, projectId, revision, action, signal }) => requestJson(`/nudges/${encodeURIComponent(id)}`, {method:'PATCH', body:{project_id:projectId,expected_revision:revision,action},signal,v2:true}),
     createReminder: ({ reminder, signal }) => requestJson("/reminders", { method: "POST", body: reminder, signal }),
     cancelReminder: ({ reminderId, expectedRevision, signal }) => requestJson(`/reminders/${encodeURIComponent(reminderId)}/cancel`, {
       method: "POST", body: { expected_revision: expectedRevision }, signal,
@@ -220,7 +227,7 @@ function errorFromResponse(status, payload) {
   const message = typeof detail.message === "string" && detail.message.trim()
     ? detail.message.trim().slice(0, 240)
     : "陪伴服务未完成请求";
-  const code = typeof detail.code === "string" ? detail.code : `http_${status}`;
+  const code = typeof detail.code === "string" ? detail.code : typeof payload?.detail === 'string' ? payload.detail : `http_${status}`;
   if (status === 409) {
     return new CompanionApiError(message, { kind: "conflict", status, code, retryable: false });
   }

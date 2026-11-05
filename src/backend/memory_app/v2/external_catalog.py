@@ -84,6 +84,32 @@ class ExternalCatalog:
             raise ValueError('external_context_material_changed')
         return current, {'id': row.object_id, 'revision': row.revision, 'input_revision': signature}
 
+    def project_snapshot(self, reader, project, *, name, scenes, revision):
+        if (not isinstance(name, str) or not name.strip() or not isinstance(scenes, list)
+                or any(not isinstance(scene, str) or not scene.strip() for scene in scenes)):
+            raise ValueError('external_context_material_changed')
+        authority = SourceEgressService(self.records, reader=reader)
+        objects = self._objects(reader, project, authority)
+        overview, origin = self._overview(reader, project, None, objects)
+        scene_rows, scene_proofs = [], []
+        for scene in scenes:
+            text, proof = self._overview(reader, project, scene, objects)
+            scene_rows.append({'name': scene, 'overview': text})
+            scene_proofs.append({'name': scene, 'overview': proof})
+        return ({'id': project, 'name': name, 'overview': overview, 'scenes': scene_rows},
+            {'project_id': project, 'revision': revision, 'objects': objects, 'overview': origin, 'scenes': scene_proofs})
+
+    def validate_project(self, reader, project):
+        authority = SourceEgressService(self.records, reader=reader)
+        scope = WorkScope(self.owner_id, project['project_id'])
+        for item in project['objects']:
+            authority.validate_snapshot(scope, item['snapshot'])
+        for overview in [project['overview'], *(scene['overview'] for scene in project['scenes'])]:
+            if overview:
+                for member in overview['input_revision']['members']:
+                    if 'source_snapshot' in member:
+                        authority.validate_snapshot(scope, member['source_snapshot'])
+
     def snapshot(self, client, reader=None):
         if reader is None:
             with self.records.begin() as tx:
@@ -106,7 +132,6 @@ class ExternalCatalog:
             project = source.get('project_id', 'default')
             if isinstance(project, str):
                 identities.add(project)
-        authority = SourceEgressService(reader)
         for project in sorted(identities):
             if (not external_egress_allowed(reader, project, client)
                     or (project == 'me' and not settings['include_profile'])):
@@ -114,28 +139,12 @@ class ExternalCatalog:
             row = projects.get(project)
             name = display_name(project, row.payload.get('name')) if row else _BUILTINS.get(project, DEFAULT_NAME if project == 'default' else project)
             scenes = row.payload.get('scenes') if row else []
-            if (not isinstance(name, str) or not name.strip() or not isinstance(scenes, list)
-                    or any(not isinstance(scene, str) or not scene.strip() for scene in scenes)):
-                raise ValueError('external_context_material_changed')
-            objects = self._objects(reader, project, authority)
-            overview, origin = self._overview(reader, project, None, objects)
-            scene_rows, scene_proofs = [], []
-            for scene in scenes:
-                text, proof = self._overview(reader, project, scene, objects)
-                scene_rows.append({'name': scene, 'overview': text})
-                scene_proofs.append({'name': scene, 'overview': proof})
-            rows.append({'id': project, 'name': name, 'overview': overview, 'scenes': scene_rows})
-            proofs.append({'project_id': project, 'revision': row.revision if row else None,
-                'objects': objects, 'overview': origin, 'scenes': scene_proofs})
+            projected, proof = self.project_snapshot(reader, project, name=name, scenes=scenes,
+                revision=row.revision if row else None)
+            rows.append(projected)
+            proofs.append(proof)
         for project in proofs:
-            scope = WorkScope(self.owner_id, project['project_id'])
-            for item in project['objects']:
-                authority.validate_snapshot(scope, item['snapshot'])
-            for overview in [project['overview'], *(scene['overview'] for scene in project['scenes'])]:
-                if overview:
-                    for member in overview['input_revision']['members']:
-                        if 'source_snapshot' in member:
-                            authority.validate_snapshot(scope, member['source_snapshot'])
+            self.validate_project(reader, project)
         if privacy_revision(reader) != epoch or external_agent_settings(reader) != settings:
             raise ValueError('external_context_material_changed')
         return {'schema_version': 1, 'owner_id': self.owner_id, 'client': client,

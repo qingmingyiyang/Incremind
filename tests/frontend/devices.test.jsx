@@ -36,12 +36,12 @@ it('reads a fragment once, removes it before requests and exchanges the code in 
   expect(screen.queryByDisplayValue(key)).toBeNull();
 });
 
-it('desktop is already paired and a revoked server request returns to pairing', async () => {
+it('desktop enters directly and a revoked server request returns to account login', async () => {
   wire.mockResolvedValue(response({ mode: 'desktop', device_id: 'desktop', items: [] }));
   render(<DeviceGate><p>工作台已打开</p></DeviceGate>);
   await screen.findByText('工作台已打开');
   await act(async () => { forgetDeviceCredential(); });
-  await screen.findByRole('button', { name: '配对' });
+  await screen.findByRole('button', { name: '登录', exact: true });
 });
 
 it('shows device rows and uses the displayed fact revision to revoke itself', async () => {

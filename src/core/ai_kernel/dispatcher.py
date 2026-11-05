@@ -117,7 +117,9 @@ class ToolExecutionContext:
     _deadline: float = field(init=False, repr=False)
     _provider_started: bool = field(default=False, init=False, repr=False)
     _nested_model_handle_factory: Callable[..., object] | None = field(default=None, repr=False)
+    _steer_model_grant_reserver: Callable[..., None] | None = field(default=None, repr=False)
     _nested_model_handle_keys: set[str] = field(default_factory=set, init=False, repr=False)
+    _steer_model_handle_keys: set[str] = field(default_factory=set, init=False, repr=False)
     _nested_model_handle_guard: RLock = field(default_factory=RLock, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -145,6 +147,7 @@ class ToolExecutionContext:
         *,
         invocation_key: str | None = None,
         purpose: ModelCallPurpose | None = None,
+        steer_grant: Mapping[str, object] | None = None,
     ) -> object:
         """Return one independently-owned nested-model handle within the budget.
 
@@ -165,14 +168,21 @@ class ToolExecutionContext:
                     "nested model handle is unavailable for this tool invocation: "
                     "nested model invocation key is already allocated"
                 )
-            if len(self._nested_model_handle_keys) >= self.nested_model_handle_budget:
+            extra = steer_grant is not None
+            if extra and (purpose != 'primary' or self._steer_model_grant_reserver is None
+                    or self.nested_model_handle_budget not in {3, 4, 9}
+                    or len(self._steer_model_handle_keys) >= 5
+                    or len(self._nested_model_handle_keys) >= min(14, self.nested_model_handle_budget + 5)):
+                raise NestedModelHandleUnavailable('governed steer model grant is unavailable')
+            if not extra and len(self._nested_model_handle_keys) - len(self._steer_model_handle_keys) >= self.nested_model_handle_budget:
                 raise NestedModelHandleUnavailable(
                     "nested model handle is unavailable for this tool invocation: "
                     "nested model handle budget is exhausted"
                 )
-            # Reserve before entering the factory.  A factory which fails after
-            # it creates durable lifecycle evidence must not be retried under
-            # the same key and accidentally create a second logical request.
+            # 实际原生授予和调用身份在 factory 前消耗，失败不返还额外额度。
+            if extra:
+                self._steer_model_grant_reserver(invocation_key=key, purpose=purpose, proof=steer_grant)
+                self._steer_model_handle_keys.add(key)
             self._nested_model_handle_keys.add(key)
         handle = _call_nested_model_handle_factory(
             self._nested_model_handle_factory,
@@ -281,6 +291,8 @@ class SynchronousToolDispatcher:
                 _nested_model_handle_factory(observer)
                 if request.nested_model_handle_authorized else None
             ),
+            _steer_model_grant_reserver=(getattr(observer, 'reserve_steer_model_grant', None)
+                if request.nested_model_handle_authorized else None),
         )
         try:
             locks = self._locks_for(request.resource_locks)

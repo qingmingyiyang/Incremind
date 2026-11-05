@@ -8,18 +8,20 @@ import { Icon } from './Icon';
 import { StatusDot } from './StatusDot';
 import './conversationShare.css';
 
-export function ConversationSharePreview({ snapshot, scope, loading, error: readError, onRetry, onClose }) {
+export function ConversationSharePreview({ snapshot, scope, loading, error: readError, onRetry, onClose, extra,
+  renderDestinations, selectionLocked = false }) {
   const session = useMemo(() => ({ scope, snapshot }), [scope, snapshot]), gate = useRequestScope(session);
-  const [selection, setSelection] = useState({ session, snapshot });
+  const ordinals = useMemo(() => snapshot?.citations.map((_, index) => index) || [], [snapshot]);
+  const [selection, setSelection] = useState({ session, snapshot, ordinals });
   const [exportState, setExportState] = useState({ session, busy: '', error: '', copied: false, images: [] });
   const urls = useRef([]), timer = useRef(null);
   const current = selection.session === session ? selection.snapshot : snapshot;
   const state = exportState.session === session ? exportState : { busy: '', error: '', copied: false, images: [] };
   function releaseImages() { urls.current.forEach(url => URL.revokeObjectURL(url)); urls.current = []; }
   useEffect(() => {
-    setSelection({ session, snapshot }); setExportState({ session, busy: '', error: '', copied: false, images: [] });
+    setSelection({ session, snapshot, ordinals }); setExportState({ session, busy: '', error: '', copied: false, images: [] });
     return () => { releaseImages(); clearTimeout(timer.current); };
-  }, [session]);
+  }, [session, ordinals]);
   function update(patch) { setExportState(previous => ({ ...(previous.session === session ? previous : { images: [], copied: false }), session, ...patch })); }
   async function copy() {
     if (!current || state.busy) return;
@@ -50,19 +52,23 @@ export function ConversationSharePreview({ snapshot, scope, loading, error: read
     finally { if (gate.isCurrent(request)) update({ busy: '' }); }
   }
   function remove(index) {
-    if (state.busy) return;
+    if (state.busy || selectionLocked) return;
     gate.invalidate('export'); releaseImages(); clearTimeout(timer.current);
-    setSelection({ session, snapshot: removeConversationCitation(current, index) }); update({ images: [], copied: false, error: '' });
+    const included = selection.session === session ? selection.ordinals : ordinals;
+    setSelection({ session, snapshot: removeConversationCitation(current, index), ordinals: included.filter((_, position) => position !== index) });
+    update({ images: [], copied: false, error: '' });
   }
   function close() {
     gate.invalidate('export'); releaseImages(); clearTimeout(timer.current);
     update({ busy: '', images: [], copied: false, error: '' }); onClose?.();
   }
   return <FocusPanel title="分享" onClose={close} className="ui-conversation-share">
+    {extra}
     {loading ? <StatusDot state="processing"/> : readError || !current ? <p role="alert">读取未完成 · <button type="button" onClick={onRetry}>重试</button></p> : <>
       <div className="ui-conversation-destinations">
         <button type="button" disabled={Boolean(state.busy)} onClick={copy}><Icon name={state.copied ? 'check' : 'copy'} size={16}/>复制文字</button>
         <button type="button" disabled={Boolean(state.busy)} onClick={image}><Icon name="down" size={16}/>存为图片</button>
+        {renderDestinations?.({ ordinals: selection.session === session ? selection.ordinals : ordinals, busy: Boolean(state.busy) })}
         {state.busy && <StatusDot state="processing"/>}
       </div>
       {state.error && <p role="alert" className="ui-conversation-error">{state.error === 'copy' ? '复制未完成' : '图片未生成'} · <button type="button" onClick={state.error === 'copy' ? copy : image}>重试</button></p>}
@@ -71,7 +77,7 @@ export function ConversationSharePreview({ snapshot, scope, loading, error: read
         <h3>问题</h3><div className="ui-conversation-question">{current.question}</div>
         <h3>回答</h3><MarkdownBody>{current.answer}</MarkdownBody>
         {current.citations.length > 0 && <><h3>引用 <span>{current.citations.length}</span></h3><div className="ui-conversation-citations">{current.citations.map((citation, index) => <div key={index}>
-          <div className="ui-conversation-citation-label"><span>{citation.title}</span><button type="button" disabled={Boolean(state.busy)} onClick={() => remove(index)} aria-label={`移除引用 ${citation.title}`} title="去掉"><Icon name="close" size={14}/></button></div>
+          <div className="ui-conversation-citation-label"><span>{citation.title}</span><button type="button" disabled={Boolean(state.busy) || selectionLocked} onClick={() => remove(index)} aria-label={`移除引用 ${citation.title}`} title="去掉"><Icon name="close" size={14}/></button></div>
           <blockquote>{citation.quote}</blockquote>
         </div>)}</div></>}
       </section>

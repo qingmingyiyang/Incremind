@@ -1,11 +1,32 @@
 """Existing evidence-reference parsing shared by read and retained-source owners."""
 from collections.abc import Mapping
-from urllib.parse import urlsplit, unquote
+from urllib.parse import urlsplit, unquote, quote
 from backend.recognition import RecognitionConflict
 from .original_sources import resolve, original, document_roots
 
 READS = frozenset(('memory.recall','source.evidence.read','workbench.question.answer',
                   'memory.candidate.evidence.read','project_skill.evidence.read'))
+
+
+def qualified_material_ref(material):
+    collections = {'recognition': 'recognitions', 'experience': 'recognition_experiences',
+        'original_source': 'sources', 'original_item': 'workspace_items', 'document': 'documents'}
+    if (not isinstance(material, dict) or set(material) != {'type', 'id', 'revision', 'project_id', 'namespace'}
+            or material['type'] not in collections or type(material['revision']) is not int or material['revision'] < 1
+            or any(not isinstance(material[field], str) or not material[field]
+                for field in ('id', 'project_id', 'namespace'))):
+        raise RecognitionConflict('shared_task_read_material_changed')
+    return ('crp://' + quote(material['namespace'], safe='/') + '/' + collections[material['type']]
+        + '/' + quote(material['id'], safe=''))
+
+
+def qualified_ref_material(reference, materials):
+    if not isinstance(reference, str):
+        raise RecognitionConflict('shared_task_read_reference_changed')
+    selected = [material for material in materials if qualified_material_ref(material) == reference]
+    if len(selected) != 1:
+        raise RecognitionConflict('shared_task_read_reference_owner_changed')
+    return selected[0]
 
 
 def _source_refs(value):

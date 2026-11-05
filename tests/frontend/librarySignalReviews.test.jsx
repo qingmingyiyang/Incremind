@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Library } from '@src/features/library/Library';
 
@@ -56,7 +56,7 @@ it('hides zero reviews and leaves the original constraint and memo actions intac
 });
 
 it('replaces the tabs with two columns and restores the prior layer and search', async () => {
-  mount(); await settle(); fireEvent.click(screen.getByRole('button', { name: '摘要 1' }));
+  mount(); await settle(); fireEvent.click(screen.getByRole('button', { name: '摘要 —' })); await settle();
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: '阅读' } }); await settle(); await enter();
   expect(screen.queryByRole('group', { name: '资料层级' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: '纠偏 3' })).toBeInTheDocument();
@@ -68,7 +68,7 @@ it('replaces the tabs with two columns and restores the prior layer and search',
   expect(panel).toHaveTextContent('先读两章。'); expect(panel).toHaveTextContent('记录一个问题。');
   expect(document.querySelector('[data-icon="review-reask"]')).toHaveAttribute('width', '14');
   fireEvent.click(screen.getByRole('button', { name: '返回资料库' }));
-  expect(screen.getByRole('button', { name: '摘要 1' })).toHaveAttribute('aria-pressed', 'true');
+  await waitFor(() => expect(screen.getByRole('button', { name: '摘要 1' })).toHaveAttribute('aria-pressed', 'true'));
   expect(screen.getByRole('searchbox')).toHaveValue('阅读'); expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 

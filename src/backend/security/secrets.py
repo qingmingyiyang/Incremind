@@ -396,6 +396,18 @@ def build_model_secret_store(root_dir: Path) -> SecretStore:
     return ServerFileSecretStore(root_dir / 'secrets.json',mutation_attribution=attribution)
 
 
+def build_server_model_secret_store(server_root: Path) -> SecretStore:
+    # 中央凭据由服务器配置所有者审计，不借用任一用户空间的归属回调。
+    root = Path(server_root).resolve()
+    directory = root / 'server'
+    path = directory / 'model-secrets.json'
+    if directory.resolve() != directory or path.is_symlink():
+        raise ServerSecretStoreError('server_secret_file_invalid')
+    if _is_windows():
+        return DPAPIFileSecretStore(path)
+    return ServerFileSecretStore(path)
+
+
 def build_secret_store(root_dir: Path) -> SecretStore:
     if file_attribution(root_dir,'secrets') is not None:
         return build_model_secret_store(root_dir)

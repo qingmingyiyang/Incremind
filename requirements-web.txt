@@ -1,5 +1,6 @@
 # 网页工作台与既有 Agent 执行环境所需依赖。
 # 本地 PDF、DOCX 正文提取随网页部署；其他媒体适配器依赖见 requirements.txt。
+# 本机 EmbeddingGemma 依赖按需叠加 requirements-local-vectors.txt。
 fastapi>=0.115,<1
 pydantic>=2.5,<3
 PyYAML>=6,<7
@@ -7,9 +8,12 @@ anyio>=4,<5
 uvicorn[standard]>=0.30,<1
 python-multipart>=0.0.18,<1
 httpx>=0.27,<1
+httpx-sse>=0.4,<0.5
 cryptography>=42,<49
+argon2-cffi>=25.1,<26
 PyJWT>=2.10,<3
 litellm==1.74.0
+openai>=2.38.0,<3
 langgraph>=1.2.12,<2
 langgraph-checkpoint>=4.2,<5
 langchain-core>=1.6.4,<2
@@ -17,6 +21,7 @@ blake3==1.0.9
 Pillow>=10,<13
 python-docx>=1.1,<2
 pypdf>=4.0,<6
+markdown-it-py>=4.2,<5
 # Offline device pairing QR codes; BSD-3-Clause / historical MIT.
 qrcode>=8.2,<9
 psutil>=7.0,<8

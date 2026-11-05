@@ -164,7 +164,7 @@ def test_queue_is_deterministic_in_both_frozen_inputs_and_uses_unchanged_schema(
         assert data['review_queue']['boundary'] == 'Mechanical locations only; relevance, completeness and claim modality require source review.'
     assert final_response_model('@31', 'What?') is final_response_model('@30', 'What?')
     assert (chosen, first) == before
-    assert ACTIVE['compose'] == '@30'
+    assert ACTIVE['compose'] == '@37'
 
 
 @pytest.mark.parametrize('version', ['@13', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30'])

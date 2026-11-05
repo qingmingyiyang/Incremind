@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import json
 from typing import Any, Callable
+import httpx
 
 from backend.shared.llm.base_url import resolve_openai_compatible_api_base_url
 from backend.shared.llm.litellm_gateway import EgressGuard
@@ -16,6 +17,56 @@ from backend.shared.llm.prompt_contracts import (
 
 VIDEO_WEB_SEARCH_PROMPT_VERSION = "video-summary-web-search-v3"
 VIDEO_WEB_SEARCH_MAX_TIMEOUT_SECONDS = 120
+
+
+class BraveWebSearchGateway:
+    @staticmethod
+    def prepare_request(query, *, count):
+        return {'method': 'POST', 'endpoint': 'https://api.search.brave.com/res/v1/web/search',
+            'payload': {'q': redact_private_prompt_text(query).strip(), 'count': count, 'offset': 0, 'result_filter': ['web']}}
+
+    @staticmethod
+    def send(request, *, api_key, timeout_seconds, validate_current):
+        validate_current()
+        try:
+            with httpx.Client(trust_env=False, follow_redirects=False,
+                              timeout=min(120, max(1, timeout_seconds))) as client:
+                with client.stream('POST', request['endpoint'], json=request['payload'],
+                        headers={'X-Subscription-Token': api_key, 'Accept': 'application/json'}) as response:
+                    if response.status_code != 200:
+                        raise ValueError('search_provider_request_failed')
+                    content = bytearray()
+                    for chunk in response.iter_bytes():
+                        if len(content) + len(chunk) > 8 * 1024 * 1024:
+                            raise ValueError('search_provider_response_invalid')
+                        content.extend(chunk)
+                    value = json.loads(content)
+        except (httpx.HTTPError, ValueError):
+            # 查询正文和供应商响应不进入公开异常。
+            raise ValueError('search_provider_request_failed') from None
+        validate_current()
+        return brave_web_results(value, query=request['payload']['q'])
+
+
+def brave_web_results(value, *, query):
+    if (not isinstance(value, Mapping) or value.get('type') != 'search'
+            or not isinstance(value.get('query'), Mapping) or value['query'].get('original') != query
+            or 'error' in value):
+        raise ValueError('search_provider_response_invalid')
+    web = value.get('web')
+    if web is None:
+        return []
+    if not isinstance(web, Mapping) or web.get('type') != 'search' or not isinstance(web.get('results'), list):
+        raise ValueError('search_provider_response_invalid')
+    results = []
+    for item in web['results']:
+        if (not isinstance(item, Mapping) or not isinstance(item.get('title'), str)
+                or not isinstance(item.get('url'), str)
+                or item.get('description') is not None and not isinstance(item['description'], str)):
+            raise ValueError('search_provider_response_invalid')
+        results.append({'title': item['title'], 'url': item['url'],
+            'text': item.get('description') or '', 'snippet': item.get('description') or ''})
+    return results
 
 
 class LiteLLMNativeWebSearchGateway:

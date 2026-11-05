@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .ports import ObjectStorePort
 from .settings import StorageConfigurationError
+from .native_io import native_io_path
 
 
 class ObjectStoreRevisionError(ValueError):
@@ -123,9 +124,10 @@ class JsonObjectStore:
     @source_locked
     def read_including_deleted(self, collection: str, object_id: str) -> Mapping[str, object] | None:
         paths = self._object_paths(collection, object_id)
-        if not paths.payload_path.exists():
+        payload_path = Path(native_io_path(paths.payload_path, resolve=False))
+        if not payload_path.exists():
             return None
-        payload = json.loads(paths.payload_path.read_text(encoding="utf-8"))
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError(f"stored object {collection}/{object_id} must be a JSON object")
         return dict(payload)
@@ -141,14 +143,16 @@ class JsonObjectStore:
         """List one collection for an explicit lifecycle or retention inventory."""
 
         directory = self._collection_path(collection)
-        if not directory.exists():
+        physical = Path(native_io_path(directory, resolve=False))
+        if not physical.exists():
             return ()
         objects: list[Mapping[str, object]] = []
-        for path in sorted(directory.glob("*.json")):
+        for entry in sorted(physical.glob("*.json")):
+            path = directory / entry.name
             if path.name.endswith(".meta.json"):
                 continue
             _logical_object_id_from_payload_path(path)
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload = json.loads(Path(native_io_path(path, resolve=False)).read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
                 raise ValueError(f"stored object {path.name} must be a JSON object")
             objects.append(dict(payload))
@@ -158,12 +162,13 @@ class JsonObjectStore:
         """Return the current namespace collection catalog without reading payloads."""
 
         namespace = self.root / "objects" / self.namespace_id
-        if not namespace.exists():
+        physical = Path(native_io_path(namespace, resolve=False))
+        if not physical.exists():
             return ()
-        if not namespace.is_dir() or namespace.is_symlink():
+        if not physical.is_dir() or physical.is_symlink():
             raise ObjectStorePathError("object store namespace must be a non-symlink directory")
         names: list[str] = []
-        for path in sorted(namespace.iterdir(), key=lambda item: item.name):
+        for path in sorted(physical.iterdir(), key=lambda item: item.name):
             if path.is_symlink():
                 raise ObjectStorePathError("object store collection cannot be a symlink")
             if not path.is_dir():
@@ -259,7 +264,8 @@ class JsonObjectStore:
     def attribution(self, collection: str, object_id: str, revision: int):
         """Read a current sidecar binding without exposing private payloads."""
         path = self._object_paths(collection, object_id).meta_path
-        metadata = json.loads(path.read_text(encoding='utf8')) if path.exists() else {}
+        physical = Path(native_io_path(path, resolve=False))
+        metadata = json.loads(physical.read_text(encoding='utf8')) if physical.exists() else {}
         value = metadata.get('server_admin_attribution')
         if (type(metadata.get('revision')) is not int or metadata.get('revision') != revision
                 or not _valid_mutation_attribution(value, self.namespace_id, collection, object_id, revision)):
@@ -275,7 +281,8 @@ class JsonObjectStore:
     @source_locked
     def incarnation(self, collection: str, object_id: str) -> str:
         path = self._object_paths(collection, object_id).meta_path
-        meta = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        physical = Path(native_io_path(path, resolve=False))
+        meta = json.loads(physical.read_text(encoding="utf-8")) if physical.exists() else {}
         return meta.get("incarnation", "legacy")
 
     def is_revision_conflict(self, error: BaseException) -> bool:
@@ -320,7 +327,7 @@ class JsonObjectStore:
         # An object found in the legacy layout stays there; re-checking all four
         # paths (and the short-name file) on every read dominated egress checks.
         seen = (str(directory), object_id)
-        if seen in _LEGACY_SEEN and (legacy.payload_path.exists() or legacy.meta_path.exists()):
+        if seen in _LEGACY_SEEN and (Path(native_io_path(legacy.payload_path, resolve=False)).exists() or Path(native_io_path(legacy.meta_path, resolve=False)).exists()):
             return legacy
         short_stem = _short_object_file_stem(object_id)
         short = _ObjectPaths(
@@ -328,8 +335,8 @@ class JsonObjectStore:
             meta_path=directory / f"{short_stem}.meta.json",
             uses_short_name=True,
         )
-        legacy_exists = legacy.payload_path.exists() or legacy.meta_path.exists()
-        short_exists = short.payload_path.exists() or short.meta_path.exists()
+        legacy_exists = Path(native_io_path(legacy.payload_path, resolve=False)).exists() or Path(native_io_path(legacy.meta_path, resolve=False)).exists()
+        short_exists = Path(native_io_path(short.payload_path, resolve=False)).exists() or Path(native_io_path(short.meta_path, resolve=False)).exists()
         if legacy_exists and short_exists:
             raise ObjectStorePathError("object storage has ambiguous legacy and short layouts")
         if short_exists:
@@ -471,17 +478,19 @@ def _paths_fit_windows_budget(paths: _ObjectPaths) -> bool:
 
 
 def _validate_short_object_layout(paths: _ObjectPaths, expected_object_id: str | None = None) -> str:
-    payload_exists = paths.payload_path.exists()
-    meta_exists = paths.meta_path.exists()
+    payload_path = Path(native_io_path(paths.payload_path, resolve=False))
+    meta_path = Path(native_io_path(paths.meta_path, resolve=False))
+    payload_exists = payload_path.exists()
+    meta_exists = meta_path.exists()
     if payload_exists != meta_exists:
         raise ObjectStorePathError("short object layout is incomplete")
     if not payload_exists or not meta_exists:
         raise ObjectStorePathError("short object layout is incomplete")
     if (
-        paths.payload_path.is_symlink()
-        or paths.meta_path.is_symlink()
-        or not paths.payload_path.is_file()
-        or not paths.meta_path.is_file()
+        payload_path.is_symlink()
+        or meta_path.is_symlink()
+        or not payload_path.is_file()
+        or not meta_path.is_file()
     ):
         raise ObjectStorePathError("short object layout requires regular files")
     stem = paths.payload_path.stem
@@ -492,7 +501,7 @@ def _validate_short_object_layout(paths: _ObjectPaths, expected_object_id: str |
     ):
         raise ObjectStorePathError("short object filename is invalid")
     try:
-        metadata = json.loads(paths.meta_path.read_text(encoding="utf-8"))
+        metadata = json.loads(meta_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ObjectStorePathError("short object metadata must be readable JSON") from exc
     if not isinstance(metadata, dict):
@@ -510,6 +519,7 @@ def _validate_short_object_layout(paths: _ObjectPaths, expected_object_id: str |
 
 
 def _metadata_revision(meta_path: Path) -> int:
+    meta_path = Path(native_io_path(meta_path, resolve=False))
     if not meta_path.exists():
         return 0
     payload = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -522,6 +532,9 @@ def _metadata_revision(meta_path: Path) -> int:
 
 
 def _write_json_atomic(path: Path, payload: Mapping[str, object]) -> None:
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    from .persistence_budget import consume_json
+    consume_json(path, len(serialized.encode('utf-8')))
     file_descriptor, temporary_name = tempfile.mkstemp(
         prefix=".tmp-",
         suffix=".tmp",
@@ -530,7 +543,7 @@ def _write_json_atomic(path: Path, payload: Mapping[str, object]) -> None:
     temporary = Path(temporary_name)
     try:
         with os.fdopen(file_descriptor, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+            stream.write(serialized)
             stream.flush()
             os.fsync(stream.fileno())
         _replace_temporary_file_serialized(temporary, path)

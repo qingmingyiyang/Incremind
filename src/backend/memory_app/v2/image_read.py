@@ -6,9 +6,10 @@ from pathlib import Path
 
 from backend.recognition import RecognitionConflict, WorkScope
 from backend.shared.llm.image_input import image_content
+from backend.shared.llm.pdf_input import pdf_content
+from backend.shared.llm.oxr_gateway import is_oxr_endpoint
 from ..kernel.turn_requests import freeze_turn_request
 from ..source_egress import SourceEgressService
-from ..transaction_records import TransactionRecords
 from ..workspace_audio import _audio_original_identity
 from ..uploaded_media import group_entries, original_path
 from .privacy import egress_allowed, privacy_revision, resolve_turn_material
@@ -24,8 +25,13 @@ def uploaded_images(records, runtime_root, project_id, materials):
             raise RecognitionConflict('image_material_scope_conflicted')
         resolved, _ = resolve_turn_material(records, WorkScope('local-user', project_id), material)
         item = resolved['payload']
-        if item.get('input_kind') != 'image':
+        pdf = item.get('input_kind') == 'file' and Path(item.get('original_path', '')).suffix.lower() == '.pdf'
+        if item.get('input_kind') != 'image' and not pdf:
             raise RecognitionConflict('image_material_binding_invalid')
+        if pdf:
+            path = original_path(runtime_root, item)
+            images.append({'item_id': item['id'], 'ordinal': 1, 'identity': _audio_original_identity(path)})
+            continue
         for ordinal, entry in enumerate(group_entries(records, item), 1):
             try:
                 path = original_path(runtime_root, item, recorded_path=entry['path'], ordinal=ordinal)
@@ -36,6 +42,17 @@ def uploaded_images(records, runtime_root, project_id, materials):
     if not images:
         raise RecognitionConflict('image_material_binding_invalid')
     return images
+
+
+def _require_pdf_endpoint(images, configuration):
+    if (any(Path(image['identity']['path']).suffix.lower() == '.pdf' for image in images)
+            and not is_oxr_endpoint(configuration.get('base_url') or '', configuration.get('model'))):
+        raise RecognitionConflict('pdf_remote_requires_oxr')
+
+
+def _material_content(image):
+    path = Path(image['identity']['path'])
+    return (pdf_content if path.suffix.lower() == '.pdf' else image_content)(path.read_bytes())
 
 
 def _descriptor(image):
@@ -56,6 +73,7 @@ def freeze_image_request(kind, *, records, models, project_id, materials, messag
         raise RecognitionConflict('image_remote_disabled')
     revision = privacy_revision(records)
     images = uploaded_images(records, models.root, project_id, materials)
+    _require_pdf_endpoint(images, configuration)
     authority = SourceEgressService(records)
     refs, snapshots = [], []
     for material in materials:
@@ -73,7 +91,7 @@ def freeze_image_request(kind, *, records, models, project_id, materials, messag
     text_parts = [part for part in parts if part.get('type') == 'text']
     if len(parts) != len(text_parts) + len(images):
         raise RecognitionConflict('image_input_invalid')
-    expected = [image_content(Path(image['identity']['path']).read_bytes()) for image in images]
+    expected = [_material_content(image) for image in images]
     if [part for part in parts if part.get('type') == 'image_url'] != expected:
         raise RecognitionConflict('image_material_binding_invalid')
     frozen = [{'role': 'user', 'content': deepcopy(text_parts) +
@@ -98,12 +116,12 @@ def freeze_image_request(kind, *, records, models, project_id, materials, messag
             raise RecognitionConflict('image_original_changed')
         if old is None:
             tx.put(_BINDINGS, request['turn_id'], binding, expected_revision=0)
-        _validate(tx, models, request, binding, in_transaction=True)
+        _validate(tx, models, request, binding, in_transaction=True, owner_records=records)
         tx.commit()
     return request
 
 
-def _validate(records, models, request, binding, *, purpose='vision', in_transaction=False):
+def _validate(records, models, request, binding, *, purpose='vision', in_transaction=False, owner_records=None):
     if purpose != 'vision' or request['desired_outcome'] != 'media.image_read':
         raise RecognitionConflict('image_request_invalid')
     privacy = request['privacy']
@@ -116,9 +134,11 @@ def _validate(records, models, request, binding, *, purpose='vision', in_transac
         raise RecognitionConflict('image_material_binding_invalid')
     if binding['configuration'] != models.vision_binding():
         raise RecognitionConflict('image_configuration_changed')
-    # SourceEgress opens a UOW even for reads. Reuse this owned UOW while the
-    # binding CAS is held, so its normal validator sees the same transaction.
-    authority = SourceEgressService(TransactionRecords(records) if in_transaction else records)
+    _require_pdf_endpoint(binding['images'], binding['configuration'])
+    # 绑定提交借用原事务，原领域归属由创建方显式传入。
+    if in_transaction and owner_records is None:
+        raise RecognitionConflict('image_actual_owner_unavailable')
+    authority = SourceEgressService(owner_records, reader=records) if in_transaction else SourceEgressService(records)
     materials, snapshots, refs = privacy['material_refs'], privacy['source_snapshots'], request['input']['refs']
     if not materials or not len(materials) == len(snapshots) == len(refs):
         raise RecognitionConflict('image_material_binding_invalid')
@@ -153,7 +173,7 @@ def frozen_image_messages(records, models, request):
     frozen = json.loads(request['input']['text'])
     files = iter(binding['images'])
     messages = [{'role': message['role'], 'content': [
-        image_content(Path(next(files)['identity']['path']).read_bytes()) if part['type'] == 'image_ref' else deepcopy(part)
+        _material_content(next(files)) if part['type'] == 'image_ref' else deepcopy(part)
         for part in message['content']]} for message in frozen]
     validate_image_request(records, models, request)
     return messages
@@ -320,6 +340,10 @@ def read_uploaded_images(owner, project_id, item_id, run_id, reference_factory, 
     profile = owner.models.public().get('vision', {'mode': 'local'})
     fallback = profile.get('mode') == 'remote' and not egress_allowed(owner.items.records, owner.models, project_id, 'vision')
     remote = profile.get('mode') == 'remote' and not fallback
+    if any(Path(image['identity']['path']).suffix.lower() == '.pdf' for image in images):
+        if not remote:
+            raise RecognitionConflict('image_remote_disabled')
+        _require_pdf_endpoint(images, owner.models.vision_binding())
     turn_id = None
     key = 'image:' + item_id + ':' + run_id
     identity = {'kind': 'media.image_read', 'project': project_id, 'key': key, 'purpose': 'vision'}
@@ -327,7 +351,7 @@ def read_uploaded_images(owner, project_id, item_id, run_id, reference_factory, 
     versions = old.payload['request']['policy_versions'] if old else versions_for_turn('media.image_read')
     policy = get('image_read', version=versions['image_read'])
     if remote:
-        parts = [image_content(Path(image['identity']['path']).read_bytes()) for image in images]
+        parts = [_material_content(image) for image in images]
         messages = policy.prepare(parts)
         validate()
         def freeze(kind, **values):
@@ -368,7 +392,8 @@ def read_uploaded_images(owner, project_id, item_id, run_id, reference_factory, 
             raise RecognitionConflict('image_original_changed')
         if remote:
             binding = tx.read(_BINDINGS, turn_id).payload
-            _validate(tx, owner.models, binding['request'], binding, in_transaction=True)
+            _validate(tx, owner.models, binding['request'], binding, in_transaction=True,
+                owner_records=owner.items.records)
         old = tx.read('v2_image_reads', item_id)
         tx.put('v2_image_reads', item_id, payload, expected_revision=old.revision if old else 0)
         tx.commit()

@@ -11,6 +11,7 @@ it('reviews a frozen merge without publishing and shows all source documents', a
     if (options?.method === 'PATCH') return { ok: true, json: async () => ({ result_candidate_ids: ['new-pending'] }) };
     return { ok: true, json: async () => path.endsWith('/restructure-proposals') ? { items: [{
       id: 'merge1', revision: 3, state: 'pending', operation: 'merge', target_recognition_ids: ['a', 'b'],
+      documents: [{id:'doc1',title:'缓存记录'},{id:'doc2',title:'请求记录'}],
       snapshot: { pending_output: true, candidates: [{id:'a',payload:{content:'旧认识'}}], recognitions: [],
         experiences: [{payload:{provenance:{source_refs:[{type:'document',id:'doc1'},{type:'document',id:'doc2'}]}}}] },
       outputs: [{content:'合并认识',conditions:['条件']}], diff:{removed_contents:['旧认识'],added_contents:['合并认识']},
@@ -20,8 +21,8 @@ it('reviews a frozen merge without publishing and shows all source documents', a
   fireEvent.click(await screen.findByRole('button', { name: '合并 1' }));
   expect(await screen.findByText('旧认识')).toBeTruthy();
   expect(screen.getByText('合并认识')).toBeTruthy();
-  expect(screen.getByRole('button', {name:'打开整理稿 doc1'})).toBeTruthy();
-  expect(screen.getByRole('button', {name:'打开整理稿 doc2'})).toBeTruthy();
+  expect(screen.getByRole('button', {name:'打开整理稿 缓存记录'})).toBeTruthy();
+  expect(screen.getByRole('button', {name:'打开整理稿 请求记录'})).toBeTruthy();
   fireEvent.click(screen.getByRole('button',{name:'确认合并方案'}));
   await waitFor(() => expect(changed).toHaveBeenCalled());
   const calls = global.fetch.mock.calls.filter(([,o])=>o?.method);
@@ -31,7 +32,7 @@ it('reviews a frozen merge without publishing and shows all source documents', a
 });
 it('keeps stale support visible and prevents approval while permitting dismissal', async () => {
   vi.stubGlobal('fetch',vi.fn(async url=>({ok:true,json:async()=>String(url).includes('evidence-support') ? {
-    items:[{id:'s',revision:2,state:'pending',current:false,evidence:'支持说明',documents:[{id:'d',revision:1}]}],
+    items:[{id:'s',revision:2,state:'pending',current:false,evidence:'支持说明',documents:[{id:'d',revision:1,title:'支持资料'}]}],
   }:{items:[]}})));
   render(<ConsolidationSuggestions projectId="alpha" insightId="a"/>);
   fireEvent.click(await screen.findByRole('button',{name:'支持 1'}));

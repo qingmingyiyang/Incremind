@@ -14,8 +14,10 @@ from uuid import uuid4
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from stat import S_ISDIR, S_ISREG
 
 from .vault_migration_preflight import VaultMigrationPreflight, scan_legacy_vault_inventory
+from .native_io import native_io_path as _native_io_path
 
 
 _SAFE_SNAPSHOT_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
@@ -154,19 +156,19 @@ def create_vault_backup(
 
 
 
-def verify_vault_backup(snapshot_root: Path) -> VaultBackupSnapshot:
-    snapshot = _require_existing_root(snapshot_root, label="backup snapshot")
+def verify_vault_backup(snapshot_root: Path, *, strict_io: bool = False) -> VaultBackupSnapshot:
+    snapshot = _require_existing_root(snapshot_root, label="backup snapshot", strict_io=strict_io)
     if (snapshot / "vault-backup-incomplete.json").exists():
         raise VaultBackupRestoreError("vault backup snapshot is incomplete")
-    manifest = _read_manifest(snapshot)
+    manifest = _read_manifest(snapshot, strict_io=strict_io)
     snapshot_id = _required_snapshot_id(manifest.get("snapshot_id"))
     files = _manifest_files(manifest.get("files"))
     expected_fingerprint = _required_fingerprint(manifest.get("source_fingerprint"))
     if _fingerprint_manifest_files(files) != expected_fingerprint:
         raise VaultBackupRestoreError("vault backup manifest fingerprint is invalid")
     payload = snapshot / _PAYLOAD_DIRECTORY
-    _require_existing_root(payload, label="backup payload")
-    actual_files = _inventory_files(payload)
+    _require_existing_root(payload, label="backup payload", strict_io=strict_io)
+    actual_files = _inventory_files(payload, strict_io=strict_io)
     if tuple(item[0] for item in actual_files) != tuple(item["path"] for item in files):
         raise VaultBackupRestoreError("vault backup payload file set does not match manifest")
     for item in files:
@@ -176,9 +178,9 @@ def verify_vault_backup(snapshot_root: Path) -> VaultBackupSnapshot:
     return VaultBackupSnapshot(snapshot_id, snapshot, expected_fingerprint, len(files))
 
 
-def is_runtime_backup(snapshot_root: Path) -> bool:
+def is_runtime_backup(snapshot_root: Path, *, strict_io: bool = False) -> bool:
     """沿现有相对路径判断运行根层级，不增加快照字段。"""
-    files = _manifest_files(_read_manifest(Path(snapshot_root)).get("files"))
+    files = _manifest_files(_read_manifest(Path(snapshot_root), strict_io=strict_io).get("files"))
     for item in files:
         parts = Path(item["path"]).parts
         if parts[0] == ".rebuild-data" or (
@@ -221,33 +223,54 @@ def restore_vault_backup(
     return VaultRestoreResult(snapshot.snapshot_id, target, restored_fingerprint, len(files))
 
 
-def compare_vault_to_backup(*, snapshot_root: Path, vault_root: Path) -> VaultRestoreResult:
+def compare_vault_to_backup(
+    *, snapshot_root: Path, vault_root: Path, exclude_roots: tuple[Path, ...] = (),
+    exclude_logs: bool = False,
+) -> VaultRestoreResult:
     """Verify an existing Vault tree against an immutable backup without writing either."""
 
     snapshot = verify_vault_backup(snapshot_root)
     vault = _require_existing_root(vault_root, label="vault comparison root")
-    _require_disjoint_roots(snapshot.snapshot_root, vault, message="vault comparison root cannot overlap backup")
-    fingerprint = _fingerprint_inventory(_durable_inventory_files(vault))
+    excluded = _comparison_exclusions(vault, exclude_roots)
+    if not any(snapshot.snapshot_root.is_relative_to(path) for path in excluded):
+        _require_disjoint_roots(snapshot.snapshot_root, vault, message="vault comparison root cannot overlap backup")
+    fingerprint = _fingerprint_inventory(_backup_inventory(
+        vault, sqlite_online=False, exclude_logs=exclude_logs, exclude_roots=excluded,
+    ))
     if fingerprint != snapshot.source_fingerprint:
         raise VaultBackupRestoreError("vault comparison fingerprint does not match snapshot")
     return VaultRestoreResult(snapshot.snapshot_id, vault, fingerprint, snapshot.file_count)
 
 
-def fingerprint_vault_root(vault_root: Path) -> str:
+def fingerprint_vault_root(vault_root: Path, *, exclude_roots: tuple[Path, ...] = ()) -> str:
     """Return the verified full-tree fingerprint for an existing Vault root."""
 
     vault = _require_existing_root(vault_root, label="Vault fingerprint root")
-    return _fingerprint_inventory(_durable_inventory_files(vault))
+    excluded = _comparison_exclusions(vault, exclude_roots)
+    return _fingerprint_inventory(_durable_inventory_files(vault, exclude_roots=excluded))
 
 
-def fingerprint_vault_restore_source(vault_root: Path) -> str:
+def fingerprint_vault_entry(path: Path) -> str:
+    """沿备份格式校验一个待移动的顶层项目。"""
+    entry = _require_non_symlink_path(path, label="recovery entry")
+    if entry.is_dir():
+        return fingerprint_vault_root(entry)
+    if not entry.is_file():
+        raise VaultBackupRestoreError("recovery entry must be a regular file or directory")
+    return _fingerprint_inventory(((entry.name, entry),))
+
+
+def fingerprint_vault_restore_source(
+    vault_root: Path, *, exclude_roots: tuple[Path, ...] = (), exclude_logs: bool = False,
+) -> str:
     """Bind a confirmation to logical SQLite contents, not storage counters.
 
     Physical backup manifests and offline adoption keep fingerprint_vault_root.
     This identity is only for comparing the live source across preview/confirm.
     """
     vault = _require_existing_root(vault_root, label="Vault restore source")
-    files = _inventory_files(vault)
+    excluded = _comparison_exclusions(vault, exclude_roots)
+    files = _backup_inventory(vault, sqlite_online=True, exclude_logs=exclude_logs, exclude_roots=excluded)
     entries = []
     for relative, path in files:
         identity = _file_identity(path)
@@ -257,9 +280,17 @@ def fingerprint_vault_restore_source(vault_root: Path) -> str:
             entry = (relative, "file", _file_size(path), _sha256_file(path))
         _require_file_identity(path, identity)
         entries.append(entry)
-    if tuple(name for name, _ in _inventory_files(vault)) != tuple(name for name, _ in files):
+    ending = _backup_inventory(vault, sqlite_online=True, exclude_logs=exclude_logs, exclude_roots=excluded)
+    if tuple(name for name, _ in ending) != tuple(name for name, _ in files):
         raise VaultBackupRestoreConflict("Vault source file set changed", reason_code="backup_source_changed")
     return hashlib.sha256(_logical_json(entries)).hexdigest()
+
+
+def _comparison_exclusions(root: Path, values: tuple[Path, ...]) -> tuple[Path, ...]:
+    excluded = tuple(_require_non_symlink_path(Path(value), label="excluded recovery root") for value in values)
+    if any(path == root or not path.is_relative_to(root) for path in excluded):
+        raise VaultBackupRestoreError("excluded recovery root must be inside comparison root")
+    return excluded
 
 
 def _logical_json(value: object) -> bytes:
@@ -370,9 +401,16 @@ def execute_preflight_bound_vault_migration(
     )
 
 
-def _require_existing_root(value: Path, *, label: str) -> Path:
+def _require_existing_root(value: Path, *, label: str, strict_io: bool = False) -> Path:
     path = _require_non_symlink_path(value, label=label)
-    if not path.exists() or not path.is_dir():
+    if strict_io:
+        try:
+            exists = S_ISDIR(path.stat().st_mode)
+        except (FileNotFoundError, NotADirectoryError):
+            exists = False
+    else:
+        exists = path.exists() and path.is_dir()
+    if not exists:
         raise VaultBackupRestoreError(f"{label} must be an existing directory")
     return path
 
@@ -430,11 +468,15 @@ def _backup_inventory(root: Path, *, sqlite_online: bool, exclude_logs: bool, ex
     return tuple(item for item in files if not log_path(item[0]))
 
 
-def _inventory_files(root: Path, *, exclude_roots=()) -> tuple[tuple[str, Path], ...]:
+def _raise_inventory_error(error: OSError) -> None:
+    raise error
+
+
+def _inventory_files(root: Path, *, exclude_roots=(), strict_io: bool = False) -> tuple[tuple[str, Path], ...]:
     files: list[tuple[str, Path]] = []
     native_root = _native_io_path(root)
     excluded = {os.path.normcase(_native_io_path(path)) for path in exclude_roots}
-    for current, directories, filenames in os.walk(native_root):
+    for current, directories, filenames in os.walk(native_root, onerror=_raise_inventory_error if strict_io else None):
         directories[:] = [name for name in directories if os.path.normcase(os.path.join(current, name)) not in excluded]
         for name in (*directories, *filenames):
             if os.path.islink(os.path.join(current, name)):
@@ -442,6 +484,8 @@ def _inventory_files(root: Path, *, exclude_roots=()) -> tuple[tuple[str, Path],
                     "vault backup rejects symlinked entries"
                 )
         for name in filenames:
+            if os.path.normcase(os.path.join(current, name)) in excluded:
+                continue
             # SQLite shared-memory indexes are disposable process-local caches.
             # They may disappear as the last connection closes and are rebuilt
             # from the database/WAL, so they are neither backup authority nor a
@@ -449,7 +493,8 @@ def _inventory_files(root: Path, *, exclude_roots=()) -> tuple[tuple[str, Path],
             if name.endswith(("-shm", "-wal")):
                 continue
             native_path = os.path.join(current, name)
-            if not os.path.isfile(native_path):
+            regular = S_ISREG(os.stat(native_path).st_mode) if strict_io else os.path.isfile(native_path)
+            if not regular:
                 continue
             relative = os.path.relpath(native_path, native_root).replace(
                 "\\",
@@ -592,13 +637,24 @@ def _write_json_atomically(path: Path, payload: dict[str, object]) -> None:
             os.unlink(temporary)
 
 
-def _read_manifest(snapshot: Path) -> dict[str, object]:
+def _regular_file(path: Path, *, strict_io: bool) -> bool:
+    if not strict_io:
+        return path.is_file() and not path.is_symlink()
+    try:
+        return S_ISREG(path.lstat().st_mode)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+
+
+def _read_manifest(snapshot: Path, *, strict_io: bool = False) -> dict[str, object]:
     path = snapshot / _MANIFEST_NAME
-    if not path.is_file() or path.is_symlink():
+    if not _regular_file(path, strict_io=strict_io):
         raise VaultBackupRestoreError("vault backup manifest is missing")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        if strict_io and isinstance(error, OSError):
+            raise
         raise VaultBackupRestoreError("vault backup manifest is unreadable") from error
     if not isinstance(payload, dict) or payload.get("schema_version") != "1.0.0":
         raise VaultBackupRestoreError("vault backup manifest is invalid")
@@ -685,15 +741,6 @@ def _make_directory(path: Path) -> None:
     os.makedirs(_native_io_path(path), exist_ok=True)
 
 
-def _native_io_path(path: Path) -> str:
-    resolved = str(path.resolve(strict=False))
-    if os.name != "nt" or resolved.startswith("\\\\?\\"):
-        return resolved
-    if resolved.startswith("\\\\"):
-        return "\\\\?\\UNC\\" + resolved[2:]
-    return "\\\\?\\" + resolved
-
-
 def _sqlite_tables(root):
     tables = {}
     for path in sorted(root.rglob('*')):
@@ -778,13 +825,15 @@ def write_backup_catalog(snapshot, payload):
         os.fsync(output.fileno())
 
 
-def read_backup_catalog(snapshot):
+def read_backup_catalog(snapshot, *, strict_io: bool = False):
     path = Path(snapshot) / 'recovery-point.json'
-    if not path.is_file() or path.is_symlink():
+    if not _regular_file(path, strict_io=strict_io):
         return None
     try:
         value = json.loads(path.read_text(encoding='utf8'))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        if strict_io and isinstance(error, OSError):
+            raise
         return None
     if not isinstance(value, dict) or value.get('schema_version') != '2.0.0':
         return None

@@ -19,10 +19,16 @@ from backend.shared.llm.litellm_gateway import LiteLLMCompletionGateway, ModelRe
 from backend.shared.llm.json_mode import StructuredResponseDecodeError
 from backend.shared.llm.openai_responses import (ResponsesCompletion, ResponsesError, ProviderBackgroundOptions,
     ProviderResumeOnlyOptions, ProviderResponseCursor)
-from backend.shared.llm.model_capabilities import ModelCapabilities
-from backend.shared.llm.model_transport import ModelTransportError, ModelTransportTimeout, ModelInterrupted, complete_with_owned_transport
+from backend.shared.llm.model_capabilities import ModelCapabilities, is_official_terra
+from backend.shared.llm.oxr_gateway import OxrImageGateway, is_oxr_endpoint
+from backend.shared.llm.model_transport import (
+    ModelTransportError, ModelTransportTimeout, ModelInterrupted, OwnedAttemptInterruption,
+    complete_with_owned_transport,
+)
 from backend.shared.llm.model_prices import validate_rates, official_prices
-from .model_costs import PRICES, configuration_binding, PriceRecordingSink
+from .model_costs import PRICES, configuration_binding, PriceRecordingSink, BalanceRecordingSink, SharedModelMeteringError
+from .model_binding import public_model_configuration, valid_public_configuration_fields
+from .local_generation_readiness import inspect_local_generation, retry_loading, LocalGenerationError
 from .chatgpt_subscription import ChatGPTSubscriptions, SubscriptionError, RESOURCE, PROFILES, PROFILE
 from core.ai_kernel.event_store import RunLeaseRevoked
 from core.storage_provider.sqlite_uow import SQLiteStructuredRecordStore
@@ -56,6 +62,11 @@ class ModelResponseDecodeError(ModelConfigurationError):
 
 
 def _model_request_failure(error, *, include_status=True):
+    if isinstance(error, SharedModelMeteringError):
+        failure = ModelConfigurationError(error.public_code)
+        failure.status_code, failure.code = error.status_code, error.code
+        failure.retryable = False
+        return failure
     status = getattr(error, "status_code", None)
     suffix = f" (HTTP {status})" if include_status and isinstance(status, int) and 100 <= status <= 599 else ""
     if type(error) is StructuredResponseDecodeError and error.completed_wire is True:
@@ -151,6 +162,8 @@ class ModelConfiguration:
         internal_local_key_provider: Callable[[str], str | None] | None = None,
         local_models_root: Path | None = None,
         model_http_client_factory: Callable[[], object] | None = None,
+        server_model_access=None,
+        server_model_balances=None,
     ):
         self.records = records
         self.root = root
@@ -160,11 +173,57 @@ class ModelConfiguration:
         self._completion_fn = completion_fn or _load_litellm_completion
         self._internal_local_key_provider = internal_local_key_provider
         self._model_http_client_factory = model_http_client_factory
+        self.server_model_access = server_model_access
+        self.server_model_balances = server_model_balances
         self._lock = RLock()
         self.subscriptions = subscriptions or ChatGPTSubscriptions(records, self.secrets)
         self._responses = ResponsesCompletion()
         self._embedding_projection = None
         self._embedding_policy_reader = None
+        self._provider_connections = None
+
+    def bind_provider_connections(self, registry):
+        if (getattr(registry, '_connection_owner', None) is not self
+                or registry.records is not self.records or registry.secrets is not self.secrets):
+            raise ModelConfigurationError('provider_connection_owner_invalid')
+        with self._lock:
+            self._provider_connections = registry
+
+    def select_provider_connection(self, identity, **values):
+        if self._provider_connections is None:
+            raise ModelConfigurationError('provider_connection_owner_invalid')
+        from .provider_connection_config import select_provider_connection
+        return select_provider_connection(self, self._provider_connections, identity, **values)
+
+    def _connection_status(self, purpose, payload):
+        use = self.records.read('v2_provider_connection_uses', purpose)
+        if use is None or payload.get('secret_ref') != use.payload['secret_ref']:
+            return None
+        available = True
+        try:
+            self._validate_connection(purpose, payload)
+        except ModelConfigurationError:
+            available = False
+        return {'id': use.payload['connection_id'], 'revision': use.payload['connection_revision'], 'available': available}
+
+    def _validate_connection(self, purpose, payload):
+        use = self.records.read('v2_provider_connection_uses', purpose)
+        if use is None or payload.get('secret_ref') != use.payload['secret_ref']:
+            return
+        if self._provider_connections is None:
+            raise ModelConfigurationError('provider_connection_owner_invalid')
+        try:
+            self._provider_connections.validate_connection_use(self.records, purpose, payload)
+        except ValueError as error:
+            raise ModelConfigurationError(str(error)) from None
+
+    def _release_model_secret(self, ref):
+        if not ref:
+            return
+        if self._provider_connections is not None:
+            self._provider_connections.release_connection_secret(ref)
+        else:
+            self.secrets.delete(ref)
 
     def bind_embedding(self, projection, policy_reader):
         if not callable(projection) or not callable(policy_reader):
@@ -187,6 +246,7 @@ class ModelConfiguration:
 
     def select_subscription(self, *, model: str | None, expected_revision: int,
                             allow_remote: bool | None = None, expected_generation_revision: int | None = None) -> dict:
+        self._require_independent('generation')
         if model is not None and (not isinstance(model, str) or not model or len(model) > 200):
             raise ModelConfigurationError("subscription_model_invalid")
         if type(expected_revision) is not int or expected_revision < 0:
@@ -232,13 +292,39 @@ class ModelConfiguration:
             raise ModelConfigurationError('unknown model purpose')
         configuration = configuration if configuration is not None else self._public_one(purpose)
         if purpose == 'embedding' and configuration.get('provider') == 'local':
+            if self.server_model_access is not None:
+                current = self._public_one(purpose)
+                if (current.get('provider') != 'local' or current.get('mode') != 'local'
+                        or any(configuration.get(key) != current.get(key)
+                               for key in ('mode', 'model', 'model_key', 'mode_revision', 'runtime_revision'))):
+                    raise ModelConfigurationError('model_price_configuration_changed')
             return {'rates': {'input_per_million': '0', 'output_per_million': '0',
                              'cache_read_per_million': '0'},
                     'source': 'local', 'revision': 0, 'editable': False}
+        if self.server_model_access is not None:
+            selection = self._server_selection(purpose, public=True)
+            if selection['mode'] == 'shared':
+                profile = selection['configuration']
+                if profile is None or not selection['available']:
+                    return {'rates': None, 'source': None, 'revision': 0, 'editable': False}
+                binding = configuration.get('server_model_binding')
+                if binding != selection['server_model_binding']:
+                    raise ModelConfigurationError('server_model_binding_changed')
+                return {'rates': profile.get('prices', {}).get(configuration['model']),
+                    'source': 'server', 'revision': binding['profile_revision'], 'editable': False}
         instant = at if at is not None else datetime.now(timezone.utc)
         saved = self.records.read(PRICES, purpose)
         revision = saved.revision if saved else 0
-        if saved and saved.payload.get('configuration') == configuration_binding(configuration):
+        current_binding = configuration_binding(configuration)
+        saved_binding = saved.payload.get('configuration') if saved else None
+        same_configuration = saved_binding == current_binding
+        if (not same_configuration and isinstance(saved_binding, Mapping)
+                and current_binding.get('server_model_binding', {}).get('mode') == 'independent'
+                and saved_binding.get('server_model_binding', {}).get('mode', 'independent') == 'independent'):
+            # 个人价目继续属于原个人配置；中央价目在上方由中央主人独立投影。
+            same_configuration = ({key: value for key, value in saved_binding.items() if key != 'server_model_binding'}
+                == {key: value for key, value in current_binding.items() if key != 'server_model_binding'})
+        if saved and same_configuration:
             return {'rates': dict(saved.payload['rates']), 'source': 'manual', 'revision': revision, 'editable': True}
         known = official_prices(configuration.get('provider', ''), configuration.get('model', ''),
                                 configuration.get('base_url', ''))
@@ -247,6 +333,7 @@ class ModelConfiguration:
                 'revision': revision, 'editable': rates is None}
 
     def update_model_prices(self, purpose, rates, *, expected_revision, expected_configuration_revision):
+        self._require_independent(purpose)
         if purpose not in PURPOSES or any(type(value) is not int or value < 0 for value in
                                          (expected_revision, expected_configuration_revision)):
             raise ModelConfigurationError('model_price_invalid')
@@ -268,7 +355,26 @@ class ModelConfiguration:
             tx.commit()
         return self.model_prices(purpose)
 
-    def price_wire_sink(self, sink, *, purpose='generation', configuration):
+    def price_wire_sink(self, sink, *, purpose='generation', configuration, max_output_tokens=None, wire_request=None):
+        self.require_model_wire_owner(purpose, sink)
+        binding = configuration.get('server_model_binding')
+        selection = self._server_selection(purpose, public=True)
+        shared = (isinstance(binding, Mapping) and binding.get('mode') == 'shared'
+            or selection is not None and selection['mode'] == 'shared')
+        local = purpose == 'embedding' and configuration.get('provider') == 'local' and configuration.get('mode') == 'local'
+        if shared and not local:
+            if (self.server_model_access is None or self.server_model_balances is None
+                    or self.server_model_balances.models is not self.server_model_access._owner):
+                raise ModelConfigurationError('server_model_billing_owner_unavailable')
+            if not isinstance(binding, Mapping) or binding.get('mode') != 'shared':
+                raise ModelConfigurationError('server_model_binding_changed')
+            if (sink is None or not all(isinstance(getattr(sink, key, None), str)
+                    for key in ('turn_id', 'model_request_id'))):
+                raise ModelConfigurationError('server_model_wire_owner_required')
+            priced = PriceRecordingSink(sink, self, purpose, configuration)
+            return BalanceRecordingSink(priced, self.server_model_balances, self.server_model_access,
+                purpose, configuration, max_output_tokens=max_output_tokens, wire_request=wire_request,
+                cost_records=self.records)
         if sink is None or not all(isinstance(getattr(sink, key, None), str)
                                    for key in ('turn_id', 'model_request_id')):
             return sink
@@ -280,11 +386,16 @@ class ModelConfiguration:
                 "generation_mode": self.generation_mode(),
             }
 
+    def public_for_purpose(self, purpose: str) -> dict:
+        if purpose not in PURPOSES:
+            raise ModelConfigurationError('unknown model purpose')
+        with self._lock:
+            # 委托实际实例，辅助模型仍须核验冻结的 fast 绑定。
+            return self._public_one(purpose)
+
     def _generation_authority_binding(self):
         public = self._public_one('generation')
-        configuration = {key: public.get(key) for key in _GOVERNED_CONFIGURATION_FIELDS}
-        if public.get('subscription_binding'):
-            configuration['subscription_binding'] = dict(public['subscription_binding'])
+        configuration = public_model_configuration(public)
         return {'configuration': configuration, 'mode_revision': self.generation_mode()['revision']}
 
     def _provider_store_selection(self, reader):
@@ -305,6 +416,14 @@ class ModelConfiguration:
             'allow_remote': payload.get('allow_remote', False),
             'revision': generation.revision if generation else 0,
             'configured': bool(payload.get('model') and base and has_key), 'has_api_key': has_key}
+        server_selection = self._server_selection('generation', public=True)
+        if server_selection is not None:
+            if server_selection['mode'] == 'shared':
+                public = self._public_one('generation')
+                configuration = public_model_configuration(public)
+                base, mode, subscription = configuration['base_url'], 'api', False
+            else:
+                configuration['server_model_binding'] = dict(server_selection['server_model_binding'])
         binding = {'configuration': configuration, 'mode_revision': mode_revision}
         adapter = None
         if (mode == 'api' and not subscription and configuration['configured']
@@ -333,6 +452,10 @@ class ModelConfiguration:
             row = self.records.read(_FAST_MODEL_COLLECTION, 'default')
             model = row.payload.get('model') if row else None
             configured = bool(model and row.payload.get('binding') == self._generation_authority_binding())
+            if configured:
+                selection = self._server_selection('generation', public=True)
+                if selection is not None and selection['mode'] == 'shared':
+                    configured = bool(selection['available'] and model in selection['configuration']['allowed_models'])
             return {'model': model, 'revision': row.revision if row else 0, 'configured': configured}
 
     def update_fast_model(self, *, model, expected_revision, expected_generation_revision,
@@ -342,9 +465,16 @@ class ModelConfiguration:
                        (expected_revision, expected_generation_revision, expected_mode_revision))):
             raise ModelConfigurationError('fast_model_invalid')
         model = model.strip() if model is not None else None
+        selection = self._server_selection('generation')
+        if (model is not None and selection is not None and selection['mode'] == 'shared'
+                and model not in selection['configuration']['allowed_models']):
+            raise ModelConfigurationError('server_model_not_allowed')
         initial_binding = self._generation_authority_binding()
+        if (selection is not None and initial_binding['configuration'].get('server_model_binding')
+                != selection['server_model_binding']):
+            raise ModelConfigurationError('fast_model_configuration_changed')
         catalog = None
-        if model is not None and self.subscription_selection()['model']:
+        if model is not None and not (selection and selection['mode'] == 'shared') and self.subscription_selection()['model']:
             catalog = {entry['id'] for entry in self.subscriptions.models()}
         with self._lock, self.records.begin() as tx:
             generation = tx.read('recognition_model_config', 'generation')
@@ -360,7 +490,8 @@ class ModelConfiguration:
                     raise ModelConfigurationError('model_not_configured')
                 if self._local_selected() and model != _LOCAL_MODEL:
                     raise ModelConfigurationError('fast_local_model_unavailable')
-                if self.subscription_selection()['model'] and (catalog is None or model not in catalog):
+                if (not (selection and selection['mode'] == 'shared') and self.subscription_selection()['model']
+                        and (catalog is None or model not in catalog)):
                     raise ModelConfigurationError('subscription_model_unavailable')
             tx.put(_FAST_MODEL_COLLECTION, 'default', {'model': model,
                 'binding': binding if model is not None else None}, expected_revision=expected_revision)
@@ -380,8 +511,7 @@ class ModelConfiguration:
                 or set(binding['parent']) != {'configuration', 'mode_revision'}
                 or type(binding['parent']['mode_revision']) is not int
                 or not isinstance(binding['parent']['configuration'], Mapping)
-                or set(binding['parent']['configuration']) not in (
-                    set(_GOVERNED_CONFIGURATION_FIELDS), set(_GOVERNED_CONFIGURATION_FIELDS) | {'subscription_binding'})):
+                or not valid_public_configuration_fields(binding['parent']['configuration'])):
             raise ModelConfigurationError('fast_model_binding_invalid')
         if binding['model'] is None:
             return self
@@ -390,17 +520,43 @@ class ModelConfiguration:
     def _public_one(self, purpose: str) -> dict:
         record = self.records.read("recognition_model_config", purpose)
         payload = dict(record.payload) if record else {}
+        selection = self._server_selection(purpose, public=True)
+        if selection is not None and selection['mode'] == 'shared':
+            profile = selection['configuration']
+            public = {'purpose': purpose, **{key: profile[key] if profile else '' for key in ('provider', 'base_url', 'model')},
+                'allow_remote': payload.get('allow_remote', False),
+                'enabled': payload.get('enabled', False) is True,
+                'revision': record.revision if record else 0, 'has_api_key': selection['available'],
+                'configured': selection['available'],
+                'server_managed': True,
+                'allowed_models': list(profile['allowed_models']) if profile else [],
+                **({'server_model_binding': dict(selection['server_model_binding'])}
+                   if selection['server_model_binding'] is not None else {})}
+            if purpose == 'embedding' and self._embedding_projection is not None:
+                public = self._embedding_projection(public)
+                if public.get('mode') == 'local' and public.get('provider') == 'local':
+                    public.pop('server_model_binding', None)
+            if purpose == 'vision':
+                from .local_image_provider import local_image_status
+                choice = self.records.read('v2_vision_mode', 'default')
+                local = local_image_status(self.root)
+                public.update(mode=choice.payload['mode'] if choice else 'local',
+                    mode_revision=choice.revision if choice else 0, local=local)
+                if public['mode'] == 'local':
+                    public['configured'] = local['status'] == 'ready'
+            return public
+        connection = self._connection_status(purpose, payload)
         secret_ref = payload.pop("secret_ref", "")
         has_key = bool(secret_ref and self.secrets.has_secret(secret_ref))
         local_selected = purpose == "generation" and self._local_selected() and _valid_local_profile(payload)
         selection = self.subscription_selection() if purpose == "generation" else {}
         if selection.get("model"):
             auth = self.subscriptions.status()
-            return {"purpose": purpose, "provider": "openai", "base_url": RESOURCE,
+            return self._with_server_binding({"purpose": purpose, "provider": "openai", "base_url": RESOURCE,
                 "model": selection["model"], "allow_remote": payload.get("allow_remote", False),
                 "revision": record.revision if record else 0, "enabled": True,
                 "has_api_key": False, "configured": auth["sharing"] and selection["account_revision"] == auth["revision"],
-                "subscription_binding": {"selection": selection["revision"], "account": auth["revision"]}}
+                "subscription_binding": {"selection": selection["revision"], "account": auth["revision"]}}, purpose)
         public = {
             "purpose": purpose, "provider": "openai", "base_url": "", "model": "",
             "allow_remote": False, **payload,
@@ -408,8 +564,11 @@ class ModelConfiguration:
             "revision": record.revision if record else 0,
             "has_api_key": has_key,
             "configured": bool(payload.get("model") and payload.get("base_url")
-                               and (has_key or (local_selected and self._local_model_installed()))),
+                               and (self._local_generation_readiness().available if local_selected else has_key)
+                               and (connection is None or connection['available'])),
         }
+        if connection is not None:
+            public['provider_connection'] = connection
         if purpose == 'embedding':
             if self._embedding_projection is not None:
                 public = self._embedding_projection(public)
@@ -421,7 +580,40 @@ class ModelConfiguration:
             public.update(mode=mode, mode_revision=choice.revision if choice else 0, local=local)
             if mode == 'local':
                 public['configured'] = local['status'] == 'ready'
-        return public
+        return self._with_server_binding(public, purpose)
+
+    def _server_selection(self, purpose, *, public=False):
+        if self.server_model_access is None:
+            return None
+        try:
+            return (self.server_model_access.public_selection(purpose) if public
+                    else self.server_model_access.selection(purpose))
+        except ValueError as error:
+            raise ModelConfigurationError(str(error)) from None
+
+    def _with_server_binding(self, value, purpose):
+        selection = self._server_selection(purpose)
+        if selection is not None:
+            if selection['mode'] != 'independent':
+                raise ModelConfigurationError('server_model_binding_changed')
+            value = {**value, 'server_model_binding': dict(selection['server_model_binding'])}
+        return value
+
+    def _require_independent(self, purpose):
+        selection = self._server_selection(purpose, public=True)
+        if selection is not None and selection['mode'] == 'shared':
+            raise ModelConfigurationError('server_model_configuration_readonly')
+
+    def require_model_wire_owner(self, purpose, sink):
+        selection = self._server_selection(purpose, public=True)
+        if selection is None or selection['mode'] != 'shared':
+            return
+        if purpose == 'embedding':
+            public = self._public_one(purpose)
+            if public.get('provider') == 'local' and public.get('mode') == 'local':
+                return
+        if not callable(getattr(sink, 'begin_model_wire_attempt', None)):
+            raise ModelConfigurationError('server_model_wire_owner_required')
 
     def update_vision_mode(self, *, mode, expected_revision):
         if (not isinstance(mode, str) or mode not in {'local', 'remote'}
@@ -435,6 +627,13 @@ class ModelConfiguration:
     def vision_binding(self):
         """Internal identity only; never expose the secret handle in a read model."""
         with self._lock:
+            selection = self._server_selection('vision', public=True)
+            if selection is not None and selection['mode'] == 'shared':
+                public = self._public_one('vision')
+                return {key: public.get(key) for key in
+                    ('provider', 'model', 'base_url', 'allow_remote', 'revision', 'mode', 'mode_revision')} | {
+                        'has_key': public['has_api_key'],
+                        'server_model_binding': public.get('server_model_binding')}
             row = self.records.read('recognition_model_config', 'vision')
             mode = self.records.read('v2_vision_mode', 'default')
             payload = dict(row.payload) if row else {}
@@ -448,6 +647,14 @@ class ModelConfiguration:
     def generation_mode(self) -> dict[str, object]:
         """Expose the actual selection without exposing either profile's key reference."""
         with self._lock:
+            local = self._local_generation_readiness()
+            selection = self._server_selection('generation', public=True)
+            if selection is not None and selection['mode'] == 'shared':
+                choice = self.records.read(_GENERATION_MODE_COLLECTION, _GENERATION_MODE_ID)
+                return {'mode': 'api', 'local_enabled': False, 'local_base_url': _DEFAULT_LOCAL_BASE_URL,
+                    'local_model': _LOCAL_MODEL, 'local_model_installed': local.installed,
+                    'local_readiness': local.public(),
+                    'api_configured': selection['available'], 'revision': choice.revision if choice else 0}
             choice = self.records.read(_GENERATION_MODE_COLLECTION, _GENERATION_MODE_ID)
             current = self.records.read("recognition_model_config", "generation")
             current_payload = dict(current.payload) if current else {}
@@ -463,21 +670,30 @@ class ModelConfiguration:
                 api = current_payload if mode == "api" else {}
                 local_base_url = str(current_payload.get("base_url") or _DEFAULT_LOCAL_BASE_URL) if mode == "local" else _DEFAULT_LOCAL_BASE_URL
             api_ref = api.get("secret_ref") if isinstance(api, Mapping) else None
+            connection = self._connection_status('generation', api)
             return {
                 "mode": "subscription" if self.subscription_selection()["model"] else mode,
                 "local_enabled": local_enabled,
                 "local_base_url": local_base_url,
                 "local_model": _LOCAL_MODEL,
-                "local_model_installed": self._local_model_installed(),
+                "local_model_installed": local.installed,
+                "local_readiness": local.public(),
                 "api_configured": bool(api.get("base_url") and api.get("model") and api_ref
-                                       and self.secrets.has_secret(str(api_ref))),
+                                       and self.secrets.has_secret(str(api_ref))
+                                       and (connection is None or connection['available'])),
                 "revision": choice.revision if choice else 0,
             }
 
     def _local_model_installed(self) -> bool:
-        return (self._local_models_root / _LOCAL_MODEL / "model.safetensors").is_file()
+        return self._local_generation_readiness().installed
+
+    def _local_generation_readiness(self):
+        return inspect_local_generation(self._local_models_root / _LOCAL_MODEL)
 
     def _local_selected(self) -> bool:
+        selection = self._server_selection('generation', public=True)
+        if selection is not None and selection['mode'] == 'shared':
+            return False
         choice = self.records.read(_GENERATION_MODE_COLLECTION, _GENERATION_MODE_ID)
         if choice:
             return choice.payload.get("mode") == "local" and choice.payload.get("local_enabled") is True
@@ -485,18 +701,22 @@ class ModelConfiguration:
         return bool(current and current.payload.get("model") == _LOCAL_MODEL
                     and _is_loopback_endpoint(str(current.payload.get("base_url") or "")))
 
-    def local_generation_allowed(self) -> bool:
+    def local_generation_selected(self) -> bool:
         with self._lock:
             if self.subscription_selection()["model"]:
                 return False
             current = self.records.read("recognition_model_config", "generation")
             return bool(self._local_selected() and current
-                        and _valid_local_profile(current.payload) and self._local_model_installed())
+                        and _valid_local_profile(current.payload))
+
+    def local_generation_allowed(self) -> bool:
+        return self.local_generation_selected() and self._local_generation_readiness().available
 
     def update_generation_mode(
         self, *, mode: str, local_enabled: bool, local_base_url: str,
         expected_revision: int,
     ) -> dict[str, object]:
+        self._require_independent('generation')
         if not isinstance(mode, str) or mode not in {"api", "local"} or not isinstance(local_enabled, bool):
             raise ModelConfigurationError("invalid_generation_mode")
         if isinstance(expected_revision, bool) or not isinstance(expected_revision, int) or expected_revision < 0:
@@ -504,13 +724,17 @@ class ModelConfiguration:
         local_base_url = _validated_local_model_base_url(local_base_url)
         if mode == "local" and not local_enabled:
             raise ModelConfigurationError("enable_local_model_before_selection")
-        if mode == "local" and not self._local_model_installed():
-            raise ModelConfigurationError("local_model_not_installed")
         with self._lock:
             choice = self.records.read(_GENERATION_MODE_COLLECTION, _GENERATION_MODE_ID)
             current_choice_revision = choice.revision if choice else 0
             if current_choice_revision != expected_revision:
                 raise ModelConfigurationError("generation_mode_revision_conflict")
+            if mode == "local":
+                try:
+                    readiness = self._local_generation_readiness()
+                    readiness.require_selection()
+                except LocalGenerationError as error:
+                    raise ModelConfigurationError(str(error)) from error
             generation = self.records.read("recognition_model_config", "generation")
             current = dict(generation.payload) if generation else {}
             if choice:
@@ -539,12 +763,40 @@ class ModelConfiguration:
                            expected_revision=generation.revision if generation else 0)
                 tx.put(_GENERATION_MODE_COLLECTION, _GENERATION_MODE_ID, selection,
                        expected_revision=current_choice_revision)
+                if mode == 'local':
+                    try:
+                        latest = self._local_generation_readiness()
+                        latest.require_selection()
+                        if latest.identity != readiness.identity:
+                            raise LocalGenerationError('local_model_assets_changed')
+                    except LocalGenerationError as error:
+                        raise ModelConfigurationError(str(error)) from error
                 tx.commit()
+            if mode == 'local':
+                retry_loading(latest)
             return self.generation_mode()
 
     def update(self, purpose: str, data: dict) -> dict:
         if purpose not in PURPOSES:
             raise ModelConfigurationError("unknown model purpose")
+        selection = self._server_selection(purpose, public=True)
+        if selection is not None and selection['mode'] == 'shared':
+            if set(data) - {'allow_remote', 'enabled', 'expected_revision'}:
+                raise ModelConfigurationError('server_model_configuration_readonly')
+            if any(type(data[key]) is not bool for key in ('allow_remote', 'enabled') if key in data):
+                raise ModelConfigurationError('invalid model configuration')
+            revision = data.get('expected_revision')
+            if type(revision) is not int or revision < 0:
+                raise ModelConfigurationError('expected_revision must be a nonnegative integer')
+            with self._lock, self.records.begin() as tx:
+                if selection['server_model_binding'] is not None:
+                    self.server_model_access.validate_binding(selection['server_model_binding'])
+                current = tx.read('recognition_model_config', purpose)
+                payload = dict(current.payload) if current else {}
+                payload.update({key: data[key] for key in ('allow_remote', 'enabled') if key in data})
+                tx.put('recognition_model_config', purpose, payload, expected_revision=revision)
+                tx.commit()
+            return self._public_one(purpose)
         revision = data.get("expected_revision")
         if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
             raise ModelConfigurationError("expected_revision must be a nonnegative integer")
@@ -590,6 +842,7 @@ class ModelConfiguration:
                 self.secrets.set(ref, new_key)
             payload["secret_ref"] = ref
             try:
+                self._validate_connection(purpose, payload)
                 with self.records.begin() as tx:
                     tx.put("recognition_model_config", purpose, payload,
                            expected_revision=revision)
@@ -603,20 +856,37 @@ class ModelConfiguration:
                     self.secrets.delete(ref)
                 raise
             if old_ref and ref != old_ref:
-                self.secrets.delete(old_ref)
+                self._release_model_secret(old_ref)
             return self._public_one(purpose)
 
     def snapshot(self, purpose: str) -> dict:
         if purpose not in PURPOSES:
             raise ModelConfigurationError("unknown model purpose")
         with self._lock:
+            if purpose == 'embedding' and self.server_model_access is not None and self._embedding_projection is not None:
+                selected = self._public_one(purpose)
+                if selected.get('mode') == 'local' and selected.get('provider') == 'local':
+                    if not selected['configured']:
+                        raise ModelConfigurationError('model_not_configured')
+                    return {**selected, 'api_key': 'local-vector'}
+            selection = self._server_selection(purpose)
+            if selection is not None and selection['mode'] == 'shared':
+                public = self._public_one(purpose)
+                binding = selection['server_model_binding']
+                if public['server_model_binding'] != binding:
+                    raise ModelConfigurationError('server_model_binding_changed')
+                try:
+                    credential = self.server_model_access.credential(binding)
+                except ValueError as error:
+                    raise ModelConfigurationError(str(error)) from None
+                return {**public, 'api_key': credential.value}
             record = self.records.read("recognition_model_config", purpose)
             if purpose == 'embedding':
                 selected = self._public_one(purpose)
                 if selected.get('mode') == 'local':
                     if not selected['configured']:
                         raise ModelConfigurationError('model_not_configured')
-                    return {**selected, 'api_key': 'local-vector'}
+                    return self._with_server_binding({**selected, 'api_key': 'local-vector'}, purpose)
             if purpose == "generation" and self.subscription_selection()["model"]:
                 before = self._public_one(purpose)
                 if not before["configured"]:
@@ -627,15 +897,21 @@ class ModelConfiguration:
                     raise ModelConfigurationError(error.code) from None
                 if before != self._public_one(purpose):
                     raise ModelConfigurationError("model_configuration_changed_before_request")
-                return {**before, "api_key": key}
+                return self._with_server_binding({**before, "api_key": key}, purpose)
             if not record:
                 raise ModelConfigurationError("model_not_configured")
             payload = dict(record.payload)
+            self._validate_connection(purpose, payload)
             secret_ref = payload.pop("secret_ref", "")
             local_selected = purpose == "generation" and self._local_selected()
             if local_selected and not _valid_local_profile(payload):
                 raise ModelConfigurationError("local_model_configuration_invalid")
-            key = "local-model" if local_selected and self._local_model_installed() else self.secrets.get_snapshot(secret_ref).value
+            if local_selected:
+                try:
+                    self._local_generation_readiness().require_available()
+                except LocalGenerationError as error:
+                    raise ModelConfigurationError(str(error)) from error
+            key = "local-model" if local_selected else self.secrets.get_snapshot(secret_ref).value
             if not key or not payload.get("model") or not payload.get("base_url"):
                 raise ModelConfigurationError("model_not_configured")
             result = {**payload, "api_key": key, "revision": record.revision}
@@ -643,10 +919,11 @@ class ModelConfiguration:
                 result.update(mode=selected['mode'], mode_revision=selected['mode_revision'])
                 if selected['mode'] == 'server':
                     result['model_key'] = selected['model_key']
-            return result
+            return self._with_server_binding(result, purpose)
 
     def search(self, query, *, parameters, messages_factory, normalize_results, validate_current, wire_attempt_sink):
         """复用原搜索传输，以当前用途权限和原内核 wire 回执约束它。"""
+        self.require_model_wire_owner('search', wire_attempt_sink)
         from backend.video_summary.infrastructure.litellm_web_search import LiteLLMNativeWebSearchGateway
         from backend.shared.llm.message_metadata import _extract_normalized_usage
         from backend.shared.llm.litellm_gateway import _extract_prompt_cache_observation
@@ -663,9 +940,16 @@ class ModelConfiguration:
             if (_generation_snapshot_identity(fresh) != expected or fresh.get('enabled') is not True
                     or fresh.get('allow_remote') is not True):
                 raise ModelConfigurationError('search_configuration_changed')
-            _validate_generation_egress(fresh)
+            if fresh.get('provider') == 'brave':
+                if fresh.get('server_model_binding', {}).get('mode') != 'shared':
+                    raise ModelConfigurationError('search_configuration_changed')
+            else:
+                _validate_generation_egress(fresh)
 
         current()
+        if cfg.get('provider') == 'brave':
+            return self._shared_brave_search(query, cfg=cfg, parameters=parameters,
+                normalize_results=normalize_results, current=current, wire_attempt_sink=wire_attempt_sink)
         sink = self.price_wire_sink(wire_attempt_sink, purpose='search', configuration=cfg)
         completion = _validated_generation_completion(self._completion_fn)
         usage = {}
@@ -708,9 +992,42 @@ class ModelConfiguration:
                 raise ModelConfigurationError('search_no_usable_evidence')
         except (RecognitionConflict, ModelConfigurationError, RunLeaseRevoked):
             raise
+        except SharedModelMeteringError as error:
+            raise _model_request_failure(error) from None
         except Exception:
             raise ModelConfigurationError('search_request_failed') from None
         return results, {'model':cfg['model'], 'configuration_revision':cfg['revision'], 'usage':usage}
+
+    def _shared_brave_search(self, query, *, cfg, parameters, normalize_results, current, wire_attempt_sink):
+        from backend.video_summary.infrastructure.litellm_web_search import BraveWebSearchGateway
+        request = BraveWebSearchGateway.prepare_request(query, count=parameters['max_results'])
+        sink = self.price_wire_sink(wire_attempt_sink, purpose='search', configuration=cfg, wire_request=request)
+        attempt = sink.begin_model_wire_attempt()
+
+        def wire():
+            current()
+            try:
+                # 预留已成功且绑定仍有效，才取得中央密钥并发送一次请求。
+                fresh = self.snapshot('search')
+                results = BraveWebSearchGateway.send(request, api_key=fresh['api_key'],
+                    timeout_seconds=parameters['timeout_seconds'], validate_current=current)
+                attempt.observe_metering({'completed_requests': 1})
+                attempt.succeeded(usage={}, cache_observation=None)
+                return results
+            except BaseException:
+                attempt.failed_transport(error_code='search_provider_request_failed')
+                raise
+        try:
+            results = attempt.invoke_wire(wire)
+            current()
+            results = normalize_results(results, credentials=(cfg['api_key'],))
+            return results, {'model': cfg['model'], 'configuration_revision': cfg['revision'], 'usage': {}}
+        except SharedModelMeteringError as error:
+            raise _model_request_failure(error) from None
+        except (RecognitionConflict, ModelConfigurationError, RunLeaseRevoked):
+            raise
+        except Exception:
+            raise ModelConfigurationError('search_request_failed') from None
 
     def complete(
         self,
@@ -731,6 +1048,7 @@ class ModelConfiguration:
         neither be sent nor have a raced response accepted.
         """
         _validate_current(validate_current)
+        self.require_model_wire_owner('generation', wire_attempt_sink)
         cfg = self.snapshot("generation")
         if retry_policy is not None and not callable(retry_policy):
             raise ModelConfigurationError("model_retry_policy_invalid")
@@ -741,7 +1059,7 @@ class ModelConfiguration:
                 raise ModelConfigurationError("model_configuration_changed_before_request")
         gateway = self._generation_gateway(cfg,
             validate_current=validate_retry if retry_policy is not None else validate_current)
-        wire_attempt_sink = self.price_wire_sink(wire_attempt_sink, configuration=cfg)
+        wire_attempt_sink = self.price_wire_sink(wire_attempt_sink, configuration=cfg, max_output_tokens=max_tokens)
         try:
             timeout = timeout_seconds if timeout_seconds is not None else (
                 180 if _is_loopback_endpoint(str(cfg["base_url"])) else 60
@@ -758,9 +1076,12 @@ class ModelConfiguration:
                 text, usage, _ = gateway.complete_text_with_usage(messages, max_tokens=max_tokens, timeout=timeout,
                     **options)
             else:
+                wire_limit = control.limits.get('max_wire_attempts', 3) if retry_policy is not None else 3
+                if type(wire_limit) is not int or not 1 <= wire_limit <= 3:
+                    raise ModelConfigurationError('model_wire_attempt_budget_invalid')
                 text, usage, _ = gateway.complete_structured_with_usage(messages,
                     response_model=response_model, max_tokens=max_tokens, timeout=timeout,
-                    retries=0, max_wire_attempts=3,
+                    retries=0, max_wire_attempts=wire_limit,
                     **options)
             _validate_current(validate_current)
             if retry_policy is not None:
@@ -796,6 +1117,7 @@ class ModelConfiguration:
                         validate_current=None, wire_attempt_sink=None, timeout_seconds=None, retry_policy=None):
         """Use the existing gateway with independent, current vision consent."""
         _validate_current(validate_current)
+        self.require_model_wire_owner('vision', wire_attempt_sink)
         public = self._public_one('vision')
         if public['mode'] != 'remote' or public['allow_remote'] is not True:
             raise ModelConfigurationError('vision_remote_disabled')
@@ -819,12 +1141,14 @@ class ModelConfiguration:
             return _GenerationEgressLease()
 
         validate()
-        gateway = self._gateway_factory(provider=cfg['provider'], model=cfg['model'],
+        gateway_factory = (OxrImageGateway if is_oxr_endpoint(cfg['base_url'], cfg['model'])
+                           else self._gateway_factory)
+        gateway = gateway_factory(provider=cfg['provider'], model=cfg['model'],
             base_url=cfg['base_url'], api_key=None, api_key_provider=lambda: cfg['api_key'],
             egress_guard=guard, egress_purpose='media_image_read',
             egress_categories=('instructions', 'image'),
             completion_fn=_validated_generation_completion(self._completion_fn))
-        sink = self.price_wire_sink(wire_attempt_sink, purpose='vision', configuration=cfg)
+        sink = self.price_wire_sink(wire_attempt_sink, purpose='vision', configuration=cfg, max_output_tokens=max_tokens)
         try:
             options = {'wire_attempt_sink': sink} if sink is not None else {}
             timeout = 60 if timeout_seconds is None else timeout_seconds
@@ -842,8 +1166,10 @@ class ModelConfiguration:
                 retries=0, max_wire_attempts=1,
                 **options)
             validate()
-        except (RecognitionConflict, ModelConfigurationError):
+        except (RecognitionConflict, ModelConfigurationError, RunLeaseRevoked):
             raise
+        except SharedModelMeteringError as error:
+            raise _model_request_failure(error) from None
         except Exception:
             raise ModelConfigurationError('vision_request_failed') from None
         return output, {'model': cfg['model'], 'configuration_revision': cfg['revision'],
@@ -853,6 +1179,7 @@ class ModelConfiguration:
         self, messages, *, response_model, max_tokens=1800, validate_current=None, on_delta,
     ):
         _validate_current(validate_current)
+        self.require_model_wire_owner('generation', None)
         cfg = self.snapshot("generation")
         expected = _generation_snapshot_identity(cfg)
         def validate():
@@ -892,6 +1219,7 @@ class ModelConfiguration:
         observe_decoding=None,
         provider_store_activation: ProviderStoreActivation | None = None,
         stop_requested: Callable[[], bool] | None = None,
+        attempt_interruption: OwnedAttemptInterruption | None = None,
     ) -> tuple[str | BaseModel, dict]:
         """Complete one legacy Turn-governed request through this app's key authority.
 
@@ -909,6 +1237,9 @@ class ModelConfiguration:
             raise ModelConfigurationError("model_call_purpose_invalid")
         if retry_policy is not None and not callable(retry_policy):
             raise ModelConfigurationError("model_retry_policy_invalid")
+        if attempt_interruption is not None and (not isinstance(attempt_interruption,OwnedAttemptInterruption)
+                or purpose != 'primary' or retry_policy is None):
+            raise ModelConfigurationError('model_attempt_interruption_invalid')
         if provider_store_activation is not None:
             if (type(provider_store_activation) is not ProviderStoreActivation
                     or provider_store_activation.expected_purpose != purpose or retry_policy is None):
@@ -973,13 +1304,14 @@ class ModelConfiguration:
                     provider_store_activation.validate_current()
 
             options = dict(max_tokens=max_tokens, timeout=remaining_timeout,
-                           wire_attempt_sink=self.price_wire_sink(wire_attempt_sink, configuration=cfg))
+                           wire_attempt_sink=self.price_wire_sink(wire_attempt_sink, configuration=cfg,
+                               max_output_tokens=max_tokens))
             if retry_policy is not None:
                 # The governed caller supplies its frozen get('retry') policy.
                 # Missing injection retains the historical single-wire path.
                 options['retry_control'] = ModelRetryControl(policy=retry_policy,
                     checkpoint=validate_stream, on_retry=on_retry,
-                    owned_client_factory=self._model_http_client_factory)
+                    owned_client_factory=self._model_http_client_factory,interruption=attempt_interruption)
                 retry_control = options['retry_control']
             if provider_store_activation is not None:
                 sink = _BackgroundWireSink(options['wire_attempt_sink'])
@@ -1107,7 +1439,7 @@ class ModelConfiguration:
 
     def generation_budget_limits(self, *, expected_revision, max_tokens=None):
         """Project current gateway limits only when the frozen packet matches."""
-        cfg = self.public()["generation"]
+        cfg = self.public_for_purpose("generation")
         if not cfg.get("configured") or cfg["revision"] != expected_revision:
             return None
         gateway = self._generation_gateway(cfg)
@@ -1208,6 +1540,17 @@ class _AuxiliaryGenerationConfiguration(ModelConfiguration):
                 or row.payload != {'model': value['model'], 'binding': value['parent']}
                 or self.owner._generation_authority_binding() != value['parent']):
             raise ModelConfigurationError('fast_model_configuration_changed')
+        if self.owner.server_model_access is not None:
+            frozen = value['parent']['configuration'].get('server_model_binding')
+            if frozen is None:
+                raise ModelConfigurationError('fast_model_configuration_changed')
+            try:
+                selection = self.owner.server_model_access.validate_binding(frozen)
+            except ValueError:
+                raise ModelConfigurationError('fast_model_configuration_changed') from None
+            if (selection['mode'] == 'shared'
+                    and value['model'] not in selection['configuration']['allowed_models']):
+                raise ModelConfigurationError('server_model_not_allowed')
 
     def _public_one(self, purpose):
         public = self.owner._public_one(purpose)
@@ -1267,9 +1610,9 @@ def _validate_governed_routing_snapshot(
 def _same_governed_public_configuration(
     current: Mapping[str, object], expected: Mapping[str, object],
 ) -> bool:
-    if not isinstance(expected, Mapping) or set(expected) not in (
-        set(_GOVERNED_CONFIGURATION_FIELDS), set(_GOVERNED_CONFIGURATION_FIELDS) | {"subscription_binding"}
-    ):
+    if not valid_public_configuration_fields(expected):
+        return False
+    if ('server_model_binding' in current) != ('server_model_binding' in expected):
         return False
     for field in expected:
         actual = current.get(field)
@@ -1407,6 +1750,7 @@ def _generation_snapshot_identity(snapshot: dict) -> tuple[object, ...]:
         snapshot.get("model"),
         snapshot.get("allow_remote"),
         snapshot.get("subscription_binding", snapshot.get("api_key")),
+        snapshot.get('server_model_binding'),
     )
 
 
@@ -1446,6 +1790,9 @@ def _validate_current(validate_current: Callable[[], None] | None) -> None:
 def _load_litellm_completion(**request: object) -> object:
     """Use the same LiteLLM transport the legacy gateway loads by default."""
 
+    if is_official_terra('openai', str(request.get('model', '')), str(request.get('api_base', ''))):
+        from backend.shared.llm.openai_sdk import OpenAIResponsesCompletion
+        return OpenAIResponsesCompletion()(**request)
     try:
         from litellm import completion
     except ModuleNotFoundError as error:

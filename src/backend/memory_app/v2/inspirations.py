@@ -5,6 +5,7 @@ from backend.recognition.provenance import ExperienceProvenance
 from core.search_and_recall.evidence_windows import select_evidence_windows
 
 from ..source_egress import SourceEgressService
+from ..transaction_records import TransactionRecords
 from .insights import insight_view, resolve_insight
 from .policies import get
 from .policies.types import ScopeInput, RankInput
@@ -24,7 +25,7 @@ def _stamp(row):
     return (row.object_id, row.revision) if row is not None else None
 
 
-def _bindings(reader, project, *, recall=True):
+def _bindings(reader, project, *, recall=True, source_owner=None):
     """只跟随原灵感轮次及既有归类连接，手工认识不进入全局池。"""
     for turn in reader.list('v2_turns'):
         value = turn.payload
@@ -88,7 +89,7 @@ def _bindings(reader, project, *, recall=True):
         if resolved is None:
             continue
         if recall:
-            view = insight_view(reader, scope, selected.object_id)
+            view = insight_view(reader, scope, selected.object_id, source_owner=source_owner)
             if view is None or view['state'] not in {'pending', 'active'}:
                 continue
         else:
@@ -106,9 +107,10 @@ def _bindings(reader, project, *, recall=True):
                'filed': own != 'inbox', 'proof': proof, 'scene': view.get('scene')}
 
 
-def resolve_inspiration(reader, project, identity, *, recall=True):
+def resolve_inspiration(reader, project, identity, *, recall=True, source_owner=None):
     """拒绝歧义身份；不根据候选正文或相似文本推断原件。"""
-    matches = [row for row in _bindings(reader, project, recall=recall) if row['row'].object_id == identity]
+    matches = [row for row in _bindings(reader, project, recall=recall, source_owner=source_owner)
+               if row['row'].object_id == identity]
     if len(matches) != 1:
         raise RecognitionConflict('inspiration original binding unavailable')
     return matches[0]
@@ -151,31 +153,47 @@ def collect_inspirations(records, project, question, scene=None, *, instruction=
     return result
 
 
-def validate_inspiration(records, project, candidate, *, remote=True):
+def validate_inspiration(records, project, candidate, *, remote=True, source_owner=None):
     """每次外发前后复验原话、状态、归类和既有外发快照。"""
-    bound = resolve_inspiration(records, project, candidate['id'])
+    bound = resolve_inspiration(records, project, candidate['id'], source_owner=source_owner)
     row, scope = bound['row'], bound['scope']
     if (candidate['inspiration_proof'] != bound['proof']
             or candidate['entry']['revision'] != row.revision
             or candidate['entry']['content'] != row.payload['content']
             or candidate['scope'] != scope or is_private_project(records, scope.project_id)):
         raise RecognitionConflict('inspiration changed during turn')
-    authority = SourceEgressService(records)
+    authority = SourceEgressService(source_owner if source_owner is not None else records,
+        reader=records if source_owner is not None else None)
     authority.validate_snapshot(scope, candidate['snapshot'])
     if remote:
         authority.require(candidate['snapshot'], 'generation')
 
 
-def validate_task_inputs(records, models, request, *, purpose='generation', query=None):
+def validate_task_inputs(records, models, request, *, purpose='generation', query=None, validate_constraints=True,
+                         source_owner=None, prepared_bundle=None):
     """只为真实灵感原话适配任务边界，其余材料走原校验器。"""
     from copy import deepcopy
     from .turn_requests import validate_frozen_inputs
     from .privacy import resolve_turn_material
     from .policies import override
+    if query is not None:
+        from .shared_task_context import validate_inputs
+        if models is not query.models:
+            raise RecognitionConflict('task model actual owner changed')
+        if validate_inputs(query, request, reader=records if isinstance(records, TransactionRecords) else None,
+                prepared_bundle=prepared_bundle, validate_constraints=validate_constraints):
+            return
+    constraints = getattr(query, 'project_constraint_input', None)
+    if constraints is not None and validate_constraints:
+        constraints.validate(request, reader=records)
     project = request['scope']['project_id']
     reduced = deepcopy(request)
     privacy = reduced['privacy']
     extras = []
+    if isinstance(records, TransactionRecords) and query is None and source_owner is None:
+        raise RecognitionConflict('task source actual owner unavailable')
+    owner = source_owner if source_owner is not None else query.records if isinstance(records, TransactionRecords) else records
+    authority = SourceEgressService(owner, reader=records if isinstance(records, TransactionRecords) else None)
     with override(**request.get('policy_versions', {})):
         for item in request['privacy']['material_refs']:
             if item['project_id'] in {project, 'me'}:
@@ -183,21 +201,21 @@ def validate_task_inputs(records, models, request, *, purpose='generation', quer
             if (item['type'] != 'experience' or item['project_id'] != 'inbox'
                     or getattr(get('scope'), 'inspirations', None) is None):
                 raise RecognitionConflict('task material scope conflicted')
-            bound = resolve_inspiration(records, project, item['id'])
+            bound = resolve_inspiration(records, project, item['id'], source_owner=owner)
             if bound['scope'].project_id != item['project_id'] or bound['row'].revision != item['revision']:
                 raise RecognitionConflict('task inspiration authority changed')
             resolve_turn_material(records, bound['scope'], item)
-            snapshot = SourceEgressService(records).snapshot(bound['scope'], [
+            snapshot = authority.snapshot(bound['scope'], [
                 {'type': 'experience', 'id': item['id'], 'revision': item['revision']}])
             if snapshot not in request['privacy']['source_snapshots']:
                 raise RecognitionConflict('task inspiration snapshot changed')
-            SourceEgressService(records).validate_snapshot(bound['scope'], snapshot)
+            authority.validate_snapshot(bound['scope'], snapshot)
             if request['privacy']['allow_remote']:
-                SourceEgressService(records).require(snapshot, purpose)
+                authority.require(snapshot, purpose)
             extras.append((item, snapshot))
         privacy['material_refs'] = [row for row in privacy['material_refs'] if all(row != item for item, _ in extras)]
         privacy['source_snapshots'] = [row for row in privacy['source_snapshots'] if all(row != snapshot for _, snapshot in extras)]
-        validate_frozen_inputs(records, models, reduced, purpose=purpose, query=query)
+        validate_frozen_inputs(records, models, reduced, purpose=purpose, query=query, source_owner=owner)
 
 
 def freeze_task_turn(*, inspirations=(), query=None, **values):
@@ -232,7 +250,9 @@ def freeze_task_turn(*, inspirations=(), query=None, **values):
         return selected, privacy
 
     def validate(records, models, request, *, purpose='generation'):
-        return validate_task_inputs(records, models, request, purpose=purpose, query=query)
+        # 此时尚未进入唯一接纳准备；实际执行及发送仍使用默认的完整验证。
+        return validate_task_inputs(records, models, request, purpose=purpose, query=query,
+                                    validate_constraints=False, source_owner=values['records'])
 
     return freeze_product_turn('project.task', freeze_materials=freeze,
         validate_request=validate, instruction=values.get('text', ''), **values)
@@ -279,7 +299,7 @@ def task_read_planner(ordinary, records, models, *, query=None):
                             collector.snapshot(snapshot)
                         for collection, identity in sorted(collector.identities):
                             locks.enter_context(source_store(reader).locked(collection, identity))
-                        validate_task_inputs(enlisted, models, request, query=query)
+                        validate_task_inputs(enlisted, models, request, query=query, source_owner=records)
                         return control.begin_model_wire_attempt(*args, **kwargs)
 
             return ordinary.inner.plan(request, events, capabilities, payloads,

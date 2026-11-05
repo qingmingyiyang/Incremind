@@ -48,6 +48,23 @@ class DeviceRegistry:
     def _now(self):
         return self.clock().astimezone(timezone.utc)
 
+    def issue_login_device(self, tx, *, user_id, login_revision, name):
+        from .server_credentials import LOGIN_DEVICES, CREDENTIALS
+        from .server_users import enabled_user
+        credential = tx.read(CREDENTIALS, user_id)
+        if (credential is None or credential.revision != login_revision
+                or enabled_user(tx, user_id) is None):
+            raise DeviceError('device_unauthorized')
+        if not isinstance(name, str) or not name.strip() or len(name) > 80 or any(ord(c) < 32 for c in name):
+            raise DeviceError('device_name_invalid')
+        now, key, device_id = self._now(), _credential(), 'device-' + uuid4().hex
+        device = tx.put(DEVICES, device_id, {'device_id': device_id, 'user_id': user_id,
+            'name': name.strip(), 'key_hash': _digest(key), 'created_at': now.isoformat(),
+            'last_seen_at': now.isoformat(), 'revoked_at': None}, expected_revision=0)
+        tx.put(LOGIN_DEVICES, device_id, {'user_id': user_id,
+            'login_revision': login_revision}, expected_revision=0)
+        return {'device': self._public(device), 'key': key}
+
     def _issuer(self, tx, user_id, actor):
         from .server_users import enabled_user
         from backend.security.user_context import user_action_allowed
@@ -58,6 +75,31 @@ class DeviceRegistry:
         caller = enabled_user(tx, row.payload['user_id']) if row else None
         return bool(target and caller and row.payload['revoked_at'] is None
             and user_action_allowed(caller.payload.get('role'), row.payload['user_id'], user_id, 'pair_device'))
+
+    def issue_native_mcp_device(self, tx, *, actor, name):
+        from .server_users import current_caller
+        current_caller(tx, actor)
+        if not isinstance(name, str) or not name.strip() or len(name) > 80 or any(ord(c) < 32 for c in name):
+            raise DeviceError('device_name_invalid')
+        now, key = self._now(), _credential()
+        device_id = 'native-mcp-device-' + uuid4().hex
+        row = tx.put(DEVICES, device_id, {'device_id': device_id, 'user_id': actor.user_id,
+            'name': name.strip(), 'key_hash': _digest(key), 'created_at': now.isoformat(),
+            'last_seen_at': now.isoformat(), 'revoked_at': None}, expected_revision=0)
+        # 调用方必须在同一事务写入限制，提交后才可交付钥匙。
+        return {'device': self._public(row), 'key': key}
+
+    def revoke_enlisted(self, tx, user_id, device_id, *, expected_revision):
+        if not isinstance(device_id, str) or not _ID.fullmatch(device_id):
+            raise DeviceError('device_not_found')
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise DeviceError('device_revision_invalid')
+        row = tx.read(DEVICES, device_id)
+        if row is None or row.payload['user_id'] != user_id:
+            raise DeviceError('device_not_found')
+        result = tx.put(DEVICES, device_id, {**row.payload, 'revoked_at': self._now().isoformat()},
+            expected_revision=expected_revision)
+        return self._public(result)
 
     def issue_pairing(self, *, user_id, actor):
         if not isinstance(user_id, str) or not _ID.fullmatch(user_id):
@@ -153,13 +195,9 @@ class DeviceRegistry:
             raise DeviceError('device_revision_invalid')
         try:
             with self.records.begin() as tx:
-                row = tx.read(DEVICES, device_id)
-                if row is None or row.payload['user_id'] != user_id:
-                    raise DeviceError('device_not_found')
-                result = tx.put(DEVICES, device_id, {**row.payload, 'revoked_at': self._now().isoformat()},
-                    expected_revision=expected_revision)
+                result = self.revoke_enlisted(tx, user_id, device_id, expected_revision=expected_revision)
                 tx.commit()
-            return self._public(result)
+            return result
         except SQLiteUnitOfWorkConflict:
             raise DeviceError('device_revision_conflict') from None
 
@@ -201,6 +239,10 @@ class DeviceRegistry:
                 presence = tx.read(PRESENCE, device_id)
                 if presence is not None:
                     tx.delete(PRESENCE, device_id, expected_revision=presence.revision)
+                from .server_credentials import LOGIN_DEVICES
+                login = tx.read(LOGIN_DEVICES, device_id)
+                if login is not None:
+                    tx.delete(LOGIN_DEVICES, device_id, expected_revision=login.revision)
                 tx.delete(DEVICES, device_id, expected_revision=expected_revision)
                 tx.commit()
             return {'device_id': device_id, 'deleted': True}
@@ -278,6 +320,15 @@ def install_device_routes(application, *, registry):
     async def exchange(request: Request):
         body = await _body(request, {'code', 'name'})
         return _response(201, registry.exchange(body['code'], name=body['name']))
+
+    @router.post('/logout')
+    async def logout(request: Request):
+        await _body(request, set())
+        _request_owner(request)
+        if server_mode(request):
+            identity = server_identity(request)
+            registry.revoke(identity.user_id, identity.device_id, expected_revision=identity.revision)
+        return _response(200, {'revoked': True})
 
     @router.post('/{device_id}/revoke')
     async def revoke(device_id: str, request: Request):

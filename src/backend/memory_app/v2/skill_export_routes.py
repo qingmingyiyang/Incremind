@@ -102,7 +102,9 @@ def _fields(body, required, optional=()):
 
 
 def install_skill_export_routes(application, *, records, service, models):
-    exports = SkillExports(records, service, owner_id='local-user')
+    admission = getattr(models, 'product_automatic_constraints', None)
+    exports = SkillExports(records, service, owner_id='local-user',
+        generation_validator=admission.validate_saved if admission is not None else None)
     def user_domain(request: Request):
         _user_domain(request, records=records, service=service, models=models)
 

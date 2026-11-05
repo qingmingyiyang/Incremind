@@ -9,11 +9,14 @@ Descriptive provenance alone never grants authority.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 import re
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from .source_snapshot import _closure_identity
-from .source_graph import SourceGraph, owner_metadata, validate_graph
-from .original_sources import ORIGINAL_TYPES, original, source_store, document_roots, resolve
+from .source_graph import SourceGraph, owner_metadata, validate_graph, identifier as graph_identifier, revision as graph_revision
+from .route_original_metadata import ROUTE_ORIGINAL_OWNER_FIELDS, route_original_id, validate_route_original_metadata
+from .steer_learning_metadata import STEER_LEARNING_FIELD_SETS, validate_steer_learning_metadata
+from .original_sources import ORIGINAL_TYPES, document_roots, is_conversation_archive, original, resolve, source_store
 
 from backend.recognition import RecognitionConflict, RecognitionError, RecognitionService, WorkScope
 from backend.recognition.external_turn_facts import source_is_committed
@@ -27,11 +30,11 @@ from .transaction_records import TransactionRecords
 from backend.recognition.artifact_dependencies import ArtifactDependencyError, read_artifact_dependencies
 from backend.recognition.experience_origins import ExperienceOriginError, read_experience_origin
 from backend.recognition.document_filings import (
-    DocumentFilingError, FILED_EDIT_FIELDS, FILED_EDIT_OWNER_FIELDS, read_filed_edit_dependencies,
+    DocumentFilingError, FILED_EDIT_FIELDS, read_filed_edit_dependencies,
     validate_filed_edit_owner,
 )
 from backend.recognition.product_draft_dependencies import (
-    PRODUCT_DRAFT_FIELDS, ProductDraftDependencyError, read_product_draft_dependencies,
+    DRAFT_DEPENDENCY_FIELDS, ProductDraftDependencyError, read_product_draft_dependencies,
 )
 from backend.recognition.external_input_dependencies import (
     FIELDS as EXTERNAL_INPUT_FIELDS, read_external_input_dependencies, metadata as external_input_metadata,
@@ -64,9 +67,11 @@ def _remember_walk(key, value):
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$")
 
 
-def validate_product_draft_source(reader, scope, source):
+def validate_product_draft_source(reader, scope, source, *, source_owner=None):
     """在调用方事务内核验原成果闭包，私密材料仍可在本机确认。"""
-    return SourceEgressService(TransactionRecords(reader)).snapshot(scope,
+    if source_owner is None:
+        raise RecognitionConflict('product draft actual owner unavailable')
+    return SourceEgressService(source_owner, reader=reader).snapshot(scope,
         [{'type':'experience', 'id':source.object_id, 'revision':source.revision}])
 
 
@@ -74,12 +79,131 @@ class SourcePrivacyInputError(RecognitionError):
     """The compatibility policy input must express exactly one privacy state."""
 
 
+def _part_dependency_sources(records, reader, scope, context, seen=()):
+    from .research_packets import authority_stores
+    from .kernel.answer_turns import RESULT_KIND
+    originals, snapshots = list(context['originals']), []
+    explicit = context.get('explicit_sources', [])
+    if not isinstance(explicit, list):
+        raise RecognitionConflict('product draft explicit sources changed')
+    if explicit:
+        from .route_reuse_binding import validate_explicit_source
+        from .v2.route_source_statements import statement_source
+        for source in explicit:
+            snapshots.append(validate_explicit_source(records, context, source, statement_source,
+                reader=TransactionRecords(reader)))
+    store, _ = authority_stores(records)
+    for answer in context['answers']:
+        identity = answer['id']
+        if identity in seen or len(seen) >= 32:
+            raise RecognitionConflict('product draft answer dependency cycle')
+        request = store.get_request(identity)
+        try:
+            saved = store.get(store.immutable_payload_reference(identity, RESULT_KIND))
+        except KeyError:
+            saved = None
+        events = tuple(store.events_after(identity))
+        from .route_reuse_binding import dependency_parent
+        original_parent = dependency_parent(reader, context['parent'], identity, source_owner=records)
+        public = reader.read('v2_turns', identity)
+        parent = reader.read('v2_turns', original_parent)
+        facts = answer['authority']
+        if (public is None or public.revision != answer['revision']
+                or public.payload.get('project_id') != scope.project_id
+                or public.payload.get('parent_turn_id') != original_parent
+                or public.payload.get('user_text') != answer['question']
+                or public.payload.get('receipt', {}).get('ask', {}).get('answer') != answer['answer']
+                or parent is None or parent.payload.get('intent') != 'multi'
+                or parent.payload.get('project_id') != scope.project_id
+                or identity not in parent.payload.get('part_turn_ids', [])
+                or not request or request.get('desired_outcome') != 'project.answer'
+                or request['scope']['project_id'] != scope.project_id
+                or request['input']['text'] != answer['question']
+                or not saved or saved.get('multipart_authority') != facts
+                or saved.get('receipt', {}).get('ask', {}).get('answer') != answer['answer']
+                or not events or events[-1]['type'] != 'turn.completed'
+                or facts.get('parent') != original_parent or facts.get('turn_id') != identity
+                or facts.get('project_id') != scope.project_id):
+            raise RecognitionConflict('product draft answer dependency changed')
+        for candidate in facts['chosen']:
+            if candidate.get('snapshot'):
+                if candidate['snapshot']['scope'] != candidate['scope']:
+                    raise RecognitionConflict('product draft answer source scope changed')
+                snapshots.append(candidate['snapshot'])
+        snapshots.extend(item['snapshot'] for item in facts['profile'].get('items', []))
+        sidecar = reader.read('v2_part_contexts', identity)
+        marker = {'kind': 'session_event', 'object_id': identity, 'uri': 'crp://default/v2_part_contexts/' + identity}
+        if marker in request['input']['refs'] and sidecar is None:
+            raise RecognitionConflict('product draft answer context unavailable')
+        if sidecar is not None:
+            from core.ai_kernel.product_snapshot import read_admission_base_refs
+            from .kernel.route_source_snapshot import native_source_connection
+            # 仅剥离原内核已持久冻结的准入尾部，原多部分引用和完整绑定继续逐项核验。
+            with native_source_connection(records, reader=TransactionRecords(reader)) as connection:
+                base_refs = read_admission_base_refs(connection, request)
+            if (sidecar.revision != 1 or sidecar.payload.get('project_id') != scope.project_id
+                    or sidecar.payload.get('input_refs') != request['input']['refs']
+                    or base_refs[-1:] != [marker]
+                    or sidecar.payload['context'].get('parent') != original_parent):
+                raise RecognitionConflict('product draft answer context changed')
+            inherited, nested = _part_dependency_sources(records, reader, scope, sidecar.payload['context'], (*seen, identity))
+            originals.extend(inherited)
+            snapshots.extend(nested)
+        for dependency in facts['history'].get('dependencies', []):
+            snapshots.extend(snapshot for _, snapshot in dependency.get('snapshots', []))
+            for ancestor in dependency.get('multipart', []):
+                row = reader.read('v2_turns', ancestor['id'])
+                wanted = next((turn['revision'] for turn in dependency['turns'] if turn['id'] == ancestor['id']), None)
+                if row is None or row.revision != wanted:
+                    raise RecognitionConflict('product draft answer history changed')
+                inherited, nested = _part_dependency_sources(records, reader, scope,
+                    {'originals': [], 'parent': ancestor['parent'], 'answers': [{'id': ancestor['id'],
+                     'revision': wanted, 'question': row.payload['user_text'],
+                     'answer': row.payload['receipt']['ask']['answer'], 'authority': ancestor['authority']}]}, (*seen, identity))
+                originals.extend(inherited)
+                snapshots.extend(nested)
+    return originals, snapshots
+
+
 class SourceEgressService:
     """Version-bound egress policy and immutable, body-free source snapshots."""
 
-    def __init__(self, records, *, _memo=None) -> None:
-        self._records = records
+    def __init__(self, records, *, reader=None, _memo=None) -> None:
+        self._owner_records = records
+        self._records = records if reader is None else TransactionRecords(reader)
+        if reader is not None and (not self._records.connection.in_transaction
+                or Path(self._records.database_path).resolve() != Path(records.database_path).resolve()):
+            raise RecognitionConflict('source reader owner changed')
         self._memo = _memo
+
+    def _walk_source(self, reader, scope, kind, identity):
+        return self._source_for_graph(reader, scope, kind, identity)
+
+    def _walk_revision(self, reader, record, revision, message):
+        if record.revision != revision:
+            raise RecognitionConflict(message)
+
+    def archive_source_history(self, scope, source_type, record):
+        collection = {'experience': 'recognition_experiences', 'recognition': 'recognitions',
+            'candidate': 'recognition_candidates'}.get(source_type)
+        if collection is None or record.collection != collection:
+            raise RecognitionConflict('archive source type is invalid')
+        authority = _ArchiveHistoryWalk(self._owner_records,
+            reader=self._records if isinstance(self._records, TransactionRecords) else None)
+        with begin_read(authority._records) as reader:
+            actual = reader.read(record.collection, record.object_id)
+            if (actual is None or actual.revision != record.revision or actual.payload != record.payload
+                    or _scope_of(record.payload) != scope
+                    or record.payload.get('state') not in {'revoked', 'superseded', 'stale', 'rejected', 'invalidated'}):
+                raise RecognitionConflict('archive source is not a current stopped record')
+            authority._birth(reader, record)
+        refs = ([{'type': source_type, 'id': record.object_id, 'revision': record.revision}]
+            if source_type != 'candidate' else
+            [{'type': kind, 'id': identity, 'revision': revision}
+                for kind, identity, revision in _parents('recognition', record.payload)])
+        authority._snapshot(scope, refs, (), set())
+        return {'archive_only': True, 'type': source_type, 'id': record.object_id,
+            'revision': record.revision, 'private': True}
 
     def set_policy(
         self, scope: WorkScope, source_type: str, source_id: str,
@@ -113,7 +237,7 @@ class SourceEgressService:
             )
             if purposes and not inherited:
                 raise RecognitionError("source policy cannot broaden its inherited authority")
-            invalidate_sources(uow, scope, ((source_type, source_id),))
+            invalidate_sources(uow, scope, ((source_type, source_id),), source_owner=self._owner_records)
             saved = uow.put(
                 collection, policy_id,
                 {"id": policy_id, "source_type": source_type, "source_id": source_id,
@@ -176,19 +300,24 @@ class SourceEgressService:
         with begin_read(self._records) as uow:
             current_privacy_revision = privacy_revision(uow)
             for source_type, source_id, wanted_revision in roots:
-                source = _source(uow, scope, source_type, source_id)
-                if source.revision != wanted_revision:
-                    raise RecognitionConflict("source revision conflicted")
+                source = self._walk_source(uow, scope, source_type, source_id)
+                self._walk_revision(uow, source, wanted_revision, "source revision conflicted")
                 self._effective(uow, scope, source_type, source_id, nodes, trail, None, closures, budget, memo)
         return {"schema_version": 1, "scope": _scope(scope), "privacy_revision": current_privacy_revision,
                 "roots": [{"type": kind, "id": item, "revision": revision} for kind, item, revision in roots],
                 "nodes": [nodes[key] for key in sorted(nodes)]}
 
-    def snapshot_original_content(self, scope, identity, *, span, input_binding=None):
+    def _source_for_graph(self, uow, scope, source_type, source_id):
+        return _source(uow, scope, source_type, source_id)
+
+    def _check_graph_parent(self, uow, scope, source, parent_type, parent, revision):
+        self._walk_revision(uow, parent, revision, 'source provenance revision conflicted')
+
+    def snapshot_original_content(self, scope, identity, *, span=None, input_binding=None, windows=None):
         """Freeze only an admitted original's immutable input and its authority."""
         from .original_sources import original_content_identity
         with begin_read(self._records) as reader:
-            content = original_content_identity(reader, scope, identity, span, input_binding=input_binding)
+            content = original_content_identity(reader, scope, identity, span, input_binding=input_binding, windows=windows)
             source = original(reader, scope, 'original_item', identity)
             policy = reader.read(POLICY_COLLECTIONS['original_item'], identity)
             nodes, closures = {}, {}
@@ -209,10 +338,11 @@ class SourceEgressService:
         content = snapshot['content']
         frozen = content['identity']['source_text']
         binding = content.get('input_binding')
-        span = content['span'] if binding is not None else frozen[content['start']:content['end']]
+        windows = content.get('windows')
+        span = None if windows is not None else content['span'] if binding is not None else frozen[content['start']:content['end']]
         with begin_read(self._records) as reader:
             identity = snapshot['id']
-            if original_content_identity(reader, scope, identity, span, input_binding=binding) != content:
+            if original_content_identity(reader, scope, identity, span, input_binding=binding, windows=windows) != content:
                 raise RecognitionConflict('original input identity changed')
             if privacy_revision(reader) != snapshot['privacy_revision']:
                 raise RecognitionConflict('original input privacy changed')
@@ -276,7 +406,7 @@ class SourceEgressService:
             raise RecognitionConflict("source egress snapshot conflicted")
 
     def require(self, snapshot: Mapping[str, object], purpose: str) -> None:
-        if purpose not in _PURPOSES or not isinstance(snapshot, Mapping):
+        if purpose not in (*_PURPOSES, 'asr') or not isinstance(snapshot, Mapping):
             raise RecognitionError("source egress purpose is invalid")
         nodes = snapshot.get("nodes")
         if not isinstance(nodes, Sequence) or isinstance(nodes, (str, bytes)) or not nodes:
@@ -304,7 +434,7 @@ class SourceEgressService:
         budget.add(visit)
         if key not in nodes and len(nodes) + len(trail) >= _MAX_NODES:
             raise RecognitionConflict("source provenance is too large")
-        source = _source(uow, scope, source_type, source_id)
+        source = self._walk_source(uow, scope, source_type, source_id)
         if key in nodes:
             if key not in closures:
                 raise RecognitionConflict("source provenance closure is unavailable")
@@ -325,14 +455,18 @@ class SourceEgressService:
             closures.update(cached_closures)
             return set(nodes[key]['effective_purposes'])
         next_trail = trail + (visit,)
-        artifact = _artifact_authority(self, uow, scope, source_type, source, nodes, next_trail, closures, budget, memo)
+        artifact = _artifact_authority(self, uow, scope, source_type, source, nodes, next_trail, closures, budget, memo,
+            source_id=source_id)
         if artifact is None:
             parents = _parents(source_type, source.payload)
+            if source_type == 'recognition':
+                additional = validate_inspiration_source(uow, scope, source)
+                parents = tuple(dict.fromkeys((*parents,
+                    *(('experience', item['id'], item['revision']) for item in additional))))
             inherited = set(_PURPOSES)
             for parent_type, parent_id, parent_revision in parents:
-                parent = _source(uow, scope, parent_type, parent_id)
-                if parent.revision != parent_revision:
-                    raise RecognitionConflict("source provenance revision conflicted")
+                parent = self._walk_source(uow, scope, parent_type, parent_id)
+                self._check_graph_parent(uow, scope, source, parent_type, parent, parent_revision)
                 parent_effective = self._effective(uow, scope, parent_type, parent_id, nodes, next_trail, None, closures, budget, memo)
                 if not parent_effective:
                     inherited = set()
@@ -348,7 +482,9 @@ class SourceEgressService:
             local = override[2]
         else:
             local = _policy_purposes(policy, source.revision)
-        if is_private_project(uow, scope.project_id):
+        if (is_private_project(uow, scope.project_id) or source_type == 'original_item'
+                and source.payload.get('input_kind') == 'conversation'
+                and is_conversation_archive(uow, scope.project_id, source_id, revision=source.revision)):
             local = set()
         effective = set(_PURPOSES) if inherited and local else set()
         nodes[key] = {"type": source_type, "id": source_id, "source_revision": source.revision,
@@ -375,6 +511,61 @@ class SourceEgressService:
         return effective
 
 
+class _ArchiveHistoryWalk(SourceEgressService):
+    @staticmethod
+    def _birth(reader, record):
+        from core.storage_provider.record_lineage import HEAD_COLLECTIONS, FACTS, verify_lineage
+        head = reader.read(HEAD_COLLECTIONS[record.collection], record.object_id)
+        if head is None:
+            raise RecognitionConflict('archive source birth unavailable')
+        verify_lineage(reader, {'collection': record.collection, 'object_id': record.object_id,
+            'fact_id': head.payload['fact_id']})
+        fact = reader.read(FACTS, head.payload['fact_id'])
+        if fact is None or fact.payload.get('origin') != 'created':
+            raise RecognitionConflict('archive source birth unavailable')
+        return fact
+
+    def _walk_source(self, reader, scope, kind, identity):
+        if kind in ORIGINAL_TYPES:
+            return original(reader, scope, kind, identity)
+        record = reader.read(_TYPES[kind], identity)
+        if (record is None or _scope_of(record.payload) != scope
+                or record.payload.get('state') not in {'active', 'revoked', 'superseded', 'stale'}):
+            raise RecognitionConflict('archive source unavailable in scope')
+        fact = self._birth(reader, record)
+        if record.collection == 'recognition_experiences':
+            from backend.recognition.service import _EvidenceReader
+            if _EvidenceReader(reader).has_unresolved_import_evidence(record, scope):
+                raise RecognitionConflict('migration source is unavailable, changed, or cyclic')
+            if (record.payload.get('state') == 'revoked' and (
+                    fact.payload.get('observed_revision') != 1 or record.revision != 2
+                    or not isinstance(record.payload.get('revoked_at'), str))):
+                raise RecognitionConflict('archive source lifecycle conflicted')
+        return record
+
+    def _walk_revision(self, reader, record, revision, message):
+        if record.revision == revision:
+            return
+        if record.collection not in {'recognition_experiences', 'recognitions'}:
+            raise RecognitionConflict(message)
+        # 原经历领域只在撤回时更新既有经历；本分支仅识别这一生命周期修订。
+        fact = self._birth(reader, record)
+        if (record.collection == 'recognition_experiences' and record.payload.get('state') == 'revoked'
+                and revision == fact.payload.get('observed_revision') == 1 and record.revision == 2
+                and isinstance(record.payload.get('revoked_at'), str)):
+            return
+        if record.collection == 'recognitions' and record.payload.get('state') in {'revoked', 'superseded', 'stale'}:
+            fields = ('scope', 'content', 'conditions', 'source_experience_ids', 'source_recognition_ids',
+                'source_experience_revisions', 'source_recognition_revisions', 'parent_ids')
+            for version in reader.list('recognition_versions'):
+                value = version.payload
+                previous = value.get('snapshot', {})
+                if (value.get('recognition_id') == record.object_id and value.get('recognition_revision') == revision
+                        and all(previous.get(field) == record.payload.get(field) for field in fields)):
+                    return
+        raise RecognitionConflict(message)
+
+
 def _parents(source_type: str, payload: Mapping[str, object]) -> tuple[tuple[str, str, int], ...]:
     if source_type == "recognition":
         return _linked(payload, "source_experience_ids", "source_experience_revisions", "experience") + _linked(payload, "source_recognition_ids", "source_recognition_revisions", "recognition")
@@ -397,19 +588,79 @@ def _parents(source_type: str, payload: Mapping[str, object]) -> tuple[tuple[str
     return tuple(result)
 
 
-def _artifact_authority(authority, uow, scope, source_type, source, nodes, trail, closures, budget, memo=None):
+def _artifact_authority(authority, uow, scope, source_type, source, nodes, trail, closures, budget, memo=None, *, source_id):
     """Resolve an auditable retained task result without trusting its refs.
 
     The task, selected document revision and consumed context packet are all
     exact, local records.  Document edits deliberately do not invalidate a
     retained result: the referenced historical revision remains the evidence.
     """
+    if source_type == 'recognition':
+        from .v2.steer_learning_sources import learning_recognition_identity
+        if not learning_recognition_identity(authority._owner_records, uow, scope, source):
+            return None
+        learning = getattr(authority._owner_records, 'product_steer_learning', None)
+        if learning is None:
+            raise RecognitionConflict('steer_learning_recognition_actual_owner_unavailable')
+        else:
+            fact = learning.sources.recognition_authority(authority._owner_records, uow, scope, source)
+            if fact is None:
+                raise RecognitionConflict('steer_learning_recognition_proof_unavailable')
+            graph, allowed, snapshots = SourceGraph(), set(_PURPOSES), []
+            for qualified in fact['qualified']:
+                if not qualified['complete'] or qualified['unknown']:
+                    raise RecognitionConflict('steer_learning_recognition_source_incomplete')
+                allowed.intersection_update(qualified['privacy_ceiling']['effective_purposes'])
+                for frozen in qualified['privacy_ceiling']['sources']:
+                    for snapshot in [frozen['current'], *frozen['history_current']]:
+                        graph.snapshot(snapshot)
+                        if snapshot not in snapshots:
+                            snapshots.append(snapshot)
+            from .v2.steer_learning_privacy import recognition_privacy_snapshots
+            for snapshot in recognition_privacy_snapshots(authority, uow, scope, source, fact,
+                    trail=trail, budget=budget):
+                graph.snapshot(snapshot)
+                if snapshot not in snapshots:
+                    snapshots.append(snapshot)
+                for node in snapshot['nodes']:
+                    allowed.intersection_update(node['effective_purposes'])
+            validate_graph(graph.result(), scope.user_id, trail=trail, budget=budget)
+            validate_steer_learning_metadata(fact['dependency_revisions'], graph_identifier, graph_revision,
+                recognition_id=source_id, recognition_revision=source.revision, max_nodes=_MAX_NODES)
+            return (), allowed, fact['dependency_revisions'], snapshots
+    if source_type == 'original_item' and source_id.startswith('workspace-route-'):
+        from .route_correction_originals import validate_original_binding
+        from backend.security.audited_records import AuditedRecordStore
+        from backend.security.user_context import USER_ACCESS
+        actual_owner, access = authority._owner_records, USER_ACCESS.get()
+        if (not isinstance(actual_owner, (SQLiteStructuredRecordStore, AuditedRecordStore))
+                or access is not None and (not isinstance(actual_owner, AuditedRecordStore)
+                    or actual_owner.user_id != access.target_user_id)):
+            raise RecognitionConflict('route original actual owner required')
+        nested = SourceEgressService(actual_owner, reader=uow, _memo=memo)
+        actual = uow.read('workspace_items', source_id)
+        if actual is None or actual.revision != source.revision or actual.payload.get('project_id') != scope.project_id:
+            raise RecognitionConflict('route original current row changed')
+        bound = validate_original_binding(actual_owner, scope, actual, reader=uow,
+            snapshot_for=lambda own, refs: nested._snapshot(own, refs, trail, budget, memo))
+        graph, allowed = SourceGraph(), set(_PURPOSES)
+        if any(is_private_project(uow, project) for project in bound['projects']):
+            allowed.clear()
+        for snapshot in bound['snapshots']:
+            for node in snapshot['nodes']:
+                allowed.intersection_update(node['effective_purposes'])
+            graph.snapshot(snapshot)
+        validate_graph(graph.result(), scope.user_id, trail=trail, budget=budget)
+        return (), allowed, bound['metadata'], bound['snapshots']
     if source_type != "experience":
         return None
     payload = source.payload
+    def external_number(reader, own_scope, entry, *, trail, budget):
+        return validate_external_number(reader, own_scope, entry, trail=trail, budget=budget,
+            source_owner=authority._owner_records)
     try:
         external = read_external_input_dependencies(uow, scope, source, _trail=trail, _budget=budget,
-            _sql_validator=validate_external_number)
+            _sql_validator=external_number)
     except ExternalInputDependencyError as error:
         raise RecognitionConflict('external input evidence is unavailable') from error
     if external is not None:
@@ -419,7 +670,7 @@ def _artifact_authority(authority, uow, scope, source_type, source, nodes, trail
             own = WorkScope(frozen['scope']['user_id'], frozen['scope']['project_id'])
             roots = [(root['type'], root['id'], root['revision']) for root in frozen['roots']]
             parsed = _frozen_packet_authority(own, {'source_egress': frozen}, roots, _nodes=budget)
-            snapshot = SourceEgressService(TransactionRecords(uow), _memo=memo)._snapshot(own, frozen['roots'], trail, budget)
+            snapshot = SourceEgressService(authority._owner_records, reader=uow, _memo=memo)._snapshot(own, frozen['roots'], trail, budget)
             if {_closure_identity(node) for node in parsed['nodes']} != {_closure_identity(node) for node in snapshot['nodes']}:
                 raise RecognitionConflict('external input source closure changed')
             allowed = allowed and all(node['effective_purposes'] for node in [*parsed['nodes'], *snapshot['nodes']])
@@ -436,7 +687,7 @@ def _artifact_authority(authority, uow, scope, source_type, source, nodes, trail
         marker, original = origin
         own = WorkScope(scope.user_id, marker.payload['source_project_id'])
         from .transaction_records import TransactionRecords
-        snapshot = SourceEgressService(TransactionRecords(uow), _memo=memo)._snapshot(own,
+        snapshot = SourceEgressService(authority._owner_records, reader=uow, _memo=memo)._snapshot(own,
             [{'type': 'experience', 'id': original.object_id, 'revision': original.revision}], trail, budget)
         dependencies = {'origin_marker_revision': marker.revision, 'source_project_id': own.project_id,
             'source_experience_id': original.object_id, 'source_revision': original.revision,
@@ -450,7 +701,7 @@ def _artifact_authority(authority, uow, scope, source_type, source, nodes, trail
     if filing is not None:
         from .transaction_records import TransactionRecords
         copied, owner = filing
-        snapshot = SourceEgressService(TransactionRecords(uow), _memo=memo)._snapshot(scope,
+        snapshot = SourceEgressService(authority._owner_records, reader=uow, _memo=memo)._snapshot(scope,
             [{'type': 'experience', 'id': copied.object_id, 'revision': copied.revision}], trail, budget)
         dependencies = {**owner, 'source_snapshot': snapshot}
         _validate_frozen_filed_edit(scope, dependencies, trail, budget)
@@ -460,20 +711,91 @@ def _artifact_authority(authority, uow, scope, source_type, source, nodes, trail
     except ProductDraftDependencyError as error:
         raise RecognitionConflict(str(error)) from error
     if draft is not None:
+        if draft.material_proof is not None:
+            qualified = getattr(authority._owner_records, 'product_shared_task_sources', None)
+            if not callable(qualified):
+                raise RecognitionConflict('shared task source actual owner unavailable')
+            result = qualified(uow, draft)
+            if (not isinstance(result, dict) or set(result) != {'graph', 'effective_purposes'}
+                    or result['effective_purposes'] not in ([], list(_PURPOSES), sorted(_PURPOSES))):
+                raise RecognitionConflict('shared task source proof changed')
+            dependencies = {**draft.revisions, 'current_source_graph': result['graph']}
+            _validate_frozen_product_draft(scope, dependencies, trail, budget)
+            return (), set(result['effective_purposes']), dependencies
+        if draft.material_documents:
+            validate_documents = getattr(authority._owner_records, 'product_task_document_validator', None)
+            if not callable(validate_documents):
+                raise RecognitionConflict('product draft document input authority unavailable')
+            validate_documents(uow, draft)
         from .transaction_records import TransactionRecords
         from .research_packets import authority_stores
         from .research_reads import product_read_sources
         records = TransactionRecords(uow)
         turns, agents = authority_stores(records)
-        proofs, read_snapshots = product_read_sources(records, turns, agents, draft.request, scope.project_id)
+        if draft.answer_origin is not None:
+            from .answer_proof import completed_answer_evidence
+            evidence = completed_answer_evidence(records, scope, draft.public_turn_id)
+            if not evidence['complete'] or evidence['cited_refs'] != draft.answer_origin['cited_refs']:
+                raise RecognitionConflict('saved answer source authority is unavailable')
+            for ref in evidence['cited_refs']:
+                collection = {'insight': 'recognitions', 'document': 'documents',
+                              'inspiration': 'recognition_experiences'}.get(ref['kind'])
+                if collection is None:
+                    continue
+                selected = uow.read(collection, ref['id'])
+                project = (selected.payload.get('project_id') if collection == 'documents' else
+                    selected.payload.get('scope', {}).get('project_id')) if selected is not None else None
+                if (selected is None or project != ref['project_id'] or selected.revision != ref['revision']
+                        or selected.payload.get('status') == 'archived'
+                        or collection != 'documents' and selected.payload.get('state') != 'active'):
+                    raise RecognitionConflict('saved answer referenced source changed')
+                pref_collection = 'v2_document_recall' if collection == 'documents' else 'recognition_recall_preferences'
+                preference = uow.read(pref_collection, ref['id'])
+                if (preference is not None and preference.payload.get('state') == 'forgotten'
+                        and preference.payload.get('by', 'user') != 'auto'):
+                    raise RecognitionConflict('saved answer referenced source was forgotten')
+            proofs, read_snapshots = (), evidence['snapshots']
+            contexts = evidence['contexts']
+            direct_originals = evidence['direct_originals']
+        else:
+            proofs, read_snapshots = product_read_sources(records, turns, agents, draft.request, scope.project_id,
+                authority=SourceEgressService(authority._owner_records, reader=uow, _memo=memo))
+            from .v2.task_attachment_input import validate_task_attachment_inputs
+            # 逐次发送正文留在原内核证明；来源图在回读时复验，继续只保存无正文元数据。
+            validate_task_attachment_inputs(records, turns, agents, draft.request)
+            context = uow.read('v2_part_contexts', draft.request['turn_id'])
+            contexts = [context.payload['context']] if context is not None else []
+            direct_originals = []
         graph, allowed = SourceGraph(), True
-        for frozen in (*draft.snapshots, *read_snapshots):
+        originals, answer_snapshots = list(direct_originals), []
+        for context in contexts:
+            admitted, inherited = _part_dependency_sources(authority._owner_records, uow, scope, context)
+            originals.extend(admitted); answer_snapshots.extend(inherited)
+        for frozen in originals:
+            from .original_sources import original_content_identity
+            content = frozen['content']
+            own = WorkScope(**frozen['scope'])
+            if own != scope:
+                raise RecognitionConflict('product draft original scope changed')
+            binding = content.get('input_binding')
+            windows = content.get('windows')
+            span = (None if windows is not None else content['span'] if binding is not None
+                else content['identity']['source_text'][content['start']:content['end']])
+            current = original_content_identity(uow, own, frozen['id'], span, input_binding=binding, windows=windows)
+            if current != content:
+                raise RecognitionConflict('product draft original content changed')
+            source = original(uow, own, 'original_item', frozen['id'])
+            snapshot = SourceEgressService(authority._owner_records, reader=uow, _memo=memo)._snapshot(own,
+                [{'type': 'original_item', 'id': frozen['id'], 'revision': source.revision}], trail, budget)
+            allowed = allowed and all(node['effective_purposes'] for node in snapshot['nodes'])
+            graph.snapshot(snapshot)
+        for frozen in (*draft.snapshots, *read_snapshots, *answer_snapshots):
             own = WorkScope(frozen['scope']['user_id'], frozen['scope']['project_id'])
             if own.user_id != scope.user_id:
                 raise RecognitionConflict('product draft source user changed')
             roots = [(root['type'], root['id'], root['revision']) for root in frozen['roots']]
             parsed = _frozen_packet_authority(own, {'source_egress': frozen}, roots, _nodes=budget)
-            snapshot = SourceEgressService(records, _memo=memo)._snapshot(own, frozen['roots'], trail, budget)
+            snapshot = SourceEgressService(authority._owner_records, reader=uow, _memo=memo)._snapshot(own, frozen['roots'], trail, budget)
             if {_closure_identity(node) for node in parsed['nodes']} != {
                     _closure_identity(node) for node in snapshot['nodes']}:
                 raise RecognitionConflict('product draft frozen source closure changed')
@@ -481,6 +803,21 @@ def _artifact_authority(authority, uow, scope, source_type, source, nodes, trail
             graph.snapshot(snapshot)
         for proof in proofs:
             graph.add(proof, root=True)
+        restored = draft
+        while restored.restoration is not None:
+            source = restored.source
+            birth_ref = ({'source_id': source.restoration['operation_id'],
+                          'locator': 'outcome://' + source.restoration['operation_id']}
+                if source.restoration is not None else {'source_id': source.public_turn_id,
+                    'locator': 'conversation://' + source.public_turn_id} if source.answer_birth is not None else
+                    {'source_id': source.revisions['product_turn_id'], 'locator': 'task://' + source.revisions['product_turn_id']})
+            extra = [ref for ref in restored.restoration['source_refs'] if ref != birth_ref]
+            for kind, identity, revision in document_roots(uow, scope, extra):
+                snapshot = SourceEgressService(authority._owner_records, reader=uow, _memo=memo)._snapshot(scope,
+                    [{'type': kind, 'id': identity, 'revision': revision}], trail, budget)
+                allowed = allowed and all(node['effective_purposes'] for node in snapshot['nodes'])
+                graph.snapshot(snapshot)
+            restored = source
         dependencies = {**draft.revisions, 'current_source_graph': graph.result()}
         _validate_frozen_product_draft(scope, dependencies, trail, budget)
         return (), set(_PURPOSES) if allowed else set(), dependencies
@@ -504,8 +841,10 @@ def _artifact_authority(authority, uow, scope, source_type, source, nodes, trail
         return None
     from .research_packets import validate_research_packet, research_style_sources
     from .transaction_records import TransactionRecords
-    research_roots = validate_research_packet(TransactionRecords(uow),scope,artifact.packet,authority=SourceEgressService(TransactionRecords(uow), _memo=memo),inherit=True)
-    style_sources = research_style_sources(TransactionRecords(uow),artifact.packet,authority=SourceEgressService(TransactionRecords(uow), _memo=memo))
+    research_roots = validate_research_packet(TransactionRecords(uow),scope,artifact.packet,
+        authority=SourceEgressService(authority._owner_records, reader=uow, _memo=memo),inherit=True)
+    style_sources = research_style_sources(TransactionRecords(uow),artifact.packet,
+        authority=SourceEgressService(authority._owner_records, reader=uow, _memo=memo))
     style_private = any(not node["effective_purposes"] for snapshot in style_sources for node in snapshot["nodes"])
     roots = artifact.roots
     frozen = _frozen_packet_authority(scope, artifact.packet, roots)
@@ -517,9 +856,8 @@ def _artifact_authority(authority, uow, scope, source_type, source, nodes, trail
         return research_roots,effective,dict(artifact.revisions),style_sources
     current = set(_PURPOSES)
     for root_type, root_id, root_revision in roots:
-        root = _source(uow, scope, root_type, root_id)
-        if root.revision != root_revision:
-            raise RecognitionConflict("model artifact source provenance is stale")
+        root = authority._walk_source(uow, scope, root_type, root_id)
+        authority._walk_revision(uow, root, root_revision, "model artifact source provenance is stale")
         # Share the outer graph collector.  This preserves all parent policy
         # revisions in the result snapshot and applies the global node bound
         # across nested retained artifacts too.
@@ -702,11 +1040,21 @@ def _frozen_packet_authority(scope, packet: Mapping[str, object], roots, *, _tra
                              "confirmed_document_record_revision", "confirmed_document_markdown_revision",
                              "document_revision", "document_revision_record_revision", "document_markdown_revision"}
             origin_fields = {'origin_marker_revision', 'source_project_id', 'source_experience_id', 'source_revision', 'source_snapshot'}
-            if isinstance(dependency_revisions, Mapping) and set(dependency_revisions) == origin_fields:
+            if isinstance(dependency_revisions, Mapping) and set(dependency_revisions) == ROUTE_ORIGINAL_OWNER_FIELDS:
+                if source_type != 'original_item':
+                    raise RecognitionConflict('route_original_graph_owner_invalid')
+                route_original_id(source_id)
+                validate_route_original_metadata(dependency_revisions, graph_identifier, graph_revision)
+            elif isinstance(dependency_revisions, Mapping) and set(dependency_revisions) in STEER_LEARNING_FIELD_SETS:
+                if source_type != 'recognition':
+                    raise RecognitionConflict('steer_learning_graph_owner_invalid')
+                validate_steer_learning_metadata(dependency_revisions, graph_identifier, graph_revision,
+                    recognition_id=source_id, recognition_revision=raw['source_revision'], max_nodes=_MAX_NODES)
+            elif isinstance(dependency_revisions, Mapping) and set(dependency_revisions) == origin_fields:
                 if source_type != 'experience':
                     raise RecognitionConflict('model artifact origin dependency is invalid')
                 _validate_frozen_origin(scope, dependency_revisions, (*_trail, key), budget)
-            elif isinstance(dependency_revisions, Mapping) and set(dependency_revisions) == PRODUCT_DRAFT_FIELDS:
+            elif isinstance(dependency_revisions, Mapping) and set(dependency_revisions) in DRAFT_DEPENDENCY_FIELDS:
                 if source_type != 'experience':
                     raise RecognitionConflict('model artifact product draft dependency is invalid')
                 _validate_frozen_product_draft(scope, dependency_revisions, (*_trail, key), budget)
@@ -726,7 +1074,8 @@ def _frozen_packet_authority(scope, packet: Mapping[str, object], roots, *, _tra
                     or set(dependency_revisions) not in (artifact_fields, workspace_fields, legacy_fields)):
                 raise RecognitionConflict("model artifact context source egress is invalid")
             try:
-                for field, value in (() if set(dependency_revisions) in (origin_fields, PRODUCT_DRAFT_FIELDS, FILED_EDIT_FIELDS, EXTERNAL_INPUT_FIELDS)
+                for field, value in (() if set(dependency_revisions) in (origin_fields, FILED_EDIT_FIELDS, EXTERNAL_INPUT_FIELDS,
+                        ROUTE_ORIGINAL_OWNER_FIELDS) + STEER_LEARNING_FIELD_SETS + DRAFT_DEPENDENCY_FIELDS
                                      else dependency_revisions.items()):
                     if field == "legacy_review_id":
                         if not isinstance(value, str) or _SAFE_ID.fullmatch(value) is None:
@@ -934,14 +1283,16 @@ def _parent(reader, namespace, identity):
                    for kind, identity, revision in roots], parent
 
 
-def prepare_sources(tx, scope=None, identities=(), *, project_id=None):
+def prepare_sources(tx, scope=None, identities=(), *, project_id=None, source_owner=None):
     """Qualify a fixed plan now; the write owner decides when to apply it."""
     if project_id is None and not isinstance(scope, WorkScope):
         raise RecognitionConflict('cache invalidation scope is invalid')
+    if source_owner is None:
+        raise RecognitionConflict('cache source actual owner unavailable')
     changed = {(scope.user_id, scope.project_id, kind, identity) for kind, identity in identities}
     reader = TransactionRecords(tx)
     invalidator = VectorCacheInvalidator(vector_cache_path(tx))
-    authority = SourceEgressService(reader)
+    authority = SourceEgressService(source_owner, reader=reader)
     recognitions, materials, seen_materials = set(), set(), set()
     for namespace, identity in invalidator.parents():
         material = chunk_cache_parent(namespace)
@@ -968,23 +1319,173 @@ def prepare_sources(tx, scope=None, identities=(), *, project_id=None):
     return lambda: invalidator.targets(recognitions=recognitions, materials=materials)
 
 
-def invalidate_sources(tx, scope=None, identities=(), *, project_id=None):
-    return prepare_sources(tx, scope, identities, project_id=project_id)()
+def invalidate_sources(tx, scope=None, identities=(), *, project_id=None, source_owner=None):
+    return prepare_sources(tx, scope, identities, project_id=project_id, source_owner=source_owner)()
 
 
-def recognition_service(records, *, cache_invalidation=None, product_draft_validator=validate_product_draft_source):
+def validate_inspiration_source(reader, scope, record):
+    from .v2.inspiration_extraction import validate_inspiration_origin
+    return validate_inspiration_origin(reader, scope, record)
+
+
+def _source_owner_binding(source_owner, reader):
+    from backend.security.audited_records import AuditedRecordStore
+    from backend.security.user_context import USER_ACCESS
+    from .v2.material_origins import SharedMaterialOwner
+    from .v2.shared_runtime import SharedWriteRecords, shared_read_capability
+    from backend.recognition.service import _EvidenceReader
+    from backend.recognition.sql_source_identities import CollectingReader
+
+    borrowed = TransactionRecords(reader)
+    if isinstance(source_owner, SharedMaterialOwner):
+        from .v2.material_read_context import qualified_source_records
+        qualified = qualified_source_records(source_owner, borrowed)
+        if qualified is not None:
+            return qualified
+    if not borrowed.connection.in_transaction:
+        raise RecognitionConflict('source reader owner changed')
+    if isinstance(source_owner, (SQLiteStructuredRecordStore, AuditedRecordStore)):
+        if Path(borrowed.database_path).resolve() != Path(source_owner.database_path).resolve():
+            raise RecognitionConflict('source reader owner changed')
+        if isinstance(source_owner, AuditedRecordStore):
+            access = USER_ACCESS.get()
+            if access is not None and access.target_user_id != source_owner.user_id:
+                raise RecognitionConflict('source reader owner changed')
+        return source_owner, source_store(source_owner)
+    if isinstance(source_owner, (SharedMaterialOwner, SharedWriteRecords)):
+        # 已持有共享写事务时只借原资格与原读取连接，避免反向取得中央或资料根锁。
+        actual, seen = borrowed._transaction, set()
+        while isinstance(actual, (CollectingReader, _EvidenceReader, TransactionRecords)):
+            if id(actual) in seen:
+                raise RecognitionConflict('source reader owner changed')
+            seen.add(id(actual))
+            actual = actual._transaction if isinstance(actual, TransactionRecords) else actual._reader
+        cap = shared_read_capability(TransactionRecords(actual), registry=source_owner.registry)
+        if (cap.actor != source_owner.actor or cap.namespace != (
+                source_owner.namespace if isinstance(source_owner, SharedMaterialOwner)
+                else '/'.join(('shared', source_owner.project_id, cap._data.namespace)))
+                or isinstance(source_owner, SharedMaterialOwner)
+                and (not source_owner._active or cap.lease_payload() != source_owner.lease.payload())
+                or isinstance(source_owner, SharedWriteRecords) and cap._writer.owner is not source_owner):
+            raise RecognitionConflict('source reader owner changed')
+        return cap._data.records, cap._data.sources
+    raise RecognitionConflict('source reader owner unavailable')
+
+
+def recognition_service(records, *, cache_invalidation=None, product_draft_validator=validate_product_draft_source,
+                        source_owner=None):
     """沿同一原领域实例同时注入成果闭包与外部编号的固定校验接点。"""
+    def archive(reader, scope, kind, record):
+        owner = records if source_owner is None else _source_owner_binding(source_owner, reader)[0]
+        result = SourceEgressService(owner, reader=reader).archive_source_history(scope, kind, record)
+        if source_owner is not None:
+            _source_owner_binding(source_owner, reader)
+        return result
+
+    if source_owner is not None:
+        _source_owner_binding(source_owner, records)
+
+        def product(reader, scope, source):
+            owner, _ = _source_owner_binding(source_owner, reader)
+            if product_draft_validator is validate_product_draft_source:
+                result = SourceEgressService(owner, reader=reader).snapshot(scope,
+                    [{'type': 'experience', 'id': source.object_id, 'revision': source.revision}])
+            else:
+                result = product_draft_validator(reader, scope, source)
+            _source_owner_binding(source_owner, reader)
+            return result
+
+        def external(reader, scope, entry, *, trail, budget):
+            return validate_external_number(reader, scope, entry, trail=trail, budget=budget,
+                                            source_owner=source_owner)
+
+        def inspiration(reader, scope, record):
+            _source_owner_binding(source_owner, reader)
+            result = validate_inspiration_source(reader, scope, record)
+            _validate_steer_candidate(source_owner, reader, scope, record)
+            _source_owner_binding(source_owner, reader)
+            return result
+
+        return RecognitionService(records, cache_invalidation=cache_invalidation,
+            product_draft_validator=product, _external_input_validator=external,
+            _inspiration_validator=inspiration, _archive_source_validator=archive,
+            _publication_observer=lambda reader, scope, candidate, recognition:
+                _publish_candidate_sources(source_owner, reader, scope, candidate, recognition))
+    def product(reader, scope, source):
+        if product_draft_validator is validate_product_draft_source:
+            return SourceEgressService(records, reader=reader).snapshot(scope,
+                [{'type': 'experience', 'id': source.object_id, 'revision': source.revision}])
+        return product_draft_validator(reader, scope, source)
+
+    def external(reader, scope, entry, *, trail, budget):
+        return validate_external_number(reader, scope, entry, trail=trail, budget=budget, source_owner=records)
+
+    def inspiration(reader, scope, record):
+        result = validate_inspiration_source(reader, scope, record)
+        _validate_steer_candidate(records, reader, scope, record)
+        return result
+
     return RecognitionService(records, cache_invalidation=cache_invalidation,
-        product_draft_validator=product_draft_validator,
-        _external_input_validator=validate_external_number)
+        product_draft_validator=product,
+        _external_input_validator=external,
+        _inspiration_validator=inspiration, _archive_source_validator=archive,
+        _publication_observer=lambda reader, scope, candidate, recognition:
+            _publish_candidate_sources(records, reader, scope, candidate, recognition))
 
 
-def _external_originals_committed(reader, snapshot, *, trail, budget):
+def _publish_candidate_sources(owner, reader, scope, candidate, recognition):
+    _publish_steer_candidate(owner, reader, scope, candidate, recognition)
+    from .v2.shared_merge_privacy import PRIVACY, pending_merge_private
+    if reader.read(PRIVACY, candidate.object_id) is not None:
+        actual, _ = _source_owner_binding(owner, reader)
+        authority = SourceEgressService(actual, reader=reader)
+        if pending_merge_private(reader, authority, scope, candidate):
+            authority.set_policy(scope, 'recognition', recognition.object_id, recognition.revision, 0, [])
+
+
+def _validate_steer_candidate(owner, reader, scope, candidate):
+    from .v2.steer_learning_sources import learning_candidate_identity, learning_recognition_identity
+    context = begin_read(owner) if reader is owner else nullcontext(reader)
+    with context as transaction:
+        current = TransactionRecords(transaction)
+        actual, _ = _source_owner_binding(owner, current)
+        is_candidate = candidate.collection == 'recognition_candidates'
+        identity = learning_candidate_identity if is_candidate else learning_recognition_identity
+        if not identity(owner, current, scope, candidate):
+            return
+        learning = getattr(actual, 'product_steer_learning', None)
+        if learning is None:
+            raise RecognitionConflict('steer_learning_candidate_owner_unavailable')
+        if is_candidate:
+            verified = learning.sources.validate_candidate_origin(current, scope, candidate)
+        else:
+            verified = learning.sources.recognition_authority(actual, current, scope, candidate)
+        if verified is None:
+            raise RecognitionConflict('steer_learning_source_proof_unavailable')
+
+
+def _publish_steer_candidate(owner, reader, scope, candidate, recognition):
+    from .v2.steer_learning_sources import learning_candidate_identity
+    current = TransactionRecords(reader)
+    actual, _ = _source_owner_binding(owner, current)
+    published = current.read('recognition_candidates', candidate.object_id)
+    if published is None:
+        raise RecognitionConflict('steer_learning_publication_candidate_unavailable')
+    if not learning_candidate_identity(owner, current, scope, published):
+        return
+    learning = getattr(actual, 'product_steer_learning', None)
+    if learning is None:
+        raise RecognitionConflict('steer_learning_publication_owner_unavailable')
+    learning.sources.stage_published_origin(current, scope, candidate, recognition)
+    _source_owner_binding(owner, reader)
+
+
+def _external_originals_committed(reader, snapshot, *, trail, budget, source_owner=None):
     graph = SourceGraph()
     graph.snapshot(snapshot)
     expanded = validate_graph(graph.result(), snapshot['scope']['user_id'],
         trail=trail, budget=budget)
-    store = source_store(reader)
+    store = source_store(reader) if source_owner is None else _source_owner_binding(source_owner, reader)[1]
     for node in expanded['nodes']:
         if node['kind'] != 'material' or node['type'] != 'original_source':
             continue
@@ -1001,7 +1502,7 @@ def _external_originals_committed(reader, snapshot, *, trail, budget):
                 raise ExternalInputDependencyError('external_context_evidence_invalid')
 
 
-def validate_external_number(reader, scope, entry, *, trail, budget):
+def validate_external_number(reader, scope, entry, *, trail, budget, source_owner=None):
     from backend.memory_app.original_sources import resolve_turn_material
     from backend.memory_app.transaction_records import TransactionRecords
     from core.document_engine import SQLiteDocumentRepository
@@ -1016,28 +1517,39 @@ def validate_external_number(reader, scope, entry, *, trail, budget):
     own = WorkScope(scope.user_id, material['project_id'])
     if isinstance(reader, TransactionRecords):
         reader = reader._transaction
+    owner, sources = _source_owner_binding(source_owner, reader)
+    if 'namespace' in material:
+        binding = reader.read('v2_shared_root', 'identity')
+        physical = source_store(reader) if sources is None else sources
+        if (set(material) != {'type', 'id', 'revision', 'project_id', 'namespace'}
+                or material['project_id'] != scope.project_id or binding is None
+                or binding.payload != {'project_id': scope.project_id}
+                or material['namespace'] != '/'.join(('shared', scope.project_id, physical.namespace_id))):
+            raise ExternalInputDependencyError('external_context_evidence_invalid')
+        material = {key: value for key, value in material.items() if key != 'namespace'}
     collector = CollectingReader(reader)
     resolved, roots = resolve_turn_material(collector, own, material)
     if encoded(roots) != encoded(frozen['roots']):
         raise ExternalInputDependencyError('external_context_evidence_invalid')
     if material['type'] == 'recognition':
-        recognition_service(TransactionRecords(collector))._assert_sources_active(collector, own, (), [material['id']],
+        recognition_service(TransactionRecords(collector), source_owner=source_owner)._assert_sources_active(collector, own, (), [material['id']],
             recognition_revisions={material['id']: material['revision']})
     state = {'trail': trail, 'budget': budget}
     parsed = _frozen_packet_authority(own, {'source_egress': frozen},
         [(root['type'], root['id'], root['revision']) for root in roots],
         _trail=state['trail'], _nodes=state['budget'])
-    authority = SourceEgressService(TransactionRecords(collector), _memo={})
+    authority = SourceEgressService(owner, reader=collector, _memo={})
     fresh = authority._snapshot(own, roots, state['trail'], state['budget'])
     authority.validate_snapshot(own, fresh)
     if {_closure_identity(node) for node in parsed['nodes']} != {_closure_identity(node) for node in fresh['nodes']}:
         raise ExternalInputDependencyError('external_context_evidence_invalid')
     if resolved['type'] == 'document':
-        documents = SQLiteDocumentRepository(TransactionRecords(collector), namespace_id=source_store(reader).namespace_id)
+        documents = SQLiteDocumentRepository(TransactionRecords(collector),
+            namespace_id=(source_store(reader) if sources is None else sources).namespace_id)
         if (documents.revision(material['id'], material['revision']) is None
                 or documents.markdown(material['id'], revision=material['revision']) is None):
             raise ExternalInputDependencyError('external_context_evidence_invalid')
-    _external_originals_committed(reader, frozen, trail=trail, budget=budget)
+    _external_originals_committed(reader, frozen, trail=trail, budget=budget, source_owner=source_owner)
     selected = set(collector.selected_keys())
     identities = entry['sql_identities']
     if selected != {(identity['collection'], identity['object_id']) for identity in identities}:
@@ -1046,4 +1558,6 @@ def validate_external_number(reader, scope, entry, *, trail, budget):
     # original reader. Facts/heads/witnesses are never selected domain rows.
     for identity in identities:
         verify_lineage(reader, identity)
+    if source_owner is not None:
+        _source_owner_binding(source_owner, reader)
     return frozen

@@ -12,8 +12,8 @@
 | `WorkbenchInUse.dc.html` / `WorkbenchDark.dc.html` | 以"使用中"状态和暖黑主题引用 Main |
 | `WorkbenchContext.dc.html` | 以"上下文"状态引用 Main：聚焦面板里的本次上下文（用量条、分类、阶梯 trace、条目、外发）。数据形状对应 `v2/ladder.py` 的 trace、问答回执的 `model_usage`/`excluded_sources`，以及干活的 `agent/context/budget.py` |
 | `Library.dc.html` / `LibraryDark.dc.html` | 资料库：四层标签、场景栏、收件箱、"我"、筛选（认识：待确认/生效/已遗忘；整理稿：未核对/已核对/已遗忘）、"⋯"菜单（约束跳转、只读备忘）、下钻面板 |
-| `Settings.dc.html` | 设置：模型、隐私、项目、数据 |
-| `SettingsModel / SettingsPrivacy / SettingsProject / SettingsData.dc.html` | 以展开态引用 Settings：模型（方式、地址、密钥、测试、按用途外发开关）、隐私（私密资料、外发记录）、项目（场景、私密、约束）、数据（备份、导出、导入、迁移） |
+| `Settings.dc.html` | 设置（2026-10-24 重做）：模型 · 隐私 · 项目 · 数据 · 设备 · 网站六组；分组卡片、行首图标块、展开面板一个保存、主题三档在左栏底部（DESIGN §6.4，plan S1） |
+| `SettingsModel / SettingsPrivacy / SettingsProject / SettingsData.dc.html` | 以展开态引用 Settings：模型（方式、地址、密钥、测试、按用途外发开关）、隐私（私密资料、外发记录）、项目（场景、私密、约束）、数据（备份、检查、使用记录） |
 | `Companion.dc.html` | 伙伴页：聊聊、回顾、专注、安排 |
 | `Mobile.dc.html` / `MobileLibrary.dc.html` | 390×844 手机版工作台与资料库 |
 

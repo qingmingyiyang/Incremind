@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { recognitionApi } from '../api/recognitionApi';
-import { userStorageKey } from '../api/deviceTransport';
+import { productFetch, userStorageKey } from '../api/deviceTransport';
 import { readStoredJson, removeStoredItem, writeStoredJson } from '../lib/browserStorage';
 import { useRequestScope } from '../lib/useRequestScope';
 import { DraftConflictView } from './DraftConflictView';
@@ -19,7 +19,7 @@ export function DocumentMarkdownEditor(props) {
   const storageKey = userStorageKey(`chriptmas-v2-document-draft:${encodeURIComponent(props.projectId)}:${encodeURIComponent(props.documentId)}`);
   return <DocumentEditorSession key={storageKey} {...props} storageKey={storageKey}/>;
 }
-function DocumentEditorSession({ projectId, documentId, document, disabled = false, label, evidence, onEvidence, onSaved, readDocument, renderHeading, storageKey }) {
+function DocumentEditorSession({ projectId, documentId, document, disabled = false, label, evidence, onEvidence, onSaved, readDocument, renderHeading, storageKey, onEditingStateChange }) {
   const gate = useRequestScope(storageKey), scope = gate.scope;
   const reader = useRef(readDocument); reader.current = readDocument;
   const [initial] = useState(() => {
@@ -33,6 +33,9 @@ function DocumentEditorSession({ projectId, documentId, document, disabled = fal
   const stored = useRef(initial.stored), current = useRef(null);
   const [saving, setSaving] = useState(false), [error, setError] = useState('');
   current.current = { base, markdown, saving, conflict, disabled };
+  const dirty = markdown !== base.markdown;
+  useEffect(() => { onEditingStateChange?.({ dirty, saving, conflict: Boolean(conflict), disabled, revision: base.revision }); },
+    [dirty, saving, Boolean(conflict), disabled, base.revision, onEditingStateChange]);
   function clearDraft(expected) {
     // 只清理本次拥有的版本，迟到保存不能删除另一处新编辑。
     if (sameDraft(readStoredJson(storageKey).value, expected)) removeStoredItem(storageKey);
@@ -106,6 +109,50 @@ function DocumentEditorSession({ projectId, documentId, document, disabled = fal
       } catch { if (gate.isCurrent(request)) setError('读取未完成'); }
     } finally { if (gate.isCurrent(request)) setSaving(false); }
   }
+  const sessionCurrent = token => gate.isCurrent(token)
+    && userStorageKey(`chriptmas-v2-document-draft:${encodeURIComponent(projectId)}:${encodeURIComponent(documentId)}`) === storageKey;
+  async function restoreRevision(revision) {
+    const latest = current.current;
+    if (latest.saving || latest.disabled || latest.conflict || !validDocument(latest.base)
+      || latest.markdown !== latest.base.markdown || !Number.isSafeInteger(revision) || revision < 1) throw new Error('document_restore_unavailable');
+    const request = gate.issue('save', scope);
+    if (!request) throw new Error('document_scope_changed');
+    current.current = { ...latest, saving: true }; setSaving(true); setError('');
+    try {
+      const result = await recognitionApi.restoreDocument({ projectId, documentId,
+        expectedRevision: latest.base.revision, restoreRevision: revision,
+        fetchImpl: productFetch });
+      if (!sessionCurrent(request)) throw new Error('document_scope_changed');
+      if (!validDocument(result) || (result.document_id || result.id) !== documentId
+        || result.revision !== latest.base.revision + 1) throw new Error('document_restore_invalid');
+      const next = withoutComments({ ...latest.base, ...result });
+      current.current = { ...current.current, base: next, markdown: next.markdown };
+      setBase(next); setMarkdown(next.markdown); clearDraft(stored.current);
+      onSaved?.(next); refreshComments(next);
+      return next;
+    } finally {
+      if (sessionCurrent(request)) { current.current = { ...current.current, saving: false }; setSaving(false); }
+    }
+  }
+  async function refreshDocument() {
+    const latest = current.current;
+    if (latest.saving || latest.disabled || latest.conflict || latest.markdown !== latest.base.markdown) throw new Error('document_refresh_unavailable');
+    const request = gate.issue('save', scope);
+    if (!request) throw new Error('document_scope_changed');
+    current.current = { ...latest, saving: true }; setSaving(true); setError('');
+    try {
+      const value = await (reader.current ? reader.current() : recognitionApi.loadDocument({ projectId, documentId }));
+      if (!sessionCurrent(request)) throw new Error('document_scope_changed');
+      if (!validDocument(value) || (value.document_id || value.id) !== documentId) throw new Error('document_refresh_invalid');
+      const next = withoutComments(value);
+      current.current = { ...current.current, base: next, markdown: next.markdown };
+      setBase(next); setMarkdown(next.markdown); clearDraft(stored.current);
+      onSaved?.(next); refreshComments(next);
+      return next;
+    } finally {
+      if (sessionCurrent(request)) { current.current = { ...current.current, saving: false }; setSaving(false); }
+    }
+  }
   function choose(server) {
     const nextMarkdown = server ? conflict.server.markdown : conflict.local, nextBase = conflict.server;
     if (server) clearDraft(stored.current); else storeDraft(nextBase, nextMarkdown);
@@ -115,6 +162,8 @@ function DocumentEditorSession({ projectId, documentId, document, disabled = fal
   return <>{error && <p role="alert">{error}</p>}{conflict && <DraftConflictView compact baseDraft={conflict.base} editor={{ markdown: conflict.local }} server={conflict.server} fields={[["markdown", "整理稿"]]} onChoose={choose} disabled={saving || disabled}/>}
     <RichMarkdownEditor value={markdown} onChange={changeMarkdown} onSave={save} disabled={disabled || saving || Boolean(conflict) || !validDocument(base)} label={label} evidence={evidence} onEvidence={onEvidence} renderHeading={renderHeading}
       projectId={projectId} documentId={documentId} documentRevision={base.revision} documentMarkdown={base.markdown} commentSection={base.comment_section}
+      onRestoreRevision={restoreRevision} onRefreshDocument={refreshDocument}
+      canRestoreRevision={!disabled && !saving && !conflict && !dirty && validDocument(base)}
       toolbarActions={<DocumentDeliveryAction projectId={projectId} documentId={documentId} revision={base.revision}
         needsSave={markdown !== base.markdown || Boolean(conflict)} disabled={disabled || saving || !validDocument(base)}
         isSavedRevision={revision => { const value = current.current; return !value.disabled && !value.saving && !value.conflict

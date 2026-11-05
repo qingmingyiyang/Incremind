@@ -211,7 +211,7 @@ def _validate_arguments(capability_id: str, arguments: Mapping[str, object]) -> 
         AGENT_WAIT_CAPABILITY: {"child_run_ids", "timeout_ms"},
         AGENT_FAN_IN_CAPABILITY: {"child_run_ids", "policy", "quorum"},
         AGENT_LIST_CAPABILITY: {"include_messages"},
-        AGENT_PLAN_CAPABILITY: {"mode", "plan_id", "cluster_id", "assignments"},
+        AGENT_PLAN_CAPABILITY: {"mode", "plan_id", "cluster_id", "assignments", "preserve_assignment_ids"},
     }[capability_id]
     if not arguments or set(arguments) - allowed:
         raise AgentCapabilityError("agent capability arguments are invalid")
@@ -314,18 +314,21 @@ def _budget(value: object) -> Mapping[str, object]:
 def _validate_plan(arguments: Mapping[str, object]) -> None:
     mode = arguments.get("mode")
     plan_id = arguments.get("plan_id")
-    if mode not in {"main_only", "cluster"}:
+    if mode not in {"main_only", "cluster", "amend_unbound"}:
         raise AgentCapabilityError("agent plan mode is invalid")
     _identifier(plan_id, "plan id", _ID)
     if mode == "main_only":
         if set(arguments) != {"mode", "plan_id"}:
             raise AgentCapabilityError("main-only agent plan shape is invalid")
         return
-    if set(arguments) != {"mode", "plan_id", "cluster_id", "assignments"}:
+    expected = {"mode", "plan_id", "cluster_id", "assignments"}
+    if mode == 'amend_unbound':
+        expected.add('preserve_assignment_ids')
+    if set(arguments) != expected:
         raise AgentCapabilityError("cluster agent plan shape is invalid")
     _identifier(arguments.get("cluster_id"), "cluster id", _ID)
     assignments = arguments.get("assignments")
-    if not isinstance(assignments, list) or not 1 <= len(assignments) <= 8:
+    if not isinstance(assignments, list) or not (0 if mode == 'amend_unbound' else 1) <= len(assignments) <= 8:
         raise AgentCapabilityError("agent plan assignments are invalid")
     seen: set[str] = set()
     for assignment in assignments:
@@ -345,6 +348,16 @@ def _validate_plan(arguments: Mapping[str, object]) -> None:
         _plan_capability_ids(payload["capability_ids"])
         _plan_expert(payload["expert"])
         _plan_skill(payload["skill"])
+    if mode == 'amend_unbound':
+        preserved = _identifier_list(arguments['preserve_assignment_ids'], 'preserved assignment ids', required=False)
+        if (not isinstance(arguments['preserve_assignment_ids'], list) or set(preserved).intersection(seen)
+                or len(preserved) + len(assignments) > 8):
+            raise AgentCapabilityError('agent plan preserved assignments are invalid')
+        from backend.shared.task_division_graph import validate_division_shape
+        for assignment in assignments:
+            if 'division' in assignment:
+                validate_division_shape(assignment['division'])
+        return
     if any('division' in item for item in assignments):
         from backend.shared.task_division_graph import validate_divisions
         validate_divisions(assignments, {item['assignment_id']:item['assignment_id'] for item in assignments})

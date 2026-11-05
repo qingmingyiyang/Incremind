@@ -1,5 +1,5 @@
 """Bind durable product decisions while the unchanged kernel executes a Turn."""
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 from core.ai_kernel import SynchronousAIRuntime, validate_turn_action
 from core.ai_kernel.runtime import AIKernelRuntimeError
@@ -21,6 +21,17 @@ def retry_policy_for(request=None):
 
 
 class ProductPolicyRuntime(SynchronousAIRuntime):
+    def _record_planner_model_terminal(self, turn_id, control, *, fallback_status, fallback_error_code):
+        failed = super()._record_planner_model_terminal(turn_id, control,
+            fallback_status=fallback_status, fallback_error_code=fallback_error_code)
+        owner = getattr(self, 'product_task_steers', None)
+        if owner is not None:
+            events = [event for event in self._state.events_after(turn_id)
+                if event['correlation']['model_request_id'] == control.model_request_id
+                and event['type'] in {'model.completed', 'model.failed', 'model.cancelled', 'model.timed_out'}]
+            owner.decision_committed(self._state.get_request(turn_id), control, events[-1] if events else None)
+        return failed
+
     def run_accepted_turn(self, turn_id, run_lease=None):
         return super().run_accepted_turn(turn_id, run_lease=run_lease)
 
@@ -300,6 +311,7 @@ class ProductPolicyRuntime(SynchronousAIRuntime):
                     or events[-1]['correlation']['tool_call_id'] != row.payload['invocation_id'])):
             raise AIKernelRuntimeError('partial answer action sequence conflict')
         with self._policy_scope(payload['turn_id']):
+            provider.service.freeze_phase_source(payload, row)
             provider.service.admit_continuation(payload, row)
             action_ref = self._payloads.put(payload['turn_id'], 'turn-action', payload)
             self._append(payload['turn_id'], 'turn.resumed', 'running', str(payload['reason']),
@@ -317,7 +329,8 @@ class ProductPolicyRuntime(SynchronousAIRuntime):
             return receipt
 
     def _run(self, turn_id):
-        with self._policy_scope(turn_id):
+        steers = getattr(self, 'product_steers', None)
+        with self._policy_scope(turn_id), (steers.run_scope(turn_id) if steers is not None else nullcontext()):
             tasks = getattr(self, 'task_continuations', None)
             execution = tasks.active.get(turn_id) if tasks is not None else None
             if execution is not None and execution['action'] is not None:
@@ -355,6 +368,15 @@ class ProductPolicyRuntime(SynchronousAIRuntime):
     def _invoke_tool(self, turn_id, decision):
         with self._policy_scope(turn_id):
             return super()._invoke_tool(turn_id, decision)
+
+    def _execute_tool_intent(self, intent, intent_ref, provider, *, attempt, continuation_state=None):
+        owner = getattr(self, 'product_stops', None)
+        if intent.capability_id == 'external.task.execute' and owner is not None and owner.requested(intent.turn_id):
+            # 原 dispatcher 已登记此 invocation；补接令牌创建之前收到的停止。
+            owner.ensure_cancel_event(intent.turn_id)
+            self._dispatcher.request_cancel(intent.invocation_id)
+        return super()._execute_tool_intent(intent, intent_ref, provider, attempt=attempt,
+            continuation_state=continuation_state)
 
     def _resume_incomplete_tool(self, turn_id):
         with self._policy_scope(turn_id):

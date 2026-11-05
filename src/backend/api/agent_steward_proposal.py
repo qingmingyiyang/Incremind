@@ -132,9 +132,14 @@ class AgentStewardProposalBuilder:
                 'goal':item['goal'],'deliverable':item['deliverable'],
                 'capabilities':item['capabilities'] or ['memory.recall'],
                 'depends_on':[index+1 for index in item['depends_on']]})
-        return self.complete(request,{'mode':'cluster','assignments':assignments})
+        # 已保存的分工保留原目标合同，模型生成的新分工继续使用独立限制。
+        return self._complete(request, {'mode':'cluster','assignments':assignments},
+                              task_limit=2000, unique_tasks=False)
 
     def complete(self, steward_request: Mapping[str, object], selection: object) -> dict[str, object]:
+        return self._complete(steward_request, selection, task_limit=600, unique_tasks=True)
+
+    def _complete(self, steward_request, selection, *, task_limit, unique_tasks):
         brief = self.brief(steward_request)
         if not isinstance(selection, Mapping):
             raise AgentStewardProposalError("model selection must be an object")
@@ -158,7 +163,7 @@ class AgentStewardProposalBuilder:
                 raise AgentStewardProposalError("model assignment profile or task is invalid")
             task = task.strip()
             normalized = re.sub(r"\s+", "", task)
-            if not normalized or len(task) > 600 or normalized in seen:
+            if not normalized or len(task) > task_limit or unique_tasks and normalized in seen:
                 raise AgentStewardProposalError("model assignment tasks are empty, repeated or too long")
             seen.add(normalized)
             profile = self._profiles.get(profile_id)

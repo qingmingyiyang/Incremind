@@ -23,7 +23,7 @@ def test_reviewer_verdict_requires_the_fixed_single_line_contract() -> None:
         "VERDICT=supported;DISPOSITION=continue;FINDING=See crp://session/main/secret"
     ) is None
     assert parse_reviewer_verdict(
-        r"VERDICT=supported;DISPOSITION=continue;FINDING=Read C:\Users\Chrip\secret.txt"
+        r"VERDICT=supported;DISPOSITION=continue;FINDING=Read C:\Users\ExampleUser\secret.txt"
     ) is None
 
 
@@ -185,7 +185,7 @@ def test_replayed_observer_does_not_write_a_second_supervision_pair() -> None:
 
 
 def test_sensitive_but_grammatical_finding_uses_safe_inconclusive_fallback() -> None:
-    for sensitive_finding in ("crp://session/main/secret", r"C:\Users\Chrip\secret.txt"):
+    for sensitive_finding in ("crp://session/main/secret", r"C:\Users\ExampleUser\secret.txt"):
         supervision, runs = _Supervision(), _Runs()
         observer = WorldSupervisionAgentObserver(
             supervision=supervision, run_store=runs, request_loader=_request,

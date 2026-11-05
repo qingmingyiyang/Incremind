@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from copy import deepcopy
+import inspect
+import os
+from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -11,6 +16,79 @@ from backend.api.agent_steward_proposal import (
 )
 from backend.api.workbench_ai_runtime import WORLD_PROJECT_SESSION_ID
 from core.ai_kernel import AgentBudget, AgentProfileRegistry
+
+
+@pytest.fixture(scope='module')
+def native_application():
+    root = Path(os.environ['CHRIPTMAS_APP_ROOT']).resolve(strict=True)
+    assert root.is_absolute() and root.name.casefold() != 'runtime'
+    from tests.memory_app.v2.test_project_constraint_input import prepare_config
+    prepare_config(root)
+    from backend.memory_app.app import create_app
+    from fastapi.testclient import TestClient
+    app = create_app(runtime_root=root)
+    models = app.state.recognition_models
+    models.update('generation', {'expected_revision': models.public_for_purpose('generation')['revision'],
+        'base_url': 'http://127.0.0.1:9/v1', 'model': 'gpt-4o-mini',
+        'api_key': 'local-test-placeholder', 'enabled': True, 'allow_remote': False})
+    with TestClient(app):
+        app.state.recognition_turn_dispatcher._runtime()
+        yield app
+
+
+@pytest.mark.parametrize('goal', ['相同的原执行目标', '原' * 2000],
+    ids=['duplicate_saved_goals', 'maximum_saved_goal_length'])
+def test_native_override_preserves_saved_goals_and_model_entry_keeps_limits(native_application, goal):
+    app = native_application
+    research = inspect.getclosurevars(app.state.workbench_task_observer).nonlocals['research']
+    project = 'division-' + uuid4().hex
+    items = [{'goal': goal, 'deliverable': '整理稿', 'capabilities': ['memory.recall'], 'depends_on': []},
+             {'goal': goal, 'deliverable': '整理稿', 'capabilities': ['memory.recall'], 'depends_on': [0]}]
+    from core.ai_kernel.product_admission import bundle_from_payload
+    _, preparation = research.initial('turn-' + uuid4().hex, project, '按原分工继续完成', None,
+        division_override=items)
+    main = app.state.agent_runtime_composition.coordinator.accept_and_register_main(
+        preparation['request'], admission_bundle=bundle_from_payload(preparation['admission_bundle']))
+    steward = app.state.agent_organization_runtime._prepare_steward(main)
+    builder = app.state.ai_runtime.task_continuations.planner.builder
+    proposal = builder.from_override(steward.request)
+    assert proposal['mode'] == 'cluster' and len(proposal['assignments']) == 2
+    assert [item['division']['goal'] for item in proposal['assignments']] == [goal, goal]
+    assert [item['capability_ids'] for item in proposal['assignments']] == [['memory.recall'], ['memory.recall']]
+    assert proposal['assignments'][1]['division']['depends_on'] == ['steward-assignment-1']
+    selection = {'mode': 'cluster', 'assignments': [{'profile_id': item['profile_id'],
+        'task': goal, 'goal': goal, 'deliverable': '整理稿', 'capabilities': ['memory.recall'], 'depends_on': []}
+        for item in proposal['assignments']]}
+    with pytest.raises(AgentStewardProposalError, match='empty, repeated or too long'):
+        builder.complete(steward.request, selection)
+    too_long = deepcopy(selection)
+    too_long['assignments'] = too_long['assignments'][:1]
+    too_long['assignments'][0].update(task='原' * 601, goal='原' * 601)
+    with pytest.raises(AgentStewardProposalError, match='empty, repeated or too long'):
+        builder.complete(steward.request, too_long)
+    outside = deepcopy(too_long)
+    outside['assignments'][0].update(task='有效目标', goal='有效目标', capabilities=['unregistered.capability'])
+    with pytest.raises(AgentStewardProposalError, match='capabilities exceed frozen subset'):
+        builder.complete(steward.request, outside)
+    changed = deepcopy(steward.request)
+    changed['agent_binding']['profile_id'] = 'subagent.explorer'
+    with pytest.raises(AgentStewardProposalError, match='verified durable child'):
+        builder.from_override(changed)
+    composition = app.state.agent_runtime_composition
+    published = composition.coordinator.plan(parent_turn_id=steward.request['turn_id'],
+        operation_id='plan-' + uuid4().hex, project_id=project,
+        scope=steward.request['scope'], privacy=steward.request['privacy'], arguments=proposal)
+    assert len(published['permit_ids']) == 2
+    plans = composition.dispatch_store.list_plans_for_main(project_id=project, main_run_id=main.run.run_id)
+    plan = next(item for item in plans if item.plan_id == published['plan_id'])
+    assert plan.mode == 'cluster' and len(plan.assignment_ids) == 2
+    saved = [composition.dispatch_store.get_assignment(identity, project_id=project)
+             for identity in plan.assignment_ids]
+    divisions = [app.state.ai_turn_store.get(item.task_payload_ref)['division'] for item in saved]
+    assert [item['goal'] for item in divisions] == [goal, goal]
+    assert divisions[1]['depends_on'] == [plan.assignment_ids[0]]
+    assert not any(event['type'] in {'model.requested', 'model.completed'}
+                   for event in app.state.ai_turn_store.events_after(steward.request['turn_id']))
 
 
 class _Store:

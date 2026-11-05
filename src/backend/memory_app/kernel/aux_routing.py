@@ -1,8 +1,9 @@
 """Freeze an auxiliary choice alongside, without changing, the primary route."""
 from urllib.parse import urlsplit
 
-from ..turn_routing import CONFIGURATION_FIELDS, _revision
+from ..turn_routing import _revision
 from ..model_config import ModelConfigurationError
+from ..model_binding import public_model_configuration
 
 CHOICE_KIND = 'product-aux-configuration-v1'
 ROUTE_KIND = 'product-aux-model-routing-v1'
@@ -40,9 +41,7 @@ def auxiliary_route(models, store, turn_id, project_id, primary):
     if selected is models:
         return models, primary
     public = selected.public()['generation']
-    configuration = {key: public.get(key) for key in CONFIGURATION_FIELDS}
-    if public.get('subscription_binding'):
-        configuration['subscription_binding'] = dict(public['subscription_binding'])
+    configuration = public_model_configuration(public)
     local = urlsplit(str(configuration.get('base_url') or '')).hostname in {'localhost', '127.0.0.1', '::1'}
     payload = {'turn_id': turn_id, 'project_id': project_id, 'configuration': configuration,
         'primary_route_ref': primary['payload_ref'],

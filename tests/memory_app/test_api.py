@@ -375,13 +375,14 @@ def test_generation_mode_api_requires_explicit_local_selection_and_keeps_remote_
             "mode": "local", "local_enabled": True,
             "local_base_url": "http://127.0.0.1:8001/local-model/v1", "expected_revision": 0,
         })
-        assert chosen.status_code == 200, chosen.text
-        assert chosen.json()["mode"] == "local"
-        assert models.snapshot("generation")["api_key"] == "local-model"
-        assert client.get("/api/recognition/settings").json()["generation_mode"]["api_configured"] is True
+        assert chosen.status_code == 409, chosen.text
+        assert chosen.json()["detail"] == "local_model_assets_missing"
+        current = client.get("/api/recognition/settings").json()["generation_mode"]
+        assert current == original["generation_mode"] and current["api_configured"] is True
+        assert current["local_readiness"]["status"] == "missing_assets"
         restored = client.put("/api/recognition/settings/generation-mode", json={
             "mode": "api", "local_enabled": False,
-            "local_base_url": "http://127.0.0.1:8001/local-model/v1", "expected_revision": 1,
+            "local_base_url": "http://127.0.0.1:8001/local-model/v1", "expected_revision": 0,
         })
         assert restored.status_code == 200, restored.text
         assert models.snapshot("generation")["api_key"] == "synthetic-only"

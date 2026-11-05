@@ -14,6 +14,12 @@ from .policies.scope import prefer_scene_ties
 _DETAIL = ("原文", "原话", "具体", "出处", "哪一段", "怎么说", "数据", "多少", "引用")
 
 
+def publication_candidates(rows):
+    """请求内发现资格不进入最终材料，原候选与证据字段保持。"""
+    return [{key: value for key, value in row.items() if key not in {
+        '_discovery_chains', '_discovered_chain', '_chain_candidates'}} for row in rows]
+
+
 def overview_question(question):
     return any(word in question for word in ("最近在忙什么", "整体进展", "总体进展", "项目概览", "场景概览", "整体情况"))
 
@@ -392,8 +398,7 @@ def start_ladder(candidates, question, *, neighbors=None, token_budget=4000, pro
             '_semantic_rerank', '_original_vector_spans'}} for row in chosen] if getattr(
                 policy, 'semantic_rerank', False) else list(chosen)
         if getattr(policy, 'bounded_discovery', False):
-            rows = [{key: value for key, value in row.items() if key not in {
-                '_discovery_chains', '_discovered_chain', '_chain_candidates'}} for row in rows]
+            rows = publication_candidates(rows)
         return {"chosen": rows, "trace": [dict(row) for row in trace], "budget": token_budget}
     def replace_lower(rows, questions, cached):
         nonlocal candidates, terms, demand

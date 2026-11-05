@@ -67,7 +67,9 @@ def generate_skill(models, exports, project, *, sources, scene=None, retry_token
         key = json.dumps({'sources': sources, 'scene': scene,
             'versions': versions, 'retry_token': retry_token}, sort_keys=True, ensure_ascii=False)
         turn = MemoryTurn(exports.records, models, kind='memory.skill_export', project=project,
-            key=key, materials=materials, validate=validate, freeze_request=freeze)
+            key=key, materials=materials, validate=validate, freeze_request=freeze,
+            automatic={'producer': 'skill-export', 'mode': 'scope', 'scene': scene,
+                'anchors': [{'type': 'recognition', 'id': source['id']} for source in frozen]})
 
         def validate_basis():
             # 同一个 key 只能重放原素材；场景等旁路变化不能借旧输出重新绑定来源。
@@ -76,7 +78,8 @@ def generate_skill(models, exports, project, *, sources, scene=None, retry_token
             current = freeze('memory.skill_export', records=exports.records, models=models,
                 project_id=project, materials=materials, local_only=turn.local,
                 model_purpose='generation', capabilities=[], **identities)
-            if any(current[name] != turn.request[name] for name in
+            original = turn.base_request()
+            if any(current[name] != original[name] for name in
                     ('scope', 'input', 'privacy', 'policy_versions', 'desired_outcome')):
                 raise RecognitionConflict('skill_generation_basis_changed')
 
@@ -88,4 +91,5 @@ def generate_skill(models, exports, project, *, sources, scene=None, retry_token
         # 返回前在同一领域事务内终检；保存者再以 frozen_sources 核验同一来源。
         with exports.records.begin() as tx:
             validate(tx)
+            turn.validate_commit(tx)
         return {'document': document, 'turn_id': turn.turn_id, 'sources': deepcopy(frozen)}

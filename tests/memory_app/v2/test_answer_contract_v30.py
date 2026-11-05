@@ -81,7 +81,7 @@ def test_new_diagnostic_and_anchor_instruction_fit_ordinary16k_and_select_curren
     messages = build_partition_messages(chosen, 'When?', first_output=first, compose_version='@30')
     assert review_input_tokens(messages, final_response_model('@30', 'When?')) <= 4500
     assert {name: ACTIVE[name] for name in ('compose', 'ladder', 'retrieve', 'rerank')} == {
-        'compose': '@30', 'ladder': '@15', 'retrieve': '@5', 'rerank': '@2'}
+        'compose': '@37', 'ladder': '@15', 'retrieve': '@9', 'rerank': '@2'}
 
 
 @pytest.mark.parametrize('event', ['', '她当天画了这幅画。', '她于2023年8月23日画了这幅画。',

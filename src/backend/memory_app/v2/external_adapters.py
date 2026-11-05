@@ -3,9 +3,16 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
+import ipaddress
+from collections.abc import Mapping
+from urllib.parse import urlsplit
 
 from .external_workspace import validate_memory_mcp_config
 from .policies import get
+
+
+CODEX_NETWORK_ENV = ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
+    'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CODEX_CA_CERTIFICATE')
 
 
 @dataclass(frozen=True)
@@ -24,6 +31,7 @@ class LaunchPlan:
     input_policy: str | None = None
     stdin_text: str = field(default='', repr=False)
     public_environment: tuple[tuple[str, str], ...] = ()
+    codex_api: tuple[tuple[str, str], ...] = ()
 
 
 def _json(value):
@@ -35,8 +43,29 @@ def _path(value):
         and '\x00' not in str(value))
 
 
+def validate_codex_api(value):
+    """可信宿主只选择官方 Terra，或同机原应用的透明代理。"""
+    if not isinstance(value, Mapping) or set(value) != {'model', 'base_url'}:
+        raise ValueError('external_adapter_model_invalid')
+    if value['model'] != 'gpt-6.1-terra' or not isinstance(value['base_url'], str):
+        raise ValueError('external_adapter_model_invalid')
+    try:
+        url = urlsplit(value['base_url'])
+        port = url.port
+        official = (url.scheme == 'https' and url.hostname == 'api.openai.com'
+            and port in {None, 443} and url.path.rstrip('/') == '/v1')
+        local = (url.scheme in {'http', 'https'} and ipaddress.ip_address(url.hostname).is_loopback
+            and url.path.rstrip('/') == '/api/v2/external-agent/proxy/codex/v1') if not official else False
+        if (not (official or local) or url.username or url.password or url.query or url.fragment
+                or any(ord(char) <= 32 or ord(char) == 127 for char in value['base_url'])):
+            raise ValueError
+    except (ValueError, TypeError):
+        raise ValueError('external_adapter_model_invalid') from None
+    return {'model': value['model'], 'base_url': value['base_url'].rstrip('/')}
+
+
 def build_launch_plan(executor, *, cli_version, executable, cwd, task, mcp_config,
-        preset='workspace', commands='disabled', memory_endpoint=None, material_directory=None):
+        preset='workspace', commands='disabled', memory_endpoint=None, material_directory=None, codex_api=None):
     """仅构造固定 argv；任务进入 stdin，完整环境和权限准入留在 host。"""
     if (not isinstance(executor, str) or executor not in {'codex', 'claude-code', 'deepseek-harness'}
             or not _path(executable) or executable.suffix.lower() in {'.ps1','.cmd','.bat','.sh','.py','.js'}
@@ -70,19 +99,30 @@ def build_launch_plan(executor, *, cli_version, executable, cwd, task, mcp_confi
     public_environment = tuple((key, value) for key, value in server.get('env', {}).items()
         if key == 'CHRIPTMAS_MCP_BACKEND_URL')
     enabled = commands != 'disabled'
+    if codex_api is not None:
+        if executor != 'codex':
+            raise ValueError('external_adapter_model_invalid')
+        codex_api = validate_codex_api(codex_api)
     if executor == 'codex':
         config = [('approval_policy', 'never'), ('web_search', 'live'), ('notify', []),
             ('project_doc_max_bytes', 0),
             ('features.shell_tool', enabled), ('features.unified_exec', enabled)]
+        if codex_api is not None:
+            config.extend([('model', codex_api['model']), ('model_provider', 'chriptmas-managed'),
+                ('cli_auth_credentials_store', 'ephemeral')])
+            provider = {'name': 'Chriptmas managed API', 'base_url': codex_api['base_url'],
+                'wire_api': 'responses', 'env_key': 'CODEX_API_KEY', 'requires_openai_auth': False,
+                'supports_websockets': False, 'request_max_retries': 0, 'stream_max_retries': 0}
+            config.extend(('model_providers.chriptmas-managed.' + key, value) for key, value in provider.items())
         config.extend(('features.' + feature, False) for feature in
             ('hooks','plugins','apps','multi_agent','shell_snapshot',
                 'skill_mcp_dependency_install','code_mode_host'))
         if 'command' in server:
             mcp = {'command':server['command'], 'args':server['args'],
                 'env_vars':[key for key, _ in (*aliases, *public_environment)]}
-            # Codex -c消费TOML，固定空值按dotted key传入，避免JSON对象被当字符串。
+            # Codex 还会自动继承自定义 CA；逐项空覆盖使模型网络配置留在主进程。
             config.extend(('mcp_servers.chriptmas-memory.env.' + key, '')
-                for key in ('CODEX_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY'))
+                for key in ('CODEX_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', *CODEX_NETWORK_ENV))
         else:
             reference = server['headers']['Authorization'][7:]
             mcp = {'url':server['url'], 'bearer_token_env_var':reference[2:-1]}
@@ -122,4 +162,5 @@ def build_launch_plan(executor, *, cli_version, executable, cwd, task, mcp_confi
             '--strict-mcp-config', '--mcp-config', encoded.decode('utf-8'),
             '--settings', _json(settings)]
     return LaunchPlan(executor, executor + '@1', cli_version, preset, commands,
-        tuple(command), cwd, task, aliases, material_directory, input_policy, stdin_text, public_environment)
+        tuple(command), cwd, task, aliases, material_directory, input_policy, stdin_text, public_environment,
+        tuple(sorted(codex_api.items())) if codex_api is not None else ())

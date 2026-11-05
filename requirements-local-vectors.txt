@@ -1,9 +1,10 @@
 # 本机文字向量的可选依赖，未安装时保持关键词检索。
+# 叠加网页或完整媒体版，不包含应用本身；安装模型另行在设置中进行。
 sentence-transformers==6.1.0
 transformers==5.19.0
 safetensors>=0.7.0
 torch>=2.7
 torchvision>=0.22
-Pillow>=10
+Pillow>=10,<13
 librosa>=0.11
-huggingface-hub>=1.0
+huggingface-hub>=1.31,<2

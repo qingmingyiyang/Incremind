@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 import pytest
 
@@ -6,6 +7,32 @@ from tests.memory_app.v2.test_workbench_ask import env, add_document, publish
 from backend.memory_app.recall_preferences import set_preference
 from backend.memory_app.v2.projects import assign_scene
 from backend.recognition import WorkScope
+from backend.memory_app.v2.library import LibraryRead
+
+
+def test_empty_source_query_does_not_read_full_text(env):
+    env.domains.query.source_store.write('sources', 'search-original', {
+        'id': 'search-original', 'project_id': 'alpha', 'title': 'Visible original',
+        'type': 'text', 'metadata': {'content_snapshot': 'Unique body token'}}, expected_revision=0)
+    reads = []
+    previous = sys.getprofile()
+
+    def observe(frame, event, arg):
+        if event == 'call' and frame.f_code is LibraryRead.source_text.__code__:
+            reads.append(frame.f_locals['identity'])
+
+    reader = LibraryRead(env.records, env.service, env.documents, env.domains)
+    try:
+        sys.setprofile(observe)
+        empty = reader.list('sources', 'alpha', None, '')
+        assert [row['id'] for row in empty['items']] == ['search-original']
+        assert reads == []
+        matched = reader.list('sources', 'alpha', None, 'unique BODY')
+        assert [row['id'] for row in matched['items']] == ['search-original']
+        assert reads == ['search-original']
+    finally:
+        sys.setprofile(previous)
+    assert env.model.calls == 0
 
 
 def get(env, layer, **params):
@@ -78,13 +105,16 @@ def _assert_forgotten_note_remains_readable_and_restores_summary(env, historical
     assert note['document_id'] == doc and note['revision'] == archived['revision']
     assert note['verified'] is True
     if historical:
-        assert set(note) == {'document_id', 'title', 'created_at', 'verified', 'revision', 'recall_state'}
+        assert set(note) == {'document_id', 'title', 'created_at', 'verified', 'revision', 'recall_state', 'archived'}
     else:
         assert set(note) == {'document_id', 'title', 'created_at', 'verified', 'revision', 'recall_state',
-                             'scene', 'assignment_revision'}
+                             'scene', 'assignment_revision', 'archived'}
         assert note['scene'] == 'reading'
         assert note['assignment_revision'] == env.records.read('v2_scene_assignments_document', doc).revision
     assert note['recall_state'] == 'normal'
+    assert note['archived'] is True
+    assert get(env, 'notes', scene='reading', q='retained').json()['counts'] == {
+        'unverified': 0, 'verified': 0, 'archived': 1}
     assert get(env, 'notes', scene='other').json()['items'] == []
     assert get(env, 'notes', project_id='beta').json()['items'] == []
     assert [row['id'] for row in get(env, 'sources', scene='reading').json()['items']] == [item]

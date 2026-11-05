@@ -1,0 +1,6 @@
+.settings-constraint-dates{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0;padding:0;border:0;min-width:0}
+.settings-constraint-dates>legend{font:12px var(--sans);color:var(--muted);padding:0}
+.settings-constraint-dates>label{flex:1 1 180px;min-width:0;font:13px var(--sans);color:var(--ink2)}
+.settings-page .settings-constraint-dates input{display:block;box-sizing:border-box;width:100%;min-width:0;font:13px var(--mono)}
+.settings-project-constraints .settings-constraint-create{flex-wrap:wrap}
+.settings-constraint-create>.settings-constraint-dates{flex-basis:100%;order:2;margin:0}

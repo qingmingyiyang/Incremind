@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from urllib.parse import urlsplit
 
 import httpx
+from litellm.llms.custom_httpx.http_handler import get_ssl_configuration
 
 from backend.recognition_retrieval import HttpEmbeddingProvider, HttpReranker, SQLiteEmbeddingCache, SqliteVecCandidateIndex, RecognitionRetrievalError, retrieve
 from backend.recognition import RecognitionConflict
@@ -51,7 +52,10 @@ class ConfiguredTransport:
     def post_json(self, *, endpoint, payload):
         self._check_current()
         try:
-            with httpx.Client(timeout=35, follow_redirects=False, trust_env=False) as client:
+            # 本机服务始终直连，远程服务沿用启动环境指定的代理。
+            trust_environment = urlsplit(endpoint).hostname not in {'localhost', '127.0.0.1', '::1'}
+            with httpx.Client(timeout=35, follow_redirects=False, verify=get_ssl_configuration(),
+                              trust_env=trust_environment) as client:
                 with client.stream("POST", endpoint, json=payload, headers={"Authorization": "Bearer " + self._key}) as response:
                     response.raise_for_status()
                     raw = bytearray()
@@ -145,7 +149,8 @@ def configured_adapter(models, purpose, *, validate_current: Callable[[], None] 
         return HttpEmbeddingProvider(transport, endpoint, cfg.get('model_key', cfg['model']),
             config_revision=(f"{cfg['revision']}:{cfg['mode_revision']}" if cfg.get('mode') in {'local', 'server'} else str(cfg['revision'])))
     if purpose == "rerank":
-        return HttpReranker(transport, endpoint, cfg["model"])
+        return HttpReranker(transport, endpoint, cfg["model"],
+            max_tokens_per_doc=4096 if cfg.get('provider') == 'cohere' else None)
     raise RecognitionRetrievalError("unsupported retrieval purpose")
 
 
@@ -153,9 +158,15 @@ def retrieval_options(models, runtime_root: Path, *, validate_current: Callable[
     public = models.public()
     options = {}
     if public["embedding"].get("configured") and public["embedding"].get("enabled"):
+        require_wire = getattr(models, 'require_model_wire_owner', None)
+        if callable(require_wire):
+            require_wire('embedding', None)
         options.update(embedding_provider=configured_adapter(models, "embedding", validate_current=validate_current),
                        sqlite_vec_index=SqliteVecCandidateIndex())
     if public["rerank"].get("configured") and public["rerank"].get("enabled"):
+        require_wire = getattr(models, 'require_model_wire_owner', None)
+        if callable(require_wire):
+            require_wire('rerank', None)
         options["reranker"] = configured_adapter(models, "rerank", validate_current=validate_current)
     if "embedding_provider" in options:
         options["embedding_cache"] = SQLiteEmbeddingCache(str(runtime_root / "recognition-vectors.sqlite3"))
@@ -277,6 +288,8 @@ def _public_from_snapshot(cfg: Mapping[str, object], purpose: str) -> dict[str, 
         "revision": cfg.get("revision"), "configured": bool(cfg.get("api_key") and cfg.get("base_url") and cfg.get("model")),
         "has_api_key": bool(cfg.get("api_key")),
     }
+    if cfg.get('server_model_binding') is not None:
+        public['server_model_binding'] = dict(cfg['server_model_binding'])
     if purpose == 'embedding' and 'mode_revision' in cfg:
         public.update(mode=cfg['mode'], mode_revision=cfg['mode_revision'])
         if cfg['mode'] == 'server':
@@ -293,6 +306,7 @@ def _public_identity(value: Mapping[str, object]) -> tuple[object, ...]:
         "revision", "configured", "has_api_key",
         'mode', 'mode_revision',
         'model_key',
+        'server_model_binding',
     ))
     return (*identity, value.get('runtime_revision')) if value.get('mode') == 'local' else identity
 
@@ -323,7 +337,8 @@ def _validate_retrieval_egress(cfg: Mapping[str, object], *, policy=None) -> Non
                 or cfg.get('allow_remote') is not False):
             raise RecognitionRetrievalError('local_vector_configuration_invalid')
         return
-    if cfg.get("provider") != "openai" or not isinstance(cfg.get("base_url"), str) or not str(cfg["base_url"]).strip():
+    providers = {'openai', 'cohere'} if cfg.get('purpose') == 'rerank' else {'openai'}
+    if cfg.get("provider") not in providers or not isinstance(cfg.get("base_url"), str) or not str(cfg["base_url"]).strip():
         raise RecognitionRetrievalError("configured_model_egress_not_configured")
     try:
         parsed = urlsplit(str(cfg["base_url"]))

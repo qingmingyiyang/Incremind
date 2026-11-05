@@ -7,13 +7,49 @@ from starlette.concurrency import run_in_threadpool
 from core.storage_provider.connection_scope import with_connection_scope
 
 from ..workspace_contracts import _now
+from ..server_jobs import QuotaError
 from .external_executor_plugins import EXECUTOR_CLIENTS, plugin_status
 from .external_execution import RESULT_KIND, RECEIPT_KIND
 from .external_runner import ARCHIVE
 from .external_runs import ExternalRuns
 from core.ai_kernel import validate_turn_request
+from core.ai_kernel.turn_receipt_projection import receipt_from_events
 from .task_do import TASK_EXECUTIONS
 from .outcomes import record_outcome
+from .external_output_contract import frozen_output_policy, output_policy
+
+
+def read_external_task_observation(turns, reader, values, turn_id, *, owner_id):
+    request = validate_turn_request(values['request'])
+    identity = request['turn_id']
+    original, archive = turns.get_request(identity), turns.get_immutable_payload(identity, ARCHIVE)
+    if (original != request or archive is None or archive[1]['request'] != request
+            or archive[1]['owner_id'] != owner_id or archive[1]['turn_id'] != identity
+            or archive[1]['launch']['executor'] != values['executor']
+            or request['scope']['project_id'] != values['project_id']
+            or request['session_id'] != 'session-' + turn_id
+            or json.loads(request['input']['text']).get('task') != values['task_text']):
+        raise ValueError('external_task_binding_invalid')
+    terminal = receipt_from_events(tuple(turns.events_after(identity)), turn_id=identity, request=original)
+    payload, proof = turns.get_immutable_payload(identity, RESULT_KIND), turns.get_immutable_payload(identity, RECEIPT_KIND)
+    run = (ExternalRuns(reader).read(identity, owner_id=owner_id)
+        if reader.read('v2_external_runs', identity) is not None else None)
+    observed = (payload is not None and proof is not None and run is not None
+        and proof[1] == {'turn_id': identity, 'owner_id': owner_id, 'payload_ref': payload[0],
+            'run_revision': run['revision'], 'status': run['status'], 'effect_certainty': proof[1].get('effect_certainty')}
+        and proof[1].get('effect_certainty') in {'confirmed_none', 'confirmed_applied', 'unknown'}
+        and payload[1]['turn_id'] == identity and payload[1]['owner_id'] == owner_id
+        and payload[1]['status'] == run['status'] and payload[1]['exit_code'] == run['exit_code']
+        and payload[1]['usage'] == run['usage'] and run['executor'] == values['executor']
+        and run['cli_version'] == archive[1]['launch']['cli_version']
+        and run['status'] in {'completed', 'failed', 'cancelled', 'timed_out', 'output_limit'}
+        and (proof[1]['effect_certainty'] == 'confirmed_applied' if run['status'] == 'completed' else
+            proof[1]['effect_certainty'] in {'confirmed_none', 'unknown'})
+        and not (run['started_at'] is not None and proof[1]['effect_certainty'] == 'confirmed_none'))
+    completed = (observed and terminal.status == 'completed' and run['status'] == 'completed'
+        and proof[1]['effect_certainty'] == 'confirmed_applied' and run['exit_code'] == 0
+        and isinstance(payload[1]['message'], str) and len(payload[1]['message']) <= 200000)
+    return terminal, payload if observed else None, completed
 
 
 class ExternalTaskDo:
@@ -43,7 +79,8 @@ class ExternalTaskDo:
                 idempotency_key=delivery_id, created_at=_now())
             handoff = context.execute(delivery_id, runtime=runtime, runner=runner)
             # 输入正文只来自用户任务及已获资格的原交付，不从本机目录读取额外内容。
-            task = json.dumps({'task': text, 'context': handoff['text']}, ensure_ascii=False)
+            output = output_policy('@1') if executor in {'claude-code', 'codex'} else None
+            task = json.dumps({'task': text, 'context': handoff['text'], **({'output': output} if output else {})}, ensure_ascii=False)
             from pathlib import Path
             import sys
             config = {'mcpServers': {'chriptmas-memory': {'command': str(Path(sys.executable).resolve()),
@@ -58,7 +95,8 @@ class ExternalTaskDo:
             request = external.prepare(identity, delivery_turn_id=delivery_id, executor=executor,
                 cli_version=status['runtime_version'], task=task, mcp_config=config,
                 session_id='session-' + turn_id, operation_id='op-' + identity,
-                idempotency_key='task-' + turn_id, created_at=_now())
+                idempotency_key='task-' + turn_id, created_at=_now(),
+                output_policy_version='@1' if output else None)
         except HTTPException:
             state.external_execution_host.release_server_memory(identity)
             raise
@@ -68,37 +106,15 @@ class ExternalTaskDo:
         receipt = {'task_id': None, 'document_id': None, 'title': text[:80], 'state': 'running',
             'executor': executor, 'kernel_turn_id': identity, 'experts': [], 'division': [],
             'continues': None, 'changes': [], 'fallback_new': False, 'division_examples': [],
-            'progress': {'done': 0, 'total': 3}, 'usage': None}
+            'external_files': {'state': 'pending' if output else 'unsupported', 'count': 0, 'rejected': 0},
+            'progress': {'done': None, 'total': None}, 'usage': None}
         return receipt, {'project_id': project, 'request': request, 'task_text': text, 'scene': scene,
             'executor': executor, 'started': False, 'owner': None, 'claimed_at': None, 'failures': 0}
 
-    def _observed(self, values, turn_id):
+    def _observed(self, values, turn_id, *, reader=None):
         state = self.application.state
-        owner_id = state.external_context.owner_id
-        request = validate_turn_request(values['request'])
-        identity = request['turn_id']
-        turns = state.ai_turn_store
-        original, archive = turns.get_request(identity), turns.get_immutable_payload(identity, ARCHIVE)
-        if (original != request or archive is None or archive[1]['request'] != request
-                or archive[1]['owner_id'] != owner_id or archive[1]['turn_id'] != identity
-                or archive[1]['launch']['executor'] != values['executor']
-                or request['scope']['project_id'] != values['project_id']
-                or request['session_id'] != 'session-' + turn_id
-                or json.loads(request['input']['text']).get('task') != values['task_text']):
-            raise ValueError('external_task_binding_invalid')
-        terminal = state.ai_runtime.receipt_for(identity)
-        payload, proof = turns.get_immutable_payload(identity, RESULT_KIND), turns.get_immutable_payload(identity, RECEIPT_KIND)
-        run = ExternalRuns(self.records).read(identity, owner_id=owner_id)
-        completed = (terminal.status == 'completed' and payload is not None and proof is not None
-            and run is not None and run['status'] == 'completed'
-            and proof[1] == {'turn_id': identity, 'owner_id': owner_id, 'payload_ref': payload[0],
-                'run_revision': run['revision'], 'status': 'completed', 'effect_certainty': 'confirmed_applied'}
-            and payload[1]['turn_id'] == identity and payload[1]['owner_id'] == owner_id
-            and payload[1]['status'] == 'completed' and payload[1]['exit_code'] == run['exit_code'] == 0
-            and payload[1]['usage'] == run['usage']
-            and isinstance(payload[1]['message'], str) and 0 < len(payload[1]['message']) <= 200000
-            and bool(payload[1]['message'].strip()))
-        return terminal, payload, completed
+        return read_external_task_observation(state.ai_turn_store, self.records if reader is None else reader,
+            values, turn_id, owner_id=state.external_context.owner_id)
 
     @with_connection_scope
     async def advance(self, turn_id, *, observe_only=False):
@@ -132,19 +148,64 @@ class ExternalTaskDo:
             try:
                 terminal, payload, completed = self._observed(values, turn_id)
                 status = terminal.status
+                stopped = state.ai_runtime.product_stops.external_stop_closed(values['request']['turn_id'])
             except Exception:
-                payload, completed, status = None, False, 'interrupted'
+                payload, completed, status, stopped = None, False, 'interrupted', False
+            generated_files = None
+            files_status = {'state': 'unsupported' if values['executor'] == 'deepseek-harness' else
+                'not_agreed' if frozen_output_policy(values['request']) is None else 'not_completed',
+                'count': 0, 'rejected': 0}
+            if completed:
+                from .external_task_files import QualifiedTaskFiles
+                from .external_workspace import ExternalWorkspaceError
+                from core.external_extension_runtime.windows_handle_io import WindowsHandleIoError
+                proof = QualifiedTaskFiles(self.records, state.ai_turn_store, values['request'],
+                    turn_id, values['executor'], owner)
+                files_status = {'state': proof.value['state'], 'count': 0, 'rejected': len(proof.value['rejected'])}
+                if values['executor'] == 'deepseek-harness':
+                    files_status['state'] = 'unsupported'
+                if proof.value['files']:
+                    try:
+                        generated_files = await state.workspace_domains.intake.prepare_generated_task_files(proof)
+                    except QuotaError as error:
+                        if str(error) != 'storage_quota_exceeded':
+                            raise
+                        files_status.update(state='quota_exceeded', rejected=len(proof.value['files']) + files_status['rejected'])
+                    except (OSError, ExternalWorkspaceError, WindowsHandleIoError):
+                        files_status.update(state='import_failed', rejected=len(proof.value['files']) + files_status['rejected'])
+                    else:
+                        files_status['count'] = len(proof.value['files'])
+                completed = bool(payload[1]['message'].strip()) or generated_files is not None
+            citations = None
+            if completed:
+                from .external_task_citations import TaskCitations
+                citations = TaskCitations(self, turn_id, values['project_id'], owner=owner).report()
             with self.records.begin() as tx:
                 saved, turn = tx.read(TASK_EXECUTIONS, turn_id), tx.read('v2_turns', turn_id)
                 if saved is None or turn is None or saved.payload.get('owner') != owner:
                     return
                 receipt = dict(turn.payload['receipt']['do'])
+                if citations is not None:
+                    receipt['external_citations'] = citations
+                receipt['external_files'] = files_status
+                receipt['external_text'] = {'state': 'saved' if completed and payload[1]['message'].strip() else
+                    'empty' if completed else 'not_saved'}
+                receipt['usage'] = payload[1]['usage'] if payload is not None else None
+                if payload is not None and payload[1].get('events'):
+                    receipt['external_progress_incomplete'] = (receipt.get('external_progress') or {}).get('terminal') != payload[1]['status']
                 if completed:
                     identity = values['request']['turn_id']
                     result = self.drafts.create_in_uow(tx, turn_id=identity, project=values['project_id'],
-                        operation='deliver-' + identity, title=receipt['title'], markdown=payload[1]['message'])
+                        operation='deliver-' + identity, title=receipt['title'],
+                        markdown=payload[1]['message'] if payload[1]['message'].strip() else '附件',
+                        generated_files=generated_files)
                     receipt.update(state='done', document_id=result['document_id'], verified=False,
-                        usage=payload[1]['usage'], progress={'done': 3, 'total': 3})
+                        usage=payload[1]['usage'], progress={'done': None, 'total': None})
+                elif stopped:
+                    receipt.update(state='stopped', interruption='stopped',
+                        usage=payload[1]['usage'] if payload is not None else None,
+                        effect_certainty='unknown' if payload is not None else 'confirmed_none')
+                    receipt.pop('error', None)
                 else:
                     receipt.update(state='failed' if status in {'failed', 'cancelled', 'timed_out'} else 'interrupted',
                         error='external_task_execution_failed' if execute else 'external_task_interrupted',
@@ -153,6 +214,18 @@ class ExternalTaskDo:
                     expected_revision=turn.revision)
                 tx.put(TASK_EXECUTIONS, turn_id, {**saved.payload, 'owner': None, 'claimed_at': None},
                     expected_revision=saved.revision)
+                if generated_files is not None:
+                    try:
+                        self.drafts.attach_generated_in_uow(tx, generated_files=generated_files, result=result,
+                            project=values['project_id'])
+                    except (OSError, ExternalWorkspaceError, WindowsHandleIoError):
+                        receipt['external_files'] = {**files_status, 'state': 'import_failed', 'count': 0,
+                            'rejected': files_status['rejected'] + files_status['count']}
+                        if not payload[1]['message'].strip():
+                            completed = False
+                            receipt.update(state='failed', document_id=None, error='external_task_files_not_saved')
+                        current = tx.read('v2_turns', turn_id)
+                        tx.put('v2_turns', turn_id, {**current.payload, 'receipt': {'do': receipt}}, expected_revision=current.revision)
                 if completed:
                     record_outcome(tx, project=values['project_id'], document_id=result['document_id'],
                         turn_id=turn_id, scene=values['scene'], task_text=values['task_text'])

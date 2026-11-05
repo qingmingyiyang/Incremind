@@ -8,9 +8,12 @@ ports and persists only topology and delegation decisions in ``AgentStore``.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, replace
 import json
 import re
+from threading import get_ident
 from time import monotonic, sleep
 from typing import Protocol
 from uuid import NAMESPACE_URL, uuid5
@@ -36,8 +39,12 @@ from core.ai_kernel.agent_dispatch_contracts import (
     DispatchPermit,
     ExpertAssignment,
 )
+from core.ai_kernel.agent_dispatch_store import EffectiveDispatchSnapshot
 
-from backend.api.agent_capabilities import AGENT_CAPABILITY_IDS
+from backend.api.agent_capabilities import AGENT_CAPABILITY_IDS, _validate_plan
+
+
+_CHILD_TURN_ACCEPTANCE = ContextVar('agent_child_turn_acceptance', default=None)
 
 
 class AgentCoordinatorError(RuntimeError):
@@ -48,7 +55,7 @@ _ERROR_CODE = re.compile(r"^[a-z][a-z0-9_.-]{2,127}$")
 
 
 class AgentCoordinatorRuntimePort(Protocol):
-    def accept_turn(self, request: Mapping[str, object]) -> TurnReceipt: ...
+    def accept_turn(self, request: Mapping[str, object], *, admission_bundle=None) -> TurnReceipt: ...
 
     def receipt_for(self, turn_id: str, *, replayed: bool = False) -> TurnReceipt: ...
 
@@ -120,6 +127,7 @@ class AgentPermitStorePort(Protocol):
     """Durable permit authority used only to materialize an approved child."""
 
     def get_plan(self, plan_id: str, *, project_id: str) -> AgentDispatchPlan | None: ...
+    def effective_snapshot(self, plan_id: str, *, project_id: str) -> EffectiveDispatchSnapshot: ...
     def list_plans_for_main(self, *, project_id: str, main_run_id: str) -> tuple[AgentDispatchPlan, ...]: ...
     def get_assignment_for_permit(self, permit_id: str, *, project_id: str) -> tuple[DispatchPermit, ExpertAssignment] | None: ...
     def bind_permit_to_child_run(self, permit_id: str, *, project_id: str, child_run_id: str, operation_id: str) -> tuple[DispatchPermit, str]: ...
@@ -220,7 +228,7 @@ class AgentCoordinator:
         self.submit_accepted_turn(prepared)
         return prepared.run
 
-    def accept_and_register_main(self, request: Mapping[str, object]) -> PreparedMainTurn:
+    def accept_and_register_main(self, request: Mapping[str, object], *, admission_bundle=None) -> PreparedMainTurn:
         """Durably accept and register a main run without starting its worker."""
         payload = validate_turn_request(request)
         if "agent_binding" in payload or "agent_policy_binding" in payload:
@@ -267,7 +275,10 @@ class AgentCoordinator:
         # Turn acceptance remains first: AgentStore never manufactures a Turn
         # record.  Model execution begins only after registration and the
         # runner's idempotent acceptance replay below.
-        self._runtime.accept_turn(payload)
+        if admission_bundle is not None:
+            self._runtime.accept_turn(payload,admission_bundle=admission_bundle)
+        else:
+            self._runtime.accept_turn(payload)
         if self._immutable_payload_writer is not None:
             from core.ai_kernel.agent_contracts import agent_role_brief_to_payload
             self._immutable_payload_writer(str(payload["turn_id"]), "agent-role-brief-v1", agent_role_brief_to_payload(profile))
@@ -370,7 +381,15 @@ class AgentCoordinator:
             child_request = _apply_policy_to_request(child_request, policy)
         accepted = False
         try:
-            self._runtime.accept_turn(child_request)
+            # 原生子轮接纳发生在保留和最终登记之间，短能力只覆盖这一次真实宿主请求。
+            child_acceptance = {'coordinator': self, 'thread': get_ident(), 'request': deepcopy(child_request),
+                'parent': parent, 'child': child, 'link': link, 'reservation': reservation, 'active': True}
+            token = _CHILD_TURN_ACCEPTANCE.set(child_acceptance)
+            try:
+                self._runtime.accept_turn(child_request)
+            finally:
+                child_acceptance['active'] = False
+                _CHILD_TURN_ACCEPTANCE.reset(token)
             accepted = True
             if self._immutable_payload_writer is not None:
                 from core.ai_kernel.agent_contracts import agent_role_brief_to_payload
@@ -406,6 +425,12 @@ class AgentCoordinator:
         steward, _ = self._parent_for_turn(parent_turn_id)
         _assert_native_scope(steward, project_id=project_id, scope=scope, privacy=privacy, request_loader=self._request_loader, turn_id=parent_turn_id)
         _require_agent_capability(steward, "agent.plan")
+        if steward.role == 'main' and steward.parent_run_id is None:
+            _validate_plan(dict(arguments or {}))
+            owner = getattr(self, 'product_task_steers', None)
+            if owner is None:
+                raise AgentCoordinatorError('main planning requires an accepted steer input')
+            return owner.amend_main(steward, operation_id, tool_call_id, dict(arguments or {}))
         if steward.profile_id != "steward.scheduler" or steward.role != "subagent" or steward.parent_run_id is None:
             raise AgentCoordinatorError("agent planning requires the steward scheduler child")
         main = self._require_run(steward.parent_run_id, steward.project_id)
@@ -415,6 +440,8 @@ class AgentCoordinator:
         if not any(link.child_run_id == steward.run_id and link.status in {"spawned", "started"} for link in links):
             raise AgentCoordinatorError("steward link is not an active direct child")
         proposal = dict(arguments or {})
+        if proposal.get('mode') == 'amend_unbound':
+            raise AgentCoordinatorError('dispatch amendments require the accepted main steer owner')
         host_main_request = dict(validate_turn_request(self._request_loader(main.turn_id)))
         host_main_request.pop("agent_binding", None)
         policy = self._bound_policy(host_main_request, main.project_id)
@@ -463,11 +490,15 @@ class AgentCoordinator:
         main = self._require_run(plan.main_run_id, project_id)
         child_ids = _permit_child_ids(permit, operation_id)
         task, expert_request = self._permit_task(assignment)
+        effective = authority.effective_snapshot(plan.plan_id,project_id=project_id)
+        effective_ids = effective.assignment_ids if effective.steer_input_refs else plan.assignment_ids
         dependencies = self.assignment_dependencies(project_id=project_id, permit_id=permit_id)
         if dependencies:
-            if not set(dependencies).issubset(plan.assignment_ids):
+            if not set(dependencies).issubset(effective_ids):
                 raise AgentCoordinatorError('task dependencies are outside the frozen plan')
             permits = authority.list_permits(project_id=project_id, plan_id=plan.plan_id)
+            if effective.steer_input_refs:
+                permits = tuple(item for item in permits if item.permit_id in effective.permit_ids)
             dependency_child_ids = []
             for dependency in dependencies:
                 predecessor = next(item for item in permits if item.assignment_id == dependency)
@@ -532,13 +563,15 @@ class AgentCoordinator:
         published_plan_revision = (
             plan.revision - 1 if plan.status == "dispatching" else plan.revision
         )
+        effective = self._permit_store.effective_snapshot(plan.plan_id,project_id=project_id)
+        amended = bool(effective.steer_input_refs)
         if (
             permit.project_id != project_id or assignment.project_id != project_id
             or plan.project_id != project_id or permit.assignment_id != assignment.assignment_id
             or permit.plan_id != plan.plan_id
-            or permit.plan_revision != published_plan_revision
-            or assignment.assignment_id not in plan.assignment_ids
-            or plan.status not in {"ready", "dispatching"}
+            or not amended and permit.plan_revision != published_plan_revision
+            or assignment.assignment_id not in (effective.assignment_ids if amended else plan.assignment_ids)
+            or (effective.phase if amended else plan.status) not in {"ready", "dispatching"}
         ):
             raise AgentCoordinatorError("agent permit does not match the frozen dispatch plan")
         main = self._require_run(plan.main_run_id, project_id)
@@ -819,7 +852,7 @@ class AgentCoordinator:
         }
         if self._permit_store is not None:
             result["plans"] = tuple(
-                _safe_dispatch_plan(plan)
+                _safe_dispatch_plan(plan,self._permit_store.effective_snapshot(plan.plan_id,project_id=run.project_id))
                 for plan in self._permit_store.list_plans_for_main(
                     project_id=run.project_id, main_run_id=run.run_id,
                 )
@@ -1565,15 +1598,20 @@ def _safe_run(run: AgentRun) -> Mapping[str, object]:
     return {"run_id": run.run_id, "turn_id": run.turn_id, "profile_id": run.profile_id, "role": run.role, "model_tier": run.model_tier, "status": run.status, "depth": run.depth, "capability_ids": run.capability_ids}
 
 
-def _safe_dispatch_plan(plan: AgentDispatchPlan) -> Mapping[str, object]:
+def _safe_dispatch_plan(plan: AgentDispatchPlan, effective=None) -> Mapping[str, object]:
     """Expose only dispatch progress needed by the owning main Agent."""
-    return {
+    result = {
         "plan_id": plan.plan_id,
         "mode": plan.mode,
         "status": plan.status,
         "revision": plan.revision,
         "steward_run_id": plan.steward_run_id,
     }
+    if effective is not None and effective.steer_input_refs:
+        result.update(status=effective.phase,effective_revision=effective.revision,
+            effective_generation=effective.generation,assignment_ids=effective.assignment_ids,
+            fan_in_id=_derived_id('organization-fan-in',plan.plan_id,str(effective.generation)))
+    return result
 
 
 def _safe_receipt(receipt: TurnReceipt | None) -> Mapping[str, object] | None:

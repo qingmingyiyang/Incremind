@@ -10,13 +10,17 @@ _UNFROZEN = object()
 
 
 def source_experiences(reader, scope, experience_ids, recognition_ids=(), *,
-        experience_revisions=_UNFROZEN, recognition_revisions=_UNFROZEN):
+        experience_revisions=_UNFROZEN, recognition_revisions=_UNFROZEN, source_owner=None):
     """Flatten the existing same-scope evidence chain for an explicit copy."""
     if hasattr(reader, '_connect'):
         with begin_read(reader) as tx:
             return source_experiences(tx, scope, experience_ids, recognition_ids,
-                experience_revisions=experience_revisions, recognition_revisions=recognition_revisions)
-    service = recognition_service(reader)
+                experience_revisions=experience_revisions, recognition_revisions=recognition_revisions,
+                source_owner=source_owner if source_owner is not None else reader)
+    if source_owner is None:
+        from backend.recognition import RecognitionConflict
+        raise RecognitionConflict('insight_actual_owner_unavailable')
+    service = recognition_service(reader, source_owner=source_owner)
     if experience_revisions is _UNFROZEN and recognition_revisions is _UNFROZEN:
         service._assert_sources_active(reader, scope, experience_ids, recognition_ids)
     else:
@@ -149,7 +153,7 @@ def _scene_assignment(reader, scope, row, kind, *, aliases=None, document_ids=No
     return assignment
 
 
-def insight_view(reader, scope, insight_id, *, service=None):
+def insight_view(reader, scope, insight_id, *, service=None, source_owner=None):
     """Build the architecture's Insight DTO; inactive history is not displayed.
 
     Store readers can construct the domain service. Transaction readers must
@@ -159,6 +163,11 @@ def insight_view(reader, scope, insight_id, *, service=None):
     if row is None:
         return None
     payload = row.payload
+    owner = source_owner if source_owner is not None else service.records if service is not None else reader
+
+    def domain():
+        return service or recognition_service(reader,
+            source_owner=owner if not hasattr(reader, '_connect') else None)
     if reader.read("v2_candidate_merges", row.object_id):
         return None
     candidate = reader.read("recognition_candidates", row.object_id)
@@ -172,8 +181,8 @@ def insight_view(reader, scope, insight_id, *, service=None):
         aliases = sorted(item.object_id for item in reader.list("recognition_candidates")
             if _in_scope(item, scope) and item.payload.get("state") == "published"
             and item.payload.get("recognition_id") == row.object_id)
-        qualified = (service or recognition_service(reader)).get_recognition(
-            scope=scope, recognition_id=row.object_id)
+        qualified = (domain().get_recognition(scope=scope, recognition_id=row.object_id)
+            if hasattr(reader, '_connect') else domain()._qualified_recognition(reader, row))
         state = qualified.effective_state if qualified else None
         preference = reader.read("recognition_recall_preferences", row.object_id)
         if preference and preference.payload.get('project_id') == scope.project_id and preference.payload.get('user_id') == scope.user_id:
@@ -210,6 +219,16 @@ def insight_view(reader, scope, insight_id, *, service=None):
         if _in_scope(parent, scope):
             originals.append({"id": parent.object_id, "text": parent.payload["content"], "revision": parent.revision})
     extra = {}
+    learning = getattr(owner, 'product_steer_learning', None)
+    if learning is not None:
+        with learning.freshness._read_scope(None if reader is learning.records else reader) as current:
+            source = learning.sources.source_view(current, scope, row)
+        if source is not None:
+            extra['source'] = source
+    from .inspiration_extraction import inspiration_details
+    inspiration = inspiration_details(reader, scope, row, aliases)
+    if inspiration is not None:
+        extra['inspiration'] = inspiration
     hint = next((marker for identity in [row.object_id, *aliases]
         if (marker := reader.read('v2_candidate_hints', identity)) is not None
         and marker.payload.get('project_id') == scope.project_id), None)
@@ -220,7 +239,7 @@ def insight_view(reader, scope, insight_id, *, service=None):
         qualified_target = None
         if target and target.payload.get('scope') in [{'user_id': scope.user_id, 'project_id': project}
                 for project in {scope.project_id, 'me'}]:
-            target_service = service or recognition_service(reader)
+            target_service = domain()
             target_scope = WorkScope(**target.payload['scope'])
             qualified_target = (target_service.get_recognition(scope=target_scope, recognition_id=target.object_id)
                 if hasattr(reader, '_connect') else target_service._qualified_recognition(reader, target))
@@ -231,12 +250,18 @@ def insight_view(reader, scope, insight_id, *, service=None):
                 'revision': target.revision}
         if extra['hint']['scope_hint']:
             from ..source_egress import SourceEgressService
-            from .transaction_records import TransactionRecords
+            from core.storage_provider.sqlite_uow import SQLiteStructuredRecordStore
+            from backend.security.audited_records import AuditedRecordStore
             try:
                 rows = source_experiences(reader, scope, experiences, sources,
                     experience_revisions=payload.get('source_experience_revisions'),
-                    recognition_revisions=payload.get('source_recognition_revisions'))
-                authority = SourceEgressService(reader if hasattr(reader, '_connect') else TransactionRecords(reader))
+                    recognition_revisions=payload.get('source_recognition_revisions'), source_owner=owner)
+                if isinstance(reader, (SQLiteStructuredRecordStore, AuditedRecordStore)):
+                    authority = SourceEgressService(reader)
+                else:
+                    if not isinstance(owner, (SQLiteStructuredRecordStore, AuditedRecordStore)):
+                        raise ValueError('insight_actual_owner_unavailable')
+                    authority = SourceEgressService(owner, reader=reader)
                 authority.require(authority.snapshot(scope, [{'type': 'experience', 'id': source.object_id,
                     'revision': source.revision} for source in rows]), 'generation')
             except ValueError:
@@ -244,11 +269,11 @@ def insight_view(reader, scope, insight_id, *, service=None):
     try:
         origins = origin_documents(reader, scope, source_experiences(reader, scope, experiences, sources,
             experience_revisions=payload.get('source_experience_revisions'),
-            recognition_revisions=payload.get('source_recognition_revisions')))
+            recognition_revisions=payload.get('source_recognition_revisions'), source_owner=owner))
         if origins:
             extra['source_documents'] = origins
     except ValueError:
-        pass  # Invalid source history cannot grant a cross-project drill target.
+        pass  # 来源历史失效时不提供跨项目下钻入口。
     if kind == 'candidate' and state == 'pending':
         from .source_sections import comment_source_for_candidate
         comment = comment_source_for_candidate(reader, scope, row)

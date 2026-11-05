@@ -19,7 +19,7 @@ def external_egress_allowed(reader, project_id, client):
     from backend.recognition import WorkScope
     from .external_executor_plugins import effective_external_agent_settings as external_agent_settings
 
-    if not isinstance(client, str) or client not in {'claude', 'codex', 'deepseek-harness'}:
+    if not isinstance(client, str) or client not in {'claude', 'codex', 'deepseek-harness', 'chatgpt'}:
         return False
     if not isinstance(project_id, str) or not project_id:
         return False
@@ -27,7 +27,7 @@ def external_egress_allowed(reader, project_id, client):
         WorkScope('local-user', project_id)
     except RecognitionError:
         return False
-    settings = external_agent_settings(reader)
+    settings = external_agent_settings(reader, client=client)
     return (settings['allow_remote'] is True and settings['clients'][client] is True
             and not is_private_project(reader, project_id))
 
@@ -36,9 +36,9 @@ def external_catalog_allowed(reader, client):
     """Admit only the global directory call; no project or body is permitted."""
     from .external_executor_plugins import effective_external_agent_settings as external_agent_settings
 
-    if not isinstance(client, str) or client not in {'claude', 'codex', 'deepseek-harness'}:
+    if not isinstance(client, str) or client not in {'claude', 'codex', 'deepseek-harness', 'chatgpt'}:
         return False
-    settings = external_agent_settings(reader)
+    settings = external_agent_settings(reader, client=client)
     return settings['allow_remote'] is True and settings['clients'][client] is True
 
 

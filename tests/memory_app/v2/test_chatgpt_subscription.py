@@ -370,7 +370,7 @@ def test_uncertain_refresh_response_is_not_automatically_reposted(env):
     assert service.status()["state"] == "reauthentication_required"
 
 
-def test_new_login_requires_explicit_reselection_and_restores_local_mode(env, tmp_path):
+def test_new_login_requires_explicit_reselection_and_rejects_incomplete_local_mode(env, tmp_path):
     from backend.memory_app.model_config import ModelConfiguration, ModelConfigurationError
     service, _, secrets, records = env
     login(env)
@@ -378,7 +378,7 @@ def test_new_login_requires_explicit_reselection_and_restores_local_mode(env, tm
     folder = tmp_path / 'data/models/qwen2.5-1.5b-instruct'
     folder.mkdir(parents=True)
     (folder / 'model.safetensors').write_bytes(b'synthetic-model')
-    config.update_generation_mode(mode='local', local_enabled=True, local_base_url='http://127.0.0.1:8001/local-model/v1', expected_revision=0)
+    config.update_generation_mode(mode='api', local_enabled=True, local_base_url='http://127.0.0.1:8001/local-model/v1', expected_revision=0)
     config.select_subscription(model='gpt-fixture', expected_revision=0)
     assert not config.local_generation_allowed()
     assert config.generation_mode()['local_enabled']
@@ -389,8 +389,10 @@ def test_new_login_requires_explicit_reselection_and_restores_local_mode(env, tm
         config.snapshot('generation')
     config.select_subscription(model='gpt-fixture', expected_revision=1)
     assert config.snapshot('generation')['api_key'] == 'synthetic-access'
-    config.update_generation_mode(mode='local', local_enabled=True, local_base_url='http://127.0.0.1:8001/local-model/v1', expected_revision=config.generation_mode()['revision'])
-    assert config.local_generation_allowed() and config.snapshot('generation')['model'] == 'qwen2.5-1.5b-instruct'
+    with pytest.raises(ModelConfigurationError, match='local_model_assets_missing'):
+        config.update_generation_mode(mode='local', local_enabled=True,
+            local_base_url='http://127.0.0.1:8001/local-model/v1', expected_revision=config.generation_mode()['revision'])
+    assert not config.local_generation_allowed() and config.snapshot('generation')['api_key'] == 'synthetic-access'
 
 
 def test_two_service_instances_refresh_the_grant_once(env):

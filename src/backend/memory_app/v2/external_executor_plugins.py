@@ -64,13 +64,21 @@ def replace_plugin_preferences(records, plugins, *, expected_revision, expected_
     return {'revision': row.revision, 'plugins': wanted}
 
 
-def effective_external_agent_settings(reader):
+def effective_external_agent_settings(reader, *, client=None):
     """旧两客户端 payload 保持原样，所有实际准入读取同一插件开关。"""
     legacy, plugins = external_agent_settings(reader), plugin_preferences(reader)
     clients = {client: plugins['plugins'][executor]['enabled']
         and legacy['clients'].get(client, True) for executor, client in EXECUTOR_CLIENTS.items()}
     # SQLite revision 是有符号 64 位整数；旁路修订为零时保留所有旧交付资格。
-    return {**legacy, 'clients': clients, 'revision': legacy['revision'] + plugins['revision'] * (1 << 63)}
+    revision = legacy['revision'] + plugins['revision'] * (1 << 63)
+    if client == 'chatgpt':
+        preference = reader.read('v2_native_mcp_memory_preferences', 'chatgpt')
+        if preference is not None and (set(preference.payload) != {'enabled'}
+                or type(preference.payload['enabled']) is not bool):
+            raise ValueError('native_mcp_memory_preferences_invalid')
+        clients['chatgpt'] = preference is not None and preference.payload['enabled']
+        revision += (preference.revision if preference else 0) * (1 << 127)
+    return {**legacy, 'clients': clients, 'revision': revision}
 
 
 def plugin_status(records, state, models=None):
@@ -93,10 +101,14 @@ def plugin_status(records, state, models=None):
             and has_key
             and preferences['plugins'][identity]['enabled']
             and legacy['allow_remote'] and legacy['clients'].get(manifest['client'], True))
+        host_mode = getattr(getattr(host, 'deployment', None), 'mode', None)
+        execution_isolation = ('desktop-cli-permissions' if discovered and host_mode == 'desktop' else
+            'linux-bwrap@1' if discovered and host_mode == 'server' and host.server_available(identity) else None)
         rows.append({**deepcopy(manifest), **preferences['plugins'][identity],
             'enabled': preferences['plugins'][identity]['enabled'] and legacy['clients'].get(manifest['client'], True),
             'installed': discovered, 'runtime_version': version, 'has_key': has_key,
             'available': runnable,
+            'execution_isolation': execution_isolation,
             'capabilities': {**deepcopy(manifest['capabilities']), 'task': runnable,
                 'presets': ['workspace'], 'commands': ['disabled']},
             'reason': 'external_host_isolation_unavailable' if not isolated else

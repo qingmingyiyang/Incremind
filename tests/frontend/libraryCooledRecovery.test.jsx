@@ -11,7 +11,7 @@ function transport({ kind = 'insight', verified = false, archived = false, reado
     state: 'active', recall_state: cooled ? 'cooled' : 'normal', revision: 1,
     source_count: 1, document_ids: [], conditions: [], related: [] });
   const note = () => ({ document_id: 'doc-cooled', title: '冷却整理稿', revision: 2,
-    verified, recall_state: cooled ? 'cooled' : 'normal', recall_preference_revision: cooled ? 3 : 4,
+    verified, archived, recall_state: cooled ? 'cooled' : 'normal', recall_preference_revision: cooled ? 3 : 4,
     markdown: '# 冷却整理稿\n\n保留原正文', facts: [], todos: [] });
   const fetcher = vi.fn(async (url, options = {}) => {
     const path = new URL(String(url), 'http://localhost');

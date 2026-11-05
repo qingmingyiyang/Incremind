@@ -1,5 +1,6 @@
 """工作台在每层选取前重排已授权片段，复用模型适配器和辅助回执。"""
 from copy import deepcopy
+from contextlib import nullcontext
 from dataclasses import replace
 import logging
 import math
@@ -118,7 +119,8 @@ def _payload_tokens(question, payloads, model):
 
 
 def _candidate_binding(candidate):
-    return {'kind': candidate['kind'], 'id': candidate['entry']['id'],
+    return {**({'namespace': candidate['namespace'], 'material_origin': candidate.get('material_origin')}
+               if 'namespace' in candidate else {}), 'kind': candidate['kind'], 'id': candidate['entry']['id'],
         'revision': candidate['entry']['revision'], 'item_revision': candidate['entry'].get('item_revision'),
         'coordinates': candidate.get('coordinate_space'), 'scene': candidate.get('scene'),
         'title': candidate['title'], 'excerpt': candidate['excerpt'],
@@ -149,9 +151,9 @@ def _semantic_rerank_candidates(rows, selected, positions, scores, question, bat
 
 
 def layer_reranker(query, project, question, *, scene=None, token_budget=4000, state=None):
-    """返回仅本轮可用的排序闭包；只读和外部上下文不创建云端调用。"""
+    """返回仅本轮可用的排序闭包；本机离线读取不创建云端调用。"""
     state = state if state is not None else {'used_layers': [], 'failed': False}
-    if query.retrieval_index.read_only or state['failed'] and not state.get('layers'):
+    if query.offline or state['failed'] and not state.get('layers'):
         return None
     policy, policy_version = get('rerank'), version('rerank')
     scope_policy = get('scope')
@@ -307,6 +309,7 @@ def layer_reranker(query, project, question, *, scene=None, token_budget=4000, s
                 return original_rows if discovery else rows
 
             def validate():
+                query.validate_retrieval_origin()
                 if (privacy_revision(query.records) != frozen_privacy
                         or is_private_project(query.records, project)
                         or _public_identity(query.models.public().get('rerank', {})) != _public_identity(configured)
@@ -342,14 +345,19 @@ def layer_reranker(query, project, question, *, scene=None, token_budget=4000, s
 
                 class ObservedTransport:
                     def post_json(self, **request):
-                        return embedding_request(query.records, query.models, project, materials,
-                            {'namespace': 'workbench-layer-rerank-v1', 'purpose': 'rerank', 'layer': layer,
-                             'policy': policy_version, 'query': question, 'candidates': payloads,
-                             'bindings': bindings,
-                             'materials': materials, 'privacy_revision': frozen_privacy,
-                             'configuration': list(_public_identity(configured)),
-                             **({'input_limit': ceiling} if dynamic else {})},
-                            validate, original, request, purpose='rerank')
+                        from .shared_rendered_preparation import rerank_wire_input
+                        prepared_scope = (rerank_wire_input(query, payload=request['payload'], question=question, candidates=selected)
+                            if query.origin_admission is not None else nullcontext(None))
+                        with prepared_scope as rendered:
+                            return embedding_request(query.execution_owner.records, query.models, project, materials,
+                                {'namespace': 'workbench-layer-rerank-v1', 'purpose': 'rerank', 'layer': layer,
+                                 'policy': policy_version, 'query': question, 'candidates': payloads,
+                                 'bindings': bindings,
+                                 'materials': materials, 'privacy_revision': frozen_privacy,
+                                 'configuration': list(_public_identity(configured)),
+                                 **({'input_limit': ceiling} if dynamic else {})},
+                                validate, original, request, purpose='rerank', origin_admission=query.origin_admission,
+                                rendered_input=rendered)
 
                 state['used_layers'].append(layer)
                 scores = replace(adapter, client=ObservedTransport()).rerank(query=question, candidates=payloads)

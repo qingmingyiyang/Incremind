@@ -26,6 +26,7 @@ from ..transaction_records import TransactionRecords
 from .budget import text_tokens
 from .external_agent_guard import ExternalAgentGuard, ExternalAgentGuardError
 from .layers import summary_of
+from .native_mcp_scope import require_native_current
 from .policies import get, override
 from .policies.pipelines import versions_for_turn
 from .privacy import resolve_turn_material
@@ -36,6 +37,7 @@ CAPABILITY = 'external.context.execute'
 ARCHIVE = 'external-context-handoff-v1'
 DELIVERIES = 'v2_external_agent_deliveries'
 USES = 'v2_external_agent_citations'
+SHARED_ARCHIVE_VERSION = '5.0.0'
 _FIELDS = {'type', 'id', 'revision', 'project_id', 'layer', 'windows'}
 _LAYERS = {'original_item': {'L0'}, 'original_source': {'L0'},
            'document': {'L1', 'L2'}, 'recognition': {'L3'}}
@@ -108,6 +110,12 @@ class ExternalContext:
         self.turns = self.runtime = None
         self.catalog = None
         self.recall = None
+        self.shared = None
+
+    def bind_shared(self, producer):
+        if producer.context is not self or self.shared not in (None, producer):
+            raise ExternalContextError('external_context_owner_changed')
+        self.shared = producer
 
     def bind_recall(self, recall):
         if (recall.records is not self.records or recall.owner_id != self.owner_id
@@ -133,21 +141,23 @@ class ExternalContext:
             raise ExternalContextError('external_context_owner_changed')
         self.runtime = runtime
 
-    def _entry(self, tx, row, selection, snapshot):
+    def _entry(self, tx, row, selection, snapshot, *, owner=None):
         body, kind, identity = row['payload'], row['type'], row['id']
+        records, documents = ((self.records, self.documents) if owner is None else
+            (owner.records, owner.documents))
         conditions = []
         if kind == 'recognition':
             # Qualified evidence reads use the domain's read-only snapshot,
             # not the write-only TransactionRecords adapter. The outer writer
             # transaction and exact revision check preserve the frozen owner.
-            recognition = recognition_service(self.records).get_recognition(
+            recognition = recognition_service(records).get_recognition(
                 scope=WorkScope(self.owner_id, row['project_id']), recognition_id=identity)
             if recognition is None or not recognition.authorized or recognition.revision != row['revision']:
                 raise ExternalContextError('external_context_material_changed')
             entry = recognition.retrieval_projection()
             text, conditions = format_recognition_content(entry), list(entry['conditions'])
         elif kind == 'document':
-            text = SQLiteDocumentRepository(TransactionRecords(tx), namespace_id=self.documents.namespace_id).markdown(
+            text = SQLiteDocumentRepository(TransactionRecords(tx), namespace_id=documents.namespace_id).markdown(
                 identity, revision=row['revision'])
             if selection['layer'] == 'L2' and isinstance(text, str):
                 text = summary_of(text)[0]
@@ -219,7 +229,7 @@ class ExternalContext:
             if any(row not in unique for row in materials):
                 raise ExternalContextError('external_context_binding_invalid')
         with self.records.begin() as tx:
-            guard = ExternalAgentGuard(TransactionRecords(tx), owner_id=self.owner_id, now=self.now)
+            guard = ExternalAgentGuard(self.records, owner_id=self.owner_id, now=self.now, reader=tx)
             if _recall is not None:
                 self.recall.validate(_recall, tx)
             parent = None
@@ -284,7 +294,7 @@ class ExternalContext:
                 collector = CollectingReader(tx)
                 own = WorkScope(self.owner_id, project)
                 material, _ = resolve_turn_material(collector, own, proof['material'])
-                SourceEgressService(TransactionRecords(collector), _memo={}).validate_snapshot(own, proof['snapshot'])
+                SourceEgressService(self.records, reader=collector, _memo={}).validate_snapshot(own, proof['snapshot'])
                 if material['type'] == 'document':
                     documents = SQLiteDocumentRepository(TransactionRecords(collector), namespace_id=self.documents.namespace_id)
                     if (documents.revision(material['id'], material['revision']) is None
@@ -358,6 +368,12 @@ class ExternalContext:
 
     def _archive(self, turn_id, *, _require_sql_identities=True):
         saved = self.turns.get_immutable_payload(turn_id, ARCHIVE)
+        if saved is not None and isinstance(saved[1], dict) and saved[1].get('schema_version') == SHARED_ARCHIVE_VERSION:
+            if (self.shared is None or set(saved[1]) != _ARCHIVE_FIELDS | {'shared'}
+                    or saved[1]['turn_id'] != turn_id or saved[1]['owner_id'] != self.owner_id):
+                raise ExternalContextError('external_context_binding_invalid')
+            self.shared.validate_archive(saved[1])
+            return saved
         if (saved is None or not isinstance(saved[1], dict)
                 or saved[1].get('schema_version') not in {'1.0.0', '2.0.0', '3.0.0', '4.0.0'}
                 or set(saved[1]) != (_ARCHIVE_FIELDS | {'origin'} if saved[1]['schema_version'] == '2.0.0'
@@ -409,6 +425,9 @@ class ExternalContext:
                 or _encoded(request['arguments']) != _encoded(frozen['capability_request']['arguments'])
                 or _encoded(request['privacy']) != _encoded(frozen['privacy'])):
             raise ExternalContextError('external_context_binding_invalid')
+        if archive['schema_version'] == SHARED_ARCHIVE_VERSION:
+            self.shared.reserve(archive)
+            return {'summary': 'External context prepared', 'payload_ref': ref, 'evidence_refs': []}
         if archive['schema_version'] == '3.0.0':
             self.catalog.validate(archive['catalog'])
         self._validate_recall(archive)
@@ -433,26 +452,31 @@ class ExternalContext:
         if runtime is not self.runtime:
             raise ExternalContextError('external_context_owner_changed')
         _, archive = self._archive(turn_id)
-        self.guard.validate(turn_id, archive['request']['capability_request']['arguments'])
-        if archive['schema_version'] == '3.0.0':
-            self.catalog.validate(archive['catalog'])
-        self._validate_recall(archive)
+        shared = archive['schema_version'] == SHARED_ARCHIVE_VERSION
+        if shared:
+            self.shared.verify(archive)
+        else:
+            self.guard.validate(turn_id, archive['request']['capability_request']['arguments'])
+            if archive['schema_version'] == '3.0.0':
+                self.catalog.validate(archive['catalog'])
+            self._validate_recall(archive)
         runner.accept_and_submit(archive['request'])
         receipt = runner.wait_for_terminal(turn_id, timeout_seconds=125)
         if receipt is None or receipt.status != 'completed':
             raise ExternalContextError('external_context_not_completed')
         ref, archive, outcome_ref = self._completed(turn_id)
-        self.guard.validate(turn_id, archive['request']['capability_request']['arguments'])
-        if archive['schema_version'] == '3.0.0':
-            self.catalog.validate(archive['catalog'])
-        self._validate_recall(archive)
-        with self.records.begin() as tx:
+        if not shared:
+            self.guard.validate(turn_id, archive['request']['capability_request']['arguments'])
             if archive['schema_version'] == '3.0.0':
-                ExternalAgentGuard(TransactionRecords(tx), owner_id=self.owner_id, now=self.now).validate(
+                self.catalog.validate(archive['catalog'])
+            self._validate_recall(archive)
+        with (self.shared.delivery_scope(archive) if shared else self.records.begin()) as tx:
+            if archive['schema_version'] == '3.0.0':
+                ExternalAgentGuard(self.records, owner_id=self.owner_id, now=self.now, reader=tx).validate(
                     turn_id, archive['request']['capability_request']['arguments'])
                 self.catalog.validate(archive['catalog'], tx)
             if archive['schema_version'] == '4.0.0':
-                ExternalAgentGuard(TransactionRecords(tx), owner_id=self.owner_id, now=self.now).validate(
+                ExternalAgentGuard(self.records, owner_id=self.owner_id, now=self.now, reader=tx).validate(
                     turn_id, archive['request']['capability_request']['arguments'])
                 self._validate_recall(archive, tx)
             current = tx.read(DELIVERIES, turn_id)
@@ -466,7 +490,7 @@ class ExternalContext:
         return deepcopy(archive['handoff'])
 
     @_safe
-    def delivered_proof(self, turn_id, identity, *, client, require_current=True):
+    def delivered_proof(self, turn_id, identity, *, client, require_current=True, _shared_tool=None):
         """Resolve a number in one actual delivered Turn, never a global alias."""
         ref, archive, outcome_ref = self._completed(turn_id)
         arguments = archive['request']['capability_request']['arguments']
@@ -480,7 +504,12 @@ class ExternalContext:
                     or delivery.payload.get('immutable_ref') != ref
                     or delivery.payload.get('outcome_ref') != outcome_ref):
                 raise ExternalContextError('external_context_not_delivered')
-        if require_current:
+        if archive['schema_version'] == SHARED_ARCHIVE_VERSION:
+            if _shared_tool not in {'read', 'propose_insight', 'report_use'} or not require_current:
+                raise ExternalContextError('external_context_binding_invalid')
+            self.shared.require_current_delivery(archive, client, _shared_tool)
+            arguments = self.shared.request(archive)
+        elif require_current:
             self.guard.validate(turn_id, arguments)
             self._validate_recall(archive)
         return deepcopy(archive['mapping'][identity]), deepcopy(arguments)
@@ -489,10 +518,12 @@ class ExternalContext:
     def qualified_delivery(self, turn_id):
         """只读交付证明；原正文留在原归档，返回副本不新增外发或使用事实。"""
         ref, archive, outcome_ref = self._completed(turn_id)
+        if archive['schema_version'] == SHARED_ARCHIVE_VERSION:
+            raise ExternalContextError('external_context_binding_invalid')
         frozen = archive['request']
         arguments = frozen['capability_request']['arguments']
         with self.records.begin() as tx:
-            guard = ExternalAgentGuard(TransactionRecords(tx), owner_id=self.owner_id, now=self.now)
+            guard = ExternalAgentGuard(self.records, owner_id=self.owner_id, now=self.now, reader=tx)
             guard.validate(turn_id, arguments)
             delivery = tx.read(DELIVERIES, turn_id)
             if (delivery is None or delivery.revision != 1
@@ -548,11 +579,16 @@ class ExternalContext:
         return deepcopy({**result,'handoff':handoff})
 
     @_safe
-    def report_use(self, turn_id, ids, *, client=None):
-        if (not isinstance(ids, list) or any(not isinstance(identity, str) for identity in ids)
+    def report_use(self, turn_id, ids, *, client=None, _validate_binding=None, _read_only=False, _shared=False):
+        if (type(_read_only) is not bool or _read_only and ids
+                or not isinstance(ids, list) or any(not isinstance(identity, str) for identity in ids)
                 or len(ids) != len(set(ids))):
             raise ExternalContextError('external_context_citations_invalid')
         ref, archive, outcome_ref = self._completed(turn_id)
+        if archive['schema_version'] == SHARED_ARCHIVE_VERSION:
+            if not _shared or _validate_binding is not None or _read_only:
+                raise ExternalContextError('external_context_binding_invalid')
+            return self.shared.report_use(ref, archive, outcome_ref, ids, client)
         if client is not None and archive['request']['capability_request']['arguments']['client'] != client:
             raise ExternalContextError('external_context_citations_invalid')
         if any(identity not in archive['mapping'] for identity in ids):
@@ -570,11 +606,14 @@ class ExternalContext:
                         result.append(target)
             return result
         with self.records.begin() as tx:
+            require_native_current()
+            if _validate_binding is not None:
+                _validate_binding(tx)
             delivery = tx.read(DELIVERIES, turn_id)
             if (delivery is None or delivery.revision != 1 or delivery.payload.get('owner_id') != self.owner_id
                     or delivery.payload.get('immutable_ref') != ref or delivery.payload.get('outcome_ref') != outcome_ref):
                 raise ExternalContextError('external_context_not_delivered')
-            authority = SourceEgressService(TransactionRecords(tx))
+            authority = SourceEgressService(self.records, reader=tx)
             for identity in ids:
                 proof = archive['mapping'][identity]
                 material, snapshot = proof['material'], proof['snapshot']
@@ -600,31 +639,35 @@ class ExternalContext:
                 target = {**material, 'kind': proof['usage_kind']}
                 if target not in payload['objects']:
                     if proof['usage_kind'] is not None:
-                        UsageService(TransactionRecords(tx)).record_usage(proof['usage_kind'], material['id'],
+                        UsageService(TransactionRecords(tx), source_owner=self.records).record_usage(proof['usage_kind'], material['id'],
                             material['project_id'], 1.0, event_kind='citation')
                     payload['objects'].append(target)
                 payload['ids'].append(identity)
             payload['ids'] = [identity for identity in delivered_ids if identity in payload['ids']]
             payload['objects'] = targets(payload['ids'])
-            if payload['ids'] and (current is None or _encoded(payload) != _encoded(current.payload)):
+            if not _read_only and payload['ids'] and (current is None or _encoded(payload) != _encoded(current.payload)):
                 tx.put(USES, turn_id, payload, expected_revision=current.revision if current else 0)
                 tx.commit()
-        return {'turn_id': turn_id, 'ids': list(ids)}
+        return {'turn_id': turn_id, 'ids': list(payload['ids'] if _read_only else ids)}
 
 
-def delivery_receipts(records, runtime_root):
+def delivery_receipts(records, runtime_root, *, include_identity=False, strict=False):
     """Read-model projection only; an index row alone proves no delivery."""
     database = Path(runtime_root) / '.rebuild-data' / 'ai-turns.sqlite3'
+    result, unverified, incomplete = [], 0, 0
     if not database.is_file():
-        return []
-    result = []
+        if strict and records.list(DELIVERIES):
+            raise ValueError('external_receipts_unavailable')
+        return {'rows': [], 'unverified_count': 0, 'incomplete_count': 0} if include_identity else []
     try:
         with sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True) as connection:
             connection.execute('PRAGMA query_only=ON')
             connection.execute('BEGIN')
-            for row in records.list(DELIVERIES):
+            indices = records.list(DELIVERIES)
+            for row in indices:
                 identity, index = row.object_id, row.payload
                 if row.revision != 1 or set(index) != {'owner_id', 'turn_id', 'immutable_ref', 'outcome_ref', 'at'} or index['turn_id'] != identity:
+                    unverified += 1
                     continue
                 saved = connection.execute('SELECT payload_ref,payload_json FROM ai_turn_immutable_payloads WHERE turn_id=? AND kind=?', (identity, ARCHIVE)).fetchone()
                 request = connection.execute('SELECT request_json FROM ai_turns WHERE turn_id=?', (identity,)).fetchone()
@@ -632,15 +675,59 @@ def delivery_receipts(records, runtime_root):
                 outcome = connection.execute('SELECT payload_json FROM ai_turn_payloads WHERE payload_ref=? AND turn_id=? AND kind=?',
                     (index['outcome_ref'], identity, 'tool-invocation-outcome')).fetchone()
                 if not all((saved, request, terminal, outcome)) or saved[0] != index['immutable_ref']:
+                    unverified += 1
                     continue
                 archive, frozen, event, fact = (json.loads(saved[1]), json.loads(request[0]), json.loads(terminal[0]), json.loads(outcome[0]))
                 if (archive['owner_id'] != index['owner_id'] or archive['turn_id'] != identity
-                        or _encoded(archive['request']) != _encoded(frozen) or event['type'] != 'turn.completed'
-                        or frozen['desired_outcome'] != 'external.context' or fact['status'] != 'completed'
+                        or _encoded(archive['request']) != _encoded(frozen)
+                        or frozen['desired_outcome'] != 'external.context'
                         or fact['capability_id'] != CAPABILITY or fact['payload_ref'] != saved[0]):
+                    unverified += 1
                     continue
-                result.append({'at': index['at'], 'items': len(archive['handoff']['projects'])
-                    if archive.get('schema_version') == '3.0.0' else len(archive['mapping'])})
+                if event['type'] != 'turn.completed' or fact['status'] != 'completed':
+                    incomplete += 1
+                    continue
+                value = {'at': index['at'], 'items': len(archive['handoff']['projects'])
+                    if 'projects' in archive['handoff'] else len(archive['mapping'])}
+                if include_identity:
+                    privacy = frozen.get('privacy', {})
+                    shared = archive.get('schema_version') == SHARED_ARCHIVE_VERSION
+                    proofs = []
+                    if shared:
+                        if archive['shared']['kind'] == 'catalog':
+                            selected = {item['namespace'] for item in archive['handoff']['projects']}
+                            proofs = [item for project in archive['shared']['catalog']['proofs']
+                                if project['namespace'] in selected for item in project['objects']]
+                        else:
+                            proofs = [archive['mapping'][item['id']]
+                                for item in [*archive['handoff']['entries'], *archive['handoff']['profile']]]
+                    snapshot_rows = ([(proof['snapshot'], proof['material']['namespace']) for proof in proofs]
+                        if shared else [(item, None) for item in privacy.get('source_snapshots', [])])
+                    # 只提供稳定身份和修订；原件、模型输入、配置及交付正文不进入读模型。
+                    snapshots = [{
+                        'scope': {**{key: snapshot.get('scope', {}).get(key) for key in ('user_id', 'project_id')},
+                            **({'namespace': namespace} if namespace is not None else {})},
+                        'roots': [{key: item.get(key) for key in ('type', 'id', 'revision')} for item in snapshot.get('roots', [])],
+                        'nodes': [{key: item[key] for key in ('type', 'id', 'source_revision', 'incarnation') if key in item}
+                                  for item in snapshot.get('nodes', [])],
+                    } for snapshot, namespace in snapshot_rows]
+                    materials = ([deepcopy(proof['material']) for proof in proofs] if shared else
+                        [{key: item.get(key) for key in ('type', 'id', 'revision', 'project_id')}
+                         for item in archive.get('selections', [])])
+                    value.update(id=identity, turn_id=identity, project_id=frozen['scope']['project_id'],
+                        client=frozen['capability_request']['arguments']['client'],
+                        materials=materials,
+                        snapshots=snapshots,
+                        excluded=[{key: item.get(key) for key in ('kind', 'object_id', 'project_id')}
+                                  for item in privacy['excluded_refs']] if 'excluded_refs' in privacy else None)
+                result.append(value)
+            if include_identity:
+                indexed = {row.object_id for row in indices}
+                for identity, raw in connection.execute('SELECT turn_id,request_json FROM ai_turns'):
+                    if identity not in indexed and json.loads(raw).get('desired_outcome') == 'external.context':
+                        incomplete += 1
     except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
+        if strict:
+            raise
         return []
-    return result
+    return {'rows': result, 'unverified_count': unverified, 'incomplete_count': incomplete} if include_identity else result

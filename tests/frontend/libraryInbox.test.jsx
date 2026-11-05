@@ -37,7 +37,7 @@ it('retains the inbox row after a filing conflict and shows an actionable error'
  expect(screen.getByRole('alert')).toHaveTextContent('内容已变化');expect(screen.getByRole('button',{name:'Inbox thought'})).toBeInTheDocument();
 });
 it('returns to project layers from the inbox without leaving an inbox filter behind',async()=>{
- await inbox();fireEvent.click(screen.getByRole('button',{name:'原件 0'}));await act(async()=>{});
+ await inbox();fireEvent.click(screen.getByRole('button',{name:'原件 —'}));await act(async()=>{});
  expect(screen.getByRole('button',{name:'全部'})).toHaveAttribute('aria-pressed','true');
  const lists=fetch.mock.calls.filter(([url])=>String(url).includes('/sources?'));
  expect(String(lists.at(-1)[0])).toContain('project_id=alpha');

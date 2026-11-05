@@ -75,13 +75,14 @@ class UsageStorage:
             return 'document', row
         raise ValueError('invalid_usage_kind')
 
-    def record_usage(self, kind, id, project_id, weight, *, reset=False, count=True, event_kind=None):
-        return self._record_usage(kind, id, project_id, weight, reset=reset, count=count, event_kind=event_kind)
+    def record_usage(self, kind, id, project_id, weight, *, reset=False, count=True, event_kind=None, on_recorded=None):
+        return self._record_usage(kind, id, project_id, weight, reset=reset, count=count,
+            event_kind=event_kind, on_recorded=on_recorded)
 
     def initialize(self, kind, id, project_id):
         return self._record_usage(kind, id, project_id, 1.0, reset=True, count=True, initialize=True)
 
-    def _record_usage(self, kind, id, project_id, weight, *, reset, count, initialize=False, event_kind=None):
+    def _record_usage(self, kind, id, project_id, weight, *, reset, count, initialize=False, event_kind=None, on_recorded=None):
         if (isinstance(weight, bool) or not isinstance(weight, (int, float))
                 or not math.isfinite(weight) or weight < 0 or type(reset) is not bool or type(count) is not bool):
             raise ValueError('invalid_usage_weight')
@@ -112,6 +113,8 @@ class UsageStorage:
                 'project_id': project_id, 'score': score, 'count': uses, 'updated_at': now.isoformat(),
                 'events': events[-64:], 'older_count': older_count,
             }, expected_revision=current.revision if current is not None else 0)
+            if on_recorded is not None:
+                on_recorded(tx, canonical, target, now)
             tx.commit()
         self._after_usage(canonical, target, project_id, count=count, initialize=initialize)
         return dict(updated.payload)

@@ -1,5 +1,6 @@
 """Durable auxiliary memory calls using the existing Turn and Effect authorities."""
 from datetime import datetime, timedelta, timezone
+from copy import deepcopy
 import inspect
 import time
 from urllib.parse import urlsplit
@@ -19,6 +20,15 @@ _KEYS = "v2_memory_turn_keys"
 _REJECTED = "memory-generation-rejected-v1"
 
 
+def proposal_intent(request, key):
+    return EffectIntent(session_id=request['session_id'], turn_id=request['turn_id'],
+        root_id=request['operation_id'], step_key=key, kind='memory_propose',
+        effect_class=EffectClass.IDEMPOTENT, purpose=EffectPurpose.AUX,
+        intent_ref='crp://session/' + request['turn_id'] + '/memory-proposal/' + key,
+        gate_decision_id=request['turn_id'], rev_set={'template': 1}, payload={'key': key},
+        idem_key=request['turn_id'] + ':' + key)
+
+
 class MemoryTurn:
     """The domain owns validation and writes; the kernel owns execution evidence."""
 
@@ -29,15 +39,16 @@ class MemoryTurn:
             root = root / ".rebuild-data"
         return SQLiteAITurnStore(root / "ai-turns.sqlite3")
 
-    def __init__(self, records, models, *, kind, project, key, materials, validate, freeze_request, validate_request, remote_allowed, purpose="generation", retry_token=None):
+    def __init__(self, records, models, *, kind, project, key, materials, validate, freeze_request, validate_request, remote_allowed, purpose="generation", retry_token=None, admission=None):
         self.records, self.models = records, models
         self.purpose = purpose
         self.validate_request = validate_request
         self.validate_domain = validate
+        self.admission = admission
         self.store = self.store_for(records)
         self._arguments = dict(kind=kind, project=project, materials=materials,
             validate=validate, freeze_request=freeze_request, validate_request=validate_request,
-            remote_allowed=remote_allowed, purpose=purpose)
+            remote_allowed=remote_allowed, purpose=purpose, admission=admission)
         config = models.public()[purpose]
         self.local = urlsplit(str(config.get("base_url", ""))).hostname in {"localhost", "127.0.0.1", "::1"}
         if not self.local and not remote_allowed(records, models, project, purpose):
@@ -57,10 +68,14 @@ class MemoryTurn:
             with records.begin() as tx:
                 old = next((r for r in tx.list(_KEYS) if r.payload["identity"] == identity), None)
                 if old is None:
+                    prepared = (admission.prepare(request, self.store, tx,
+                        producer_identity={'collection': _KEYS, **identity}) if admission is not None else None)
                     payload = {"identity": identity, "request": request}
                     if retry_token is not None:
                         payload["retry_token"] = retry_token
                     old = tx.put(_KEYS, turn_id, payload, expected_revision=0)
+                    if admission is not None:
+                        admission.stage(request, self.store, prepared, tx)
                     if purpose == 'generation':
                         from .aux_routing import stage_auxiliary_choice
                         stage_auxiliary_choice(models, tx, turn_id)
@@ -90,7 +105,7 @@ class MemoryTurn:
             successor = next((row for row in self.records.list(_KEYS)
                               if row.payload["identity"] == identity), None)
             if successor is not None:
-                current = MemoryTurn(self.records, self.models, key=key, **self._arguments)
+                current = self._new_attempt(key)
                 continue
             if retry_token is None or not current._known_failed_attempt():
                 if retry_token is not None or current._retry_token is not None:
@@ -98,11 +113,13 @@ class MemoryTurn:
                 return current
             # Constructor rechecks identity inside the existing write transaction:
             # concurrent callers observing this predecessor select one successor.
-            selected = MemoryTurn(self.records, self.models, key=key, retry_token=retry_token,
-                                  **self._arguments)
+            selected = self._new_attempt(key, retry_token=retry_token)
             if selected._retry_token != retry_token:
                 raise RecognitionConflict("memory_retry_attempt_owned_by_another_execution")
             return selected
+
+    def _new_attempt(self, key, *, retry_token=None):
+        return MemoryTurn(self.records, self.models, key=key, retry_token=retry_token, **self._arguments)
 
     def _known_failed_attempt(self):
         events = tuple(self.store.events_after(self.turn_id))
@@ -163,14 +180,38 @@ class MemoryTurn:
     def validate(self):
         self.validate_domain()
         self.validate_request(self.records, self.models, self.request, purpose=self.purpose)
+        if self.admission is not None:
+            self.admission.validate_current(self.request, self.store)
         current_local = urlsplit(str(self.models.public()[self.purpose].get("base_url", ""))).hostname in {"localhost", "127.0.0.1", "::1"}
         if current_local != self.local or (not current_local and not self.request["privacy"]["allow_remote"]):
             raise RecognitionConflict("memory_turn_remote_disabled")
 
-    def generate(self, messages, *, response_model, max_tokens, invoke=None):
+    def input_messages(self, messages):
+        return self.admission.messages(self.request, self.store, messages) if self.admission is not None else messages
+
+    def base_request(self):
+        return self.admission.base_request(self.request, self.store) if self.admission is not None else deepcopy(self.request)
+
+    def validate_commit(self, reader):
+        from ..transaction_records import TransactionRecords
+        options = ({'source_owner': self.records}
+            if 'source_owner' in inspect.signature(self.validate_request).parameters else {})
+        self.validate_request(TransactionRecords(reader), self.models, self.request, purpose=self.purpose, **options)
+        if self.admission is not None:
+            self.admission.validate_commit(self.request, self.store, reader)
+
+    def generate(self, messages, *, response_model, max_tokens, invoke=None, governed=False, input_observer=None):
+        if input_observer is not None and (not callable(input_observer) or invoke is not None):
+            raise ValueError('memory_input_observer_invalid')
+        if type(governed) is not bool or governed and invoke is not None:
+            raise ValueError('memory_governed_call_invalid')
         self.validate()
+        messages = self.input_messages(messages)
         cached = self.store.get_immutable_payload(self.turn_id, _OUTPUT)
         if cached:
+            if self.admission is not None:
+                self.admission.validate_recorded_input(self.request, self.store, messages,
+                    response_model=None if governed else response_model, max_tokens=max_tokens)
             output = cached[1]
             return response_model.model_validate(output["output"]), dict(output["metadata"])
         owner = self
@@ -181,16 +222,38 @@ class MemoryTurn:
             def plan(self, request, events, capabilities, payloads, execution_control):
                 control = execution_control
                 owner.validate()
-                selected = auxiliary_models(owner.models, owner.store, owner.turn_id, records=owner.records) if owner.purpose == 'generation' else owner.models
+                selected = auxiliary_models(owner.models, owner.store, owner.turn_id, records=owner.records) if owner.purpose == 'generation' and not governed else owner.models
                 public = selected.public()[owner.purpose]
+                if owner.admission is not None:
+                    try:
+                        owner.admission.input_budget(selected, messages, max_tokens=max_tokens,
+                            response_model=None if governed else response_model)
+                    except Exception as error:
+                        failure.append(error)
+                        raise
                 # Only public route fields may enter kernel payloads.
                 route = {k: public.get(k) for k in ("provider", "model", "base_url", "revision", "allow_remote")}
+                if public.get('server_model_binding') is not None:
+                    route['server_model_binding'] = dict(public['server_model_binding'])
                 if owner.purpose != 'generation':
                     # 辅助 Turn 的 kind 可复用，实际用途必须随原路由冻结供回执投影。
                     route['purpose'] = owner.purpose
                 route_ref = owner.store.get_or_create_immutable_payload(owner.turn_id, "memory-model-route-v1", route)
                 call = None
-                if owner.purpose == 'generation' and invoke is None:
+                if governed:
+                    from ..model_config import ModelConfiguration
+                    from ..model_binding import public_model_configuration
+                    if owner.purpose != 'generation' or not isinstance(selected, ModelConfiguration):
+                        raise ValueError('memory_governed_owner_invalid')
+                    # 由原 Planner 冻结完整公开路由，governed 调用独占路由和开始事件。
+                    payload = {'turn_id': owner.turn_id, 'project_id': request['scope']['project_id'],
+                        'configuration': public_model_configuration(public), 'purpose': 'primary',
+                        'execution_location': 'local_loopback' if owner.local else 'remote'}
+                    ref = owner.store.get_or_create_immutable_payload(owner.turn_id, 'recognition-model-routing-snapshot-v1', payload)
+                    call = ({'payload_ref': ref, 'revision': _revision(payload),
+                        'prompt_cache_scope_identity': _revision(payload), 'configuration': payload['configuration'],
+                        'execution_location': payload['execution_location']}, None)
+                elif owner.purpose == 'generation' and invoke is None:
                     from .provider_store_binding import memory_provider_store_call
                     call = memory_provider_store_call(owner.models, selected, owner.records, owner.store,
                         request, route_ref, route)
@@ -206,16 +269,31 @@ class MemoryTurn:
                 def validate():
                     control.checkpoint()
                     owner.validate()
+                    if owner.admission is not None:
+                        owner.admission.input_budget(selected, messages, max_tokens=max_tokens,
+                            response_model=None if governed else response_model)
+                    if 'server_model_binding' in route:
+                        selected.server_model_access.validate_binding(route['server_model_binding'])
                 try:
+                    if owner.admission is not None:
+                        owner.admission.record_input(request, owner.store, model_request_id=control.model_request_id,
+                            messages=messages, response_model=None if governed else response_model, max_tokens=max_tokens)
+                    if input_observer is not None:
+                        validate()
+                        input_observer(owner=owner, request=request, model_request_id=control.model_request_id,
+                            messages=messages, response_schema=None if governed else response_model.model_json_schema(),
+                            result_schema=response_model.model_json_schema(), governed=governed)
                     if invoke is not None:
                         output, metadata = invoke(control, validate)
                     elif call is not None:
                         output, metadata = selected.complete_governed(messages, routing_snapshot=call[0],
                             execution_control=control, metadata_sink=control, wire_attempt_sink=control,
-                            response_model=response_model, max_tokens=max_tokens, validate_current=validate,
-                            purpose='aux', retry_policy=retry_policy_for(request),
+                            response_model=None if governed else response_model, max_tokens=max_tokens, validate_current=validate,
+                            purpose='primary' if governed else 'aux', retry_policy=retry_policy_for(request),
                             timeout_seconds=control.remaining_timeout_ms / 1000,
                             provider_store_activation=call[1])
+                        if governed:
+                            output = response_model.model_validate(output)
                     else:
                         retry = ({'retry_policy': retry_policy_for(request),
                                   'timeout_seconds': control.remaining_timeout_ms / 1000}
@@ -244,7 +322,8 @@ class MemoryTurn:
 
         runtime = ProductPolicyRuntime(planner=Planner(), registry=ScopedCapabilityRegistry(),
             events=self.store, payloads=self.store, state=self.store)
-        accepted = runtime.accept_turn(self.request)
+        admission = self.admission.admission(self.request, self.store) if self.admission is not None else None
+        accepted = runtime.accept_turn(self.request, **({'admission_bundle': admission} if admission is not None else {}))
         if accepted.replayed:
             # A request with no durable result may have reached the provider.
             # Never reinterpret an unknown dispatch as permission to call again.
@@ -281,12 +360,7 @@ class MemoryTurn:
         """Run an idempotent domain proposal under the kernel memory_propose effect."""
         self.validate()
         runner = self.store.effect_runner
-        intent = EffectIntent(session_id=self.request["session_id"], turn_id=self.turn_id,
-            root_id=self.request["operation_id"], step_key=key, kind="memory_propose",
-            effect_class=EffectClass.IDEMPOTENT, purpose=EffectPurpose.AUX,
-            intent_ref="crp://session/" + self.turn_id + "/memory-proposal/" + key,
-            gate_decision_id=self.turn_id, rev_set={"template": 1}, payload={"key": key},
-            idem_key=self.turn_id + ":" + key)
+        intent = proposal_intent(self.request, key)
         value = []
         def handler(effect):
             self.validate()
@@ -314,24 +388,46 @@ class MemoryTurn:
         raise RecognitionConflict("memory_proposal_pending_recovery")
 
 
-def embedding_request(records, models, project, materials, key, validate, transport, request, *, turn_factory, purpose='embedding'):
+def embedding_request(records, models, project, materials, key, validate, transport, request, *, turn_factory,
+                      purpose='embedding', prepare_original_wire=None):
     """用同一辅助 Turn 记录向量或重排的真实调用与费用。"""
     if purpose not in {'embedding', 'rerank'}:
         raise ValueError('invalid_retrieval_wire_purpose')
     from pydantic import RootModel
     turn = turn_factory(records, models, kind="memory.link_suggest", project=project,
         key=key, materials=materials, validate=validate, purpose=purpose)
+    wire_guard = None
+    original_payload = None
+    if prepare_original_wire is not None:
+        original_payload = deepcopy(request['payload'])
+        passed_payload = deepcopy(original_payload)
+        wire_guard = prepare_original_wire(turn, passed_payload)
+        if not callable(wire_guard) or passed_payload != original_payload:
+            raise RecognitionConflict('memory_original_wire_preparation_changed')
+    def validate_original_wire():
+        if wire_guard is not None:
+            if request['payload'] != original_payload:
+                raise RecognitionConflict('memory_original_wire_payload_changed')
+            wire_guard()
+    validate_original_wire()
     def invoke(control, current):
         current()
+        validate_original_wire()
         wrap = getattr(models, 'price_wire_sink', None)
-        sink = (wrap(control, purpose=purpose, configuration=models.public()[purpose])
+        sink = (wrap(control, purpose=purpose, configuration=models.public()[purpose], wire_request=request)
                 if callable(wrap) else control)
         attempt = sink.begin_model_wire_attempt()
         def wire():
             try:
+                validate_original_wire()
                 result = transport.post_json(**request)
+                observe = getattr(attempt, 'observe_metering', None)
+                if callable(observe):
+                    observe(result)
                 usage = result.get("usage", {})
                 incoming = usage.get("input_tokens", usage.get("prompt_tokens"))
+                if purpose == 'rerank' and incoming is None:
+                    incoming = result.get('meta', {}).get('billed_units', {}).get('input_tokens')
                 normalized = ({"input_tokens": incoming, "output_tokens": 0, "total_tokens": incoming}
                     if type(incoming) is int and incoming >= 0 else {})
                 attempt.succeeded(usage=normalized, cache_observation=None)
@@ -341,6 +437,13 @@ def embedding_request(records, models, project, materials, key, validate, transp
                 raise
         result = attempt.invoke_wire(wire)
         current()
+        validate_original_wire()
         return RootModel[dict](result), {"usage": result.get("usage", {})}
-    output, _ = turn.generate([], response_model=RootModel[dict], max_tokens=0, invoke=invoke)
+    from ..model_costs import SharedModelMeteringError
+    from ..model_config import _model_request_failure
+    try:
+        output, _ = turn.generate([], response_model=RootModel[dict], max_tokens=0, invoke=invoke)
+    except SharedModelMeteringError as error:
+        raise _model_request_failure(error) from None
+    validate_original_wire()
     return output.root

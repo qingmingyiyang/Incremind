@@ -46,7 +46,8 @@ _SENSITIVE_METADATA = frozenset({"api_key", "apikey", "authorization", "credenti
 class RestructureProposalService:
     """Proposal authority layered on a :class:`RecognitionService` store."""
 
-    def __init__(self, recognitions: RecognitionService | SQLiteStructuredRecordStore) -> None:
+    def __init__(self, recognitions: RecognitionService | SQLiteStructuredRecordStore, *,
+                 allow_private_manual: bool = False) -> None:
         # Routes normally share the already-created RecognitionService.  The
         # store form keeps this authority convenient for focused callers while
         # still using the exact same lifecycle implementation.
@@ -54,6 +55,7 @@ class RestructureProposalService:
             recognitions if isinstance(recognitions, RecognitionService) else RecognitionService(recognitions)
         )
         self._records: SQLiteStructuredRecordStore = self._recognitions.records
+        self._allow_private_manual = allow_private_manual
 
     def capture(
         self,
@@ -119,7 +121,8 @@ class RestructureProposalService:
                 for experience_id in experience_ids:
                     experiences[experience_id] = self._recognitions._require_scope(uow, _EXPERIENCES, experience_id, scope)
             states = _capture_memory_states(uow, scope, {"recognitions": [_snapshot_record(r) for r in recognitions.values()],
-                "experiences": [_snapshot_record(r) for r in experiences.values()]}) if pending_output else []
+                "experiences": [_snapshot_record(r) for r in experiences.values()]},
+                allow_private=self._allow_private_manual) if pending_output else []
             uow.commit()
         return {
             **({"pending_output": True, "memory_states": states, "candidates": [_snapshot_record(r) for r in candidates.values()]} if pending_output else {}),
@@ -188,7 +191,8 @@ class RestructureProposalService:
             if stored == comparable:
                 return _public(existing)
             raise RecognitionConflict("restructure proposal id already exists with different content")
-        _assert_snapshot_current(self._recognitions, uow, scope, validated)
+        _assert_snapshot_current(self._recognitions, uow, scope, validated,
+            allow_private=self._allow_private_manual and origin_task_id is None)
         payload = {
             "id": proposal_id,
             "scope": _scope(scope),
@@ -220,13 +224,17 @@ class RestructureProposalService:
         return _public(record)
 
     def get(self, *, scope: WorkScope, proposal_id: str) -> dict[str, object]:
-        _segment("proposal_id", proposal_id)
         with self._records.begin() as uow:
-            record = uow.read(_PROPOSALS, proposal_id)
-            if record is None or _as_scope(record.payload) != scope:
-                raise RecognitionConflict("restructure proposal is unavailable in this work scope")
-            _require_visible_origin_task(uow, scope, record)
+            result = self.get_in_uow(uow, scope=scope, proposal_id=proposal_id)
             uow.commit()
+        return result
+
+    def get_in_uow(self, reader, *, scope: WorkScope, proposal_id: str) -> dict[str, object]:
+        _segment("proposal_id", proposal_id)
+        record = reader.read(_PROPOSALS, proposal_id)
+        if record is None or _as_scope(record.payload) != scope:
+            raise RecognitionConflict("restructure proposal is unavailable in this work scope")
+        _require_visible_origin_task(reader, scope, record)
         return _public(record)
 
     def list(self, *, scope: WorkScope, include_terminal: bool = True) -> tuple[dict[str, object], ...]:
@@ -287,7 +295,8 @@ class RestructureProposalService:
                 )
                 uow.commit()
                 return _public(record)
-            _assert_snapshot_current(self._recognitions, uow, scope, snapshot)
+            _assert_snapshot_current(self._recognitions, uow, scope, snapshot,
+                allow_private=self._allow_private_manual and proposal.payload.get("origin_task_id") is None)
             operation = _operation(proposal.payload.get("operation"))
             outputs = _validate_outputs(operation, proposal.payload.get("outputs"), snapshot)
             if snapshot.get("pending_output"):
@@ -410,12 +419,12 @@ def _memory_state_keys(scope, snapshot):
     return keys
 
 
-def _capture_memory_states(reader, scope, snapshot):
+def _capture_memory_states(reader, scope, snapshot, *, allow_private=False):
     states = []
     for collection, identity in sorted(_memory_state_keys(scope, snapshot)):
         row = reader.read(collection, identity)
-        if row and ((collection == "v2_private_scopes" and row.payload.get("private"))
-                or (collection.startswith("source_egress_") and row.payload.get("allowed_purposes") == [])
+        if row and ((not allow_private and ((collection == "v2_private_scopes" and row.payload.get("private"))
+                or (collection.startswith("source_egress_") and row.payload.get("allowed_purposes") == [])))
                 or (row.payload.get("state") == "forgotten" and row.payload.get("by", "user") == "user")):
             raise RecognitionConflict("pending restructure evidence is unavailable")
         states.append({"collection": collection, "id": identity, "revision": row.revision if row else 0})
@@ -496,13 +505,14 @@ def _valid_snapshot_row(raw: object, scope: WorkScope, kind: str) -> dict[str, A
     return {"id": object_id, "revision": revision, "payload": deepcopy(payload)}
 
 
-def _assert_snapshot_current(service: RecognitionService, uow: Any, scope: WorkScope, snapshot: Mapping[str, Any]) -> None:
+def _assert_snapshot_current(service: RecognitionService, uow: Any, scope: WorkScope, snapshot: Mapping[str, Any], *,
+                             allow_private: bool = False) -> None:
     if snapshot.get("pending_output"):
         for item in snapshot["memory_states"]:
             row = uow.read(item["collection"], item["id"])
             if (row.revision if row else 0) != item["revision"]:
                 raise RecognitionConflict("pending restructure memory state changed")
-        _capture_memory_states(uow, scope, snapshot)
+        _capture_memory_states(uow, scope, snapshot, allow_private=allow_private)
     for item in snapshot.get("candidates", []):
         if uow.read("v2_candidate_merges", item["id"]):
             raise RecognitionConflict("pending restructure input already merged")

@@ -56,6 +56,10 @@ async def capture_credential(request: Request, container: ApiContainerDep) -> JS
             from backend.api.provider_credentials import store_provider_credential
 
             generation = store_provider_credential(container, subject, value)
+        elif kind == 'tokenhub_asr_api_key' and subject == 'tokenhub-hy-asr':
+            from backend.memory_app.asr_credentials import store_asr_credential
+
+            generation = store_asr_credential(container, value)
         else:
             container.secret_store.set(secret_ref, value)
             generation = container.secret_store.get_generation(secret_ref)

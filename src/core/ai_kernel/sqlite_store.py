@@ -4,6 +4,8 @@ from core.storage_provider.connection_scope import reusable_connection
 
 from collections.abc import Mapping, Sequence
 from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
 from threading import RLock
 from copy import deepcopy
 import json
@@ -13,6 +15,10 @@ import sqlite3
 from core.storage_provider.observability import observe_connection
 from uuid import uuid4
 from datetime import datetime, timezone
+from .product_admission import (
+    MANIFEST_KIND, ProductAdmissionBundle, ProductAdmissionItem,
+    validate_bundle, validate_manifest, admission_identity,
+)
 
 from core.effect_log import (
     EffectClass,
@@ -60,6 +66,9 @@ from .ports import (
 )
 from .state_store import TurnStateConflict
 from .external_agent_context import validate_external_agent_safe_projection
+
+
+_PRODUCT_ADMISSION = ContextVar('product_turn_admission',default=None)
 
 
 class SQLiteAITurnStore:
@@ -120,6 +129,9 @@ class SQLiteAITurnStore:
     def __init__(self, database_path: Path, *, effect_runner: EffectRunner | None = None, cache_immutable_reads: bool = False) -> None:
         self._immutable_reads = OrderedDict() if cache_immutable_reads else None
         self._immutable_read_lock = RLock()
+        self._product_admission_lock = RLock()
+        self._product_admissions = {}
+        self._product_admission_generation = 0
         self._path = database_path.expanduser().resolve(strict=False)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         connection = self._connect()
@@ -141,6 +153,18 @@ class SQLiteAITurnStore:
         turn_id = str(payload["turn_id"])
         key = str(payload["idempotency_key"])
         encoded = _encode(payload)
+        manifest_ref = _immutable_payload_ref(turn_id,MANIFEST_KIND)
+        has_binding = any(ref.get('uri') == manifest_ref for ref in payload['input']['refs'])
+        registration = _PRODUCT_ADMISSION.get()
+        admission = None
+        if registration is not None:
+            with self._product_admission_lock:
+                if (registration['store'] is not self or registration['turn_id'] != turn_id
+                        or self._product_admissions.get(turn_id) is not registration or not registration['active']):
+                    raise TurnStateConflict('product admission context is stale or outside this owner')
+                admission = registration['bundle']
+        if admission is not None and not has_binding:
+            raise TurnStateConflict('product admission reference is missing')
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -148,13 +172,424 @@ class SQLiteAITurnStore:
             if row is not None:
                 if str(row[1]) != encoded:
                     raise TurnStateConflict("turn idempotency identity conflict")
-                connection.execute("COMMIT")
+                if has_binding:
+                    saved = connection.execute('SELECT payload_json FROM ai_turn_immutable_payloads WHERE turn_id=? AND kind=?',
+                        (turn_id,MANIFEST_KIND)).fetchone()
+                    if saved is None:
+                        raise TurnStateConflict('product admission manifest is unavailable')
+                    manifest = _mapping_json(saved[0])
+                    validate_manifest(payload,manifest,persisted=True)
+                    if admission is not None:
+                        validate_bundle(payload,admission)
+                        planned = {**manifest,'items':[{key:value for key,value in item.items() if key != 'payload_ref'}
+                            for item in manifest['items']]}
+                        if planned != admission.manifest:
+                            raise TurnStateConflict('product admission manifest differs')
+                    self._validate_admitted_items(connection,turn_id,manifest,admission)
+                self._commit_product_admission(connection,registration,turn_id)
                 return str(row[0]), False
             if connection.execute("SELECT 1 FROM ai_turns WHERE turn_id=?", (turn_id,)).fetchone():
                 raise TurnStateConflict("turn identity already exists")
             connection.execute("INSERT INTO ai_turns(turn_id, session_id, operation_id, idempotency_key, request_json) VALUES(?,?,?,?,?)", (turn_id, str(payload["session_id"]), str(payload["operation_id"]), key, encoded))
-            connection.execute("COMMIT")
+            if has_binding:
+                if admission is None:
+                    raise TurnStateConflict('product admission bundle is unavailable')
+                validate_bundle(payload,admission)
+                admitted = []
+                for item,declared in zip(admission.items,admission.manifest['items']):
+                    _immutable_payload_identity(turn_id,item.kind)
+                    validate_governed_payload(item.payload)
+                    actual = self._get_or_create_immutable_payload_in_transaction(connection,turn_id,item.kind,item.payload)
+                    admitted.append({**deepcopy(declared),'payload_ref':actual})
+                manifest = {**deepcopy(admission.manifest),'items':admitted}
+                _immutable_payload_identity(turn_id,MANIFEST_KIND)
+                validate_governed_payload(manifest)
+                self._get_or_create_immutable_payload_in_transaction(connection,turn_id,MANIFEST_KIND,manifest)
+            self._commit_product_admission(connection,registration,turn_id)
             return turn_id, True
+        except Exception:
+            _rollback(connection)
+            raise
+        finally:
+            connection.close()
+
+    @contextmanager
+    def admission_bundle(self, request, binding):
+        validate_bundle(request,binding)
+        identity = request['turn_id']
+        if _PRODUCT_ADMISSION.get() is not None:
+            raise TurnStateConflict('nested product admission is forbidden')
+        with self._product_admission_lock:
+            if identity in self._product_admissions:
+                raise TurnStateConflict('product admission is already active')
+            self._product_admission_generation += 1
+            registration = {'store':self,'turn_id':identity,'generation':self._product_admission_generation,
+                'bundle':deepcopy(binding),'active':True}
+            self._product_admissions[identity] = registration
+        token = _PRODUCT_ADMISSION.set(registration)
+        try:
+            yield
+        finally:
+            with self._product_admission_lock:
+                registration['active'] = False
+                if self._product_admissions.get(identity) is registration:
+                    del self._product_admissions[identity]
+            _PRODUCT_ADMISSION.reset(token)
+
+    def _commit_product_admission(self, connection, registration, turn_id):
+        if registration is None:
+            connection.execute('COMMIT')
+            return
+        with self._product_admission_lock:
+            if (registration['store'] is not self or registration['turn_id'] != turn_id
+                    or not registration['active'] or self._product_admissions.get(turn_id) is not registration):
+                raise TurnStateConflict('product admission context closed before commit')
+            connection.execute('COMMIT')
+
+    def restore_admission(self, request):
+        connection = self._connect()
+        try:
+            connection.execute('BEGIN')
+            actual = connection.execute('SELECT request_json FROM ai_turns WHERE turn_id=?',(request['turn_id'],)).fetchone()
+            if actual is None or admission_identity(_mapping_json(actual[0])) != admission_identity(request):
+                raise TurnStateConflict('accepted product admission request differs')
+            row = connection.execute('SELECT payload_json FROM ai_turn_immutable_payloads WHERE turn_id=? AND kind=?',
+                (request['turn_id'],MANIFEST_KIND)).fetchone()
+            if row is None:
+                if any(ref.get('uri') == _immutable_payload_ref(request['turn_id'],MANIFEST_KIND) for ref in request['input']['refs']):
+                    raise TurnStateConflict('accepted product admission manifest is unavailable')
+                return None
+            manifest = _mapping_json(row[0])
+            validate_manifest(request,manifest,persisted=True)
+            self._validate_admitted_items(connection,request['turn_id'],manifest)
+            items = []
+            for item in manifest['items']:
+                row = connection.execute('SELECT payload_json FROM ai_turn_immutable_payloads WHERE payload_ref=?',
+                    (item['payload_ref'],)).fetchone()
+                items.append(ProductAdmissionItem(item['kind'],item['ref'],item['scope'],_mapping_json(row[0])))
+            planned = {**manifest,'items':[{key:value for key,value in item.items() if key != 'payload_ref'} for item in manifest['items']]}
+            return ProductAdmissionBundle(planned,tuple(items))
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _validate_admitted_items(connection, turn_id, manifest, admission=None):
+        for index,item in enumerate(manifest['items']):
+            row = connection.execute('SELECT payload_ref,payload_json FROM ai_turn_immutable_payloads WHERE turn_id=? AND kind=?',
+                (turn_id,item['kind'])).fetchone()
+            if (row is None or row[0] != item['payload_ref']
+                    or admission is not None and _mapping_json(row[1]) != admission.items[index].payload):
+                raise TurnStateConflict('product admission item differs')
+
+    def admission_base_refs(self, request):
+        from .product_snapshot import read_admission_base_refs
+        connection = self._connect()
+        try:
+            connection.execute('BEGIN')
+            return read_admission_base_refs(connection, request)
+        finally:
+            connection.close()
+
+    def accept_steer_bundle(self, event, *, expected_sequence, run_lease, submission_key,
+                            text, snapshot, maximum_count, policy_version, visible_sequence=None):
+        turn_id = str(event.get('turn_id', ''))
+        if (not isinstance(submission_key, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', submission_key)
+                or not isinstance(text, str) or not text.strip() or len(text) > 2000
+                or type(maximum_count) is not int or not 1 <= maximum_count <= 5
+                or policy_version not in {'@1', '@2'}
+                or visible_sequence is not None and (type(visible_sequence) is not int or visible_sequence < 1)):
+            raise TurnStateConflict('invalid steer admission')
+        connection = self._connect()
+        try:
+            connection.execute('BEGIN IMMEDIATE')
+            binding_row = connection.execute('SELECT payload_ref,payload_json FROM ai_turn_immutable_payloads WHERE turn_id=? AND kind=?',
+                (turn_id, 'workbench-steer-binding-v1')).fetchone()
+            request_row = connection.execute('SELECT request_json FROM ai_turns WHERE turn_id=?', (turn_id,)).fetchone()
+            if binding_row is None or request_row is None:
+                raise TurnStateConflict('workbench steer binding is unavailable')
+            binding, request = _mapping_json(binding_row[1]), _mapping_json(request_row[0])
+            manifest_row = connection.execute('SELECT payload_json FROM ai_turn_immutable_payloads WHERE turn_id=? AND kind=?',
+                (turn_id, MANIFEST_KIND)).fetchone()
+            if manifest_row is None:
+                raise TurnStateConflict('workbench steer admission is unavailable')
+            manifest = _mapping_json(manifest_row[0])
+            validate_manifest(request, manifest, persisted=True)
+            self._validate_admitted_items(connection, turn_id, manifest)
+            if (binding['turn_id'] != turn_id or binding['project_id'] != request['scope']['project_id']
+                    or not any(item['kind'] == 'workbench-steer-binding-v1' and item['payload_ref'] == binding_row[0]
+                        for item in manifest['items'])):
+                raise TurnStateConflict('workbench steer binding differs')
+            old = connection.execute('SELECT payload_ref,event_id FROM ai_turn_steers WHERE public_turn_id=? AND submission_key=?',
+                (binding['public_turn_id'], submission_key)).fetchone()
+            if old is not None:
+                received = connection.execute('SELECT payload_json FROM ai_turn_immutable_payloads WHERE payload_ref=?', (old[0],)).fetchone()
+                capsule = _mapping_json(received[0])
+                if (capsule['text'] != text or capsule['binding_ref'] != binding_row[0]
+                        or capsule.get('visible_sequence') != visible_sequence):
+                    raise TurnStateConflict('steer idempotency identity conflict')
+                original = connection.execute('SELECT event_json FROM ai_turn_events WHERE event_id=?', (old[1],)).fetchone()
+                connection.execute('COMMIT')
+                return ImmutablePayloadAppendReceipt(_mapping_json(original[0]), old[0])
+            if run_lease is None or event.get('type') != 'turn.steer.received':
+                raise TurnStateConflict('steer requires an active owner')
+            self._assert_run_lease(connection, turn_id, run_lease, now=datetime.now(timezone.utc).timestamp())
+            count = connection.execute('SELECT COUNT(*) FROM ai_turn_steers WHERE public_turn_id=?',
+                (binding['public_turn_id'],)).fetchone()[0]
+            if count >= maximum_count:
+                raise TurnStateConflict('steer limit reached')
+            capsule = {key: deepcopy(binding[key]) for key in ('public_turn_id', 'target_turn_id', 'project_id', 'scene',
+                'thread_id', 'owner_user_id', 'namespace_id', 'origin_kind', 'part', 'part_turn_ids')}
+            capsule.update(id='steer-' + uuid4().hex, turn_id=turn_id, binding_ref=binding_row[0],
+                submission_key=submission_key, text=text, snapshot=deepcopy(snapshot), created_at=event['occurred_at'],
+                visible_sequence=visible_sequence, policy_version=policy_version,
+                lease={'owner_id': run_lease.owner_id, 'generation': run_lease.generation})
+            validate_governed_payload(capsule)
+            kind = 'turn-steer-received-' + submission_key
+            _immutable_payload_identity(turn_id, kind)
+            reference = self._get_or_create_immutable_payload_in_transaction(connection, turn_id, kind, capsule)
+            appended = self._append_event_in_transaction(connection, _event_with_evidence_ref(event, reference),
+                expected_sequence=expected_sequence)
+            connection.execute('INSERT INTO ai_turn_steers(steer_id,turn_id,public_turn_id,target_turn_id,submission_key,payload_ref,event_id,run_owner_id,run_generation,state,revision) '
+                'VALUES(?,?,?,?,?,?,?,?,?,?,1)', (capsule['id'], turn_id, capsule['public_turn_id'], capsule['target_turn_id'],
+                    submission_key, reference, appended['event_id'], run_lease.owner_id, run_lease.generation, 'queued'))
+            connection.execute('COMMIT')
+            return ImmutablePayloadAppendReceipt(deepcopy(appended), reference)
+        except Exception:
+            _rollback(connection)
+            raise
+        finally:
+            connection.close()
+
+    def workbench_steers(self, public_turn_id):
+        connection = self._connect()
+        try:
+            rows = connection.execute('SELECT fact.payload_json,steer.payload_ref,steer.state,steer.input_ref,steer.decision_ref,steer.revision '
+                'FROM ai_turn_steers steer JOIN ai_turn_immutable_payloads fact ON fact.payload_ref=steer.payload_ref '
+                'WHERE steer.public_turn_id=? ORDER BY fact.rowid', (public_turn_id,)).fetchall()
+            result = []
+            for row in rows:
+                payload = _mapping_json(row[0])
+                lease = connection.execute('SELECT owner_id,generation,status,stale_after FROM ai_turn_run_leases WHERE turn_id=?',
+                    (payload['turn_id'],)).fetchone()
+                last = connection.execute('SELECT event_json FROM ai_turn_events WHERE turn_id=? ORDER BY sequence DESC LIMIT 1',
+                    (payload['turn_id'],)).fetchone()
+                active = (lease is not None and lease[0] == payload['lease']['owner_id']
+                    and lease[1] == payload['lease']['generation'] and lease[2] == 'active'
+                    and _lease_datetime(lease[3]) > datetime.now(timezone.utc)
+                    and last is not None and _mapping_json(last[0])['type'] not in {'turn.completed', 'turn.failed', 'turn.cancelled'})
+                result.append({'payload': payload, 'payload_ref': row[1], 'state': row[2],
+                    'input_ref': row[3], 'decision_ref': row[4], 'revision': row[5], 'owner_active': active})
+            return tuple(result)
+        finally:
+            connection.close()
+
+    def apply_steer_input(self, event, *, expected_sequence, run_lease, steer_ids, kind, payload):
+        turn_id = str(event.get('turn_id', ''))
+        if (run_lease is None or event.get('type') != 'turn.steer.applied'
+                or not isinstance(steer_ids, (tuple, list)) or not steer_ids
+                or len(set(steer_ids)) != len(steer_ids)):
+            raise TurnStateConflict('invalid steer input binding')
+        _immutable_payload_identity(turn_id, kind)
+        validate_governed_payload(payload)
+        connection = self._connect()
+        try:
+            connection.execute('BEGIN IMMEDIATE')
+            self._assert_run_lease(connection, turn_id, run_lease, now=datetime.now(timezone.utc).timestamp())
+            refs = []
+            for steer_id in steer_ids:
+                row = connection.execute('SELECT payload_ref,state,run_owner_id,run_generation,input_ref '
+                    'FROM ai_turn_steers WHERE steer_id=? AND turn_id=?', (steer_id, turn_id)).fetchone()
+                if (row is None or row[1] != 'queued' or row[2] != run_lease.owner_id
+                        or row[3] != run_lease.generation or row[4] is not None):
+                    raise TurnStateConflict('steer input owner or state changed')
+                refs.append(row[0])
+            if (payload.get('turn_id') != turn_id or payload.get('steer_refs') != refs
+                    or payload.get('run_owner_id') != run_lease.owner_id
+                    or payload.get('run_generation') != run_lease.generation):
+                raise TurnStateConflict('steer input evidence differs')
+            reference = self._get_or_create_immutable_payload_in_transaction(connection, turn_id, kind, payload)
+            appended = self._append_event_in_transaction(connection, _event_with_evidence_ref(event, reference),
+                expected_sequence=expected_sequence)
+            for steer_id in steer_ids:
+                connection.execute("UPDATE ai_turn_steers SET state='injected',input_ref=?,revision=revision+1 WHERE steer_id=?",
+                    (reference, steer_id))
+            connection.execute('COMMIT')
+            return ImmutablePayloadAppendReceipt(deepcopy(appended), reference)
+        except Exception:
+            _rollback(connection)
+            raise
+        finally:
+            connection.close()
+
+    def release_steer_input(self, turn_id, *, run_lease, input_ref, decision_ref):
+        if run_lease is None:
+            raise TurnStateConflict('steer decision requires its active owner')
+        connection = self._connect()
+        try:
+            connection.execute('BEGIN IMMEDIATE')
+            self._assert_run_lease(connection, turn_id, run_lease)
+            for reference in (input_ref, decision_ref):
+                if not connection.execute('SELECT 1 FROM ai_turn_immutable_payloads WHERE turn_id=? AND payload_ref=?',
+                        (turn_id, reference)).fetchone():
+                    raise TurnStateConflict('steer decision evidence is unavailable')
+            decision = connection.execute('SELECT payload_json FROM ai_turn_immutable_payloads WHERE payload_ref=?', (decision_ref,)).fetchone()
+            if _mapping_json(decision[0]).get('steer_input_ref') != input_ref:
+                raise TurnStateConflict('steer decision input differs')
+            result = connection.execute("UPDATE ai_turn_steers SET state='released',decision_ref=?,revision=revision+1 "
+                "WHERE turn_id=? AND input_ref=? AND state='injected' AND run_owner_id=? AND run_generation=?",
+                (decision_ref, turn_id, input_ref, run_lease.owner_id, run_lease.generation))
+            if not result.rowcount:
+                rows = connection.execute('SELECT state,decision_ref FROM ai_turn_steers WHERE turn_id=? AND input_ref=?',
+                    (turn_id, input_ref)).fetchall()
+                if not rows or any(row != ('released', decision_ref) for row in rows):
+                    raise TurnStateConflict('steer decision state changed')
+            connection.execute('COMMIT')
+        except Exception:
+            _rollback(connection)
+            raise
+        finally:
+            connection.close()
+
+    def retire_unconsumed_steers(self, turn_id, *, run_lease):
+        # 新运行代次关闭旧代次未消费事实，恢复流程不执行旧插话。
+        if run_lease is None:
+            raise TurnStateConflict('steer recovery requires its active owner')
+        connection = self._connect()
+        try:
+            connection.execute('BEGIN IMMEDIATE')
+            self._assert_run_lease(connection, turn_id, run_lease)
+            old = connection.execute("SELECT steer_id,input_ref FROM ai_turn_steers WHERE turn_id=? "
+                "AND state='injected' AND (run_owner_id<>? OR run_generation<>?)",
+                (turn_id, run_lease.owner_id, run_lease.generation)).fetchall()
+            if old:
+                kind = 'turn-steer-owner-recovery-' + str(run_lease.generation)
+                fact = {'turn_id': turn_id, 'run_generation': run_lease.generation, 'run_owner_id': run_lease.owner_id,
+                    'reason': 'run_owner_recovered', 'previous_inputs': [row[1] for row in old]}
+                _immutable_payload_identity(turn_id, kind)
+                validate_governed_payload(fact)
+                reference = self._get_or_create_immutable_payload_in_transaction(connection, turn_id, kind, fact)
+                for identity, _ in old:
+                    connection.execute("UPDATE ai_turn_steers SET state='released',decision_ref=?,revision=revision+1 WHERE steer_id=?",
+                        (reference, identity))
+            connection.execute("UPDATE ai_turn_steers SET state='unapplied',revision=revision+1 "
+                "WHERE turn_id=? AND state='queued' AND (run_owner_id<>? OR run_generation<>?)",
+                (turn_id, run_lease.owner_id, run_lease.generation))
+            connection.execute('COMMIT')
+        except Exception:
+            _rollback(connection)
+            raise
+        finally:
+            connection.close()
+
+    def reserve_steer_model_grant(self, turn_id, *, tool_invocation_id, invocation_key, proof, run_lease):
+        if (run_lease is None or not isinstance(proof, dict)
+                or set(proof) != {'input_ref', 'steer_ref', 'interruption_ref'}):
+            raise TurnStateConflict('invalid steer model grant')
+        connection = self._connect()
+        try:
+            connection.execute('BEGIN IMMEDIATE')
+            self._assert_run_lease(connection, turn_id, run_lease, now=datetime.now(timezone.utc).timestamp())
+            row = connection.execute("SELECT public_turn_id,run_owner_id,run_generation FROM ai_turn_steers "
+                "WHERE turn_id=? AND payload_ref=? AND input_ref=? AND state='injected'",
+                (turn_id, proof['steer_ref'], proof['input_ref'])).fetchone()
+            if row is None or row[1] != run_lease.owner_id or row[2] != run_lease.generation:
+                raise TurnStateConflict('steer model grant input owner differs')
+            facts = []
+            for reference in (proof['input_ref'], proof['interruption_ref']):
+                value = connection.execute('SELECT payload_json FROM ai_turn_immutable_payloads WHERE turn_id=? AND payload_ref=?',
+                    (turn_id, reference)).fetchone()
+                if value is None:
+                    raise TurnStateConflict('steer model grant proof is unavailable')
+                facts.append(_mapping_json(value[0]))
+            source, interruption = facts
+            if (proof['steer_ref'] not in source.get('steer_refs', [])
+                    or source.get('run_generation') != run_lease.generation
+                    or source.get('run_owner_id') != run_lease.owner_id
+                    or source.get('model_invocation_key') != invocation_key
+                    or source.get('interruption_ref') != proof['interruption_ref']
+                    or interruption.get('run_generation') != run_lease.generation
+                    or interruption.get('run_owner_id') != run_lease.owner_id
+                    or interruption.get('turn_id') != turn_id or interruption.get('provider_closed') is not True):
+                raise TurnStateConflict('steer model grant proof differs')
+            events = [_mapping_json(item[0]) for item in connection.execute(
+                'SELECT event_json FROM ai_turn_events WHERE turn_id=? ORDER BY sequence', (turn_id,))]
+            origin = interruption.get('model_request_id')
+            calls = [event for event in events if event.get('correlation', {}).get('model_request_id') == origin]
+            if (not any(event['type'] == 'model.requested' and event['correlation']['tool_call_id'] == tool_invocation_id
+                    and event['data'].get('model_call_purpose') == 'primary' for event in calls)
+                    or not any(event['type'] == 'model.failed' for event in calls)):
+                raise TurnStateConflict('steer model grant original invocation is not terminal')
+            dispatched = [event['data']['payload_ref'] for event in calls if event['type'] == 'model.attempt.dispatched']
+            terminals = [event['data']['receipt_ref'] for event in calls if event['type'] == 'model.attempt.terminal']
+            if not dispatched or len(dispatched) != len(terminals) or interruption.get('wire_receipt_refs') != terminals:
+                raise TurnStateConflict('steer model grant wire settlement is incomplete')
+            for reference in terminals:
+                value = connection.execute('SELECT payload_json FROM ai_turn_payloads WHERE payload_ref=?', (reference,)).fetchone()
+                if value is None:
+                    raise TurnStateConflict('steer model grant wire receipt is unavailable')
+                receipt = validate_model_wire_attempt_receipt(_mapping_json(value[0]))
+                if receipt['turn_id'] != turn_id or receipt['model_request_id'] != origin:
+                    raise TurnStateConflict('steer model grant wire receipt owner differs')
+            if connection.execute('SELECT COUNT(*) FROM ai_turn_steer_model_grants WHERE public_turn_id=?',
+                    (row[0],)).fetchone()[0] >= 5:
+                raise TurnStateConflict('steer model grants exhausted')
+            if connection.execute('SELECT 1 FROM ai_turn_steer_model_grants WHERE (public_turn_id=? AND steer_ref=?) '
+                    'OR (turn_id=? AND input_ref=?)', (row[0], proof['steer_ref'], turn_id, proof['input_ref'])).fetchone():
+                raise TurnStateConflict('steer model grant was already consumed')
+            connection.execute('INSERT INTO ai_turn_steer_model_grants(turn_id,tool_invocation_id,invocation_key,public_turn_id,steer_ref,input_ref,interruption_ref) '
+                'VALUES(?,?,?,?,?,?,?)', (turn_id, tool_invocation_id, invocation_key, row[0],
+                    proof['steer_ref'], proof['input_ref'], proof['interruption_ref']))
+            connection.execute('COMMIT')
+        except Exception:
+            _rollback(connection)
+            raise
+        finally:
+            connection.close()
+
+    def steer_model_grants(self, turn_id):
+        connection = self._connect()
+        try:
+            rows = connection.execute('SELECT tool_invocation_id,invocation_key,public_turn_id,steer_ref,input_ref,interruption_ref,model_request_id '
+                'FROM ai_turn_steer_model_grants WHERE turn_id=? ORDER BY rowid', (turn_id,)).fetchall()
+            return tuple(dict(zip(('tool_invocation_id', 'invocation_key', 'public_turn_id', 'steer_ref', 'input_ref',
+                'interruption_ref', 'model_request_id'), row)) for row in rows)
+        finally:
+            connection.close()
+
+    def model_attempt_bindings(self, turn_id):
+        from .product_snapshot import read_model_attempt_bindings
+        connection = self._connect()
+        try:
+            connection.execute('BEGIN')
+            return read_model_attempt_bindings(connection, turn_id)
+        finally:
+            connection.close()
+
+    def bind_steer_model_grant(self, turn_id, *, tool_invocation_id, invocation_key, model_request_id, run_lease):
+        connection = self._connect()
+        try:
+            connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute('SELECT model_request_id FROM ai_turn_steer_model_grants '
+                'WHERE turn_id=? AND tool_invocation_id=? AND invocation_key=?',
+                (turn_id, tool_invocation_id, invocation_key)).fetchone()
+            if row is None:
+                connection.execute('COMMIT')
+                return
+            if run_lease is None:
+                raise TurnStateConflict('steer model grant requires its active owner')
+            self._assert_run_lease(connection, turn_id, run_lease, now=datetime.now(timezone.utc).timestamp())
+            events = [_mapping_json(value[0]) for value in connection.execute(
+                'SELECT event_json FROM ai_turn_events WHERE turn_id=? ORDER BY sequence', (turn_id,))]
+            if not any(event['type'] == 'model.requested' and event['correlation']['model_request_id'] == model_request_id
+                    and event['correlation']['tool_call_id'] == tool_invocation_id
+                    and event['data'].get('model_call_purpose') == 'primary' for event in events):
+                raise TurnStateConflict('steer model grant invocation is unavailable')
+            if row[0] is not None and row[0] != model_request_id:
+                raise TurnStateConflict('steer model grant invocation already bound')
+            connection.execute('UPDATE ai_turn_steer_model_grants SET model_request_id=? '
+                'WHERE turn_id=? AND tool_invocation_id=? AND invocation_key=?',
+                (model_request_id, turn_id, tool_invocation_id, invocation_key))
+            connection.execute('COMMIT')
         except Exception:
             _rollback(connection)
             raise
@@ -3123,6 +3558,9 @@ def _initialize_schema(connection: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS ai_turn_payloads(payload_ref TEXT PRIMARY KEY, turn_id TEXT NOT NULL REFERENCES ai_turns(turn_id), kind TEXT NOT NULL, payload_json TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS ai_turn_immutable_payloads(payload_ref TEXT PRIMARY KEY, turn_id TEXT NOT NULL REFERENCES ai_turns(turn_id), kind TEXT NOT NULL, payload_json TEXT NOT NULL, UNIQUE(turn_id, kind));
         CREATE TABLE IF NOT EXISTS ai_turn_pending(turn_id TEXT PRIMARY KEY REFERENCES ai_turns(turn_id), decision_json TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS ai_turn_steers(steer_id TEXT PRIMARY KEY, turn_id TEXT NOT NULL REFERENCES ai_turns(turn_id), public_turn_id TEXT NOT NULL, target_turn_id TEXT NOT NULL, submission_key TEXT NOT NULL, payload_ref TEXT NOT NULL REFERENCES ai_turn_immutable_payloads(payload_ref), event_id TEXT NOT NULL, run_owner_id TEXT NOT NULL, run_generation INTEGER NOT NULL, state TEXT NOT NULL CHECK(state IN ('queued','injected','released','amended','unapplied')), input_ref TEXT NULL, decision_ref TEXT NULL, revision INTEGER NOT NULL CHECK(revision>=1), UNIQUE(public_turn_id,submission_key));
+        CREATE INDEX IF NOT EXISTS ai_turn_steers_turn_state ON ai_turn_steers(turn_id,state);
+        CREATE TABLE IF NOT EXISTS ai_turn_steer_model_grants(turn_id TEXT NOT NULL REFERENCES ai_turns(turn_id),tool_invocation_id TEXT NOT NULL,invocation_key TEXT NOT NULL,public_turn_id TEXT NOT NULL,steer_ref TEXT NOT NULL REFERENCES ai_turn_immutable_payloads(payload_ref),input_ref TEXT NOT NULL REFERENCES ai_turn_immutable_payloads(payload_ref),interruption_ref TEXT NOT NULL REFERENCES ai_turn_immutable_payloads(payload_ref),model_request_id TEXT NULL,PRIMARY KEY(turn_id,tool_invocation_id,invocation_key),UNIQUE(public_turn_id,steer_ref));
         CREATE TABLE IF NOT EXISTS ai_expert_job_waits(turn_id TEXT PRIMARY KEY REFERENCES ai_turns(turn_id), job_ref TEXT NOT NULL, admission_job_revision INTEGER NOT NULL CHECK(admission_job_revision>=1), snapshot_ref TEXT NOT NULL REFERENCES ai_turn_immutable_payloads(payload_ref), status TEXT NOT NULL CHECK(status IN ('waiting','wake_enqueued','terminal_observed')), terminal_job_revision INTEGER NULL CHECK(terminal_job_revision>=admission_job_revision));
         CREATE TABLE IF NOT EXISTS ai_turn_actions(idempotency_key TEXT PRIMARY KEY, turn_id TEXT NOT NULL REFERENCES ai_turns(turn_id), action_json TEXT NOT NULL, receipt_json TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS ai_turn_run_generations(turn_id TEXT PRIMARY KEY REFERENCES ai_turns(turn_id), generation INTEGER NOT NULL);

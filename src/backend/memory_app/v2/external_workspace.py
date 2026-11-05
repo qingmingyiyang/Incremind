@@ -243,16 +243,19 @@ def task_path_identity(path: Path, *, directory=False) -> list[int]:
     return [value.st_dev, value.st_ino, value.st_mode, value.st_size, value.st_mtime_ns]
 
 
-def verify_task_material(path: Path, expected: bytes) -> list[int]:
+def verify_task_material(path: Path, expected: bytes, *, expected_identity=None, require_single_link=False) -> list[int]:
     """有界读取已知材料，同时核路径和实际打开文件的身份。"""
     identity = task_path_identity(path)
-    if identity[3] != len(expected):
+    if (identity[3] != len(expected) or type(require_single_link) is not bool
+            or expected_identity is not None and identity != list(expected_identity)):
         _invalid()
     flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0)
     descriptor = os.open(path, flags)
     try:
         def current_identity():
             value = os.fstat(descriptor)
+            if require_single_link and value.st_nlink != 1:
+                _invalid()
             return [value.st_dev, value.st_ino, value.st_mode, value.st_size, value.st_mtime_ns]
         if current_identity() != identity:
             _invalid()

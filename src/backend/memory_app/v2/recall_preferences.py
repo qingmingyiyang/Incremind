@@ -44,7 +44,8 @@ def restore_document_preference(records, documents, project, document_id, *,
     return {'document_id': document_id, 'recall_state': 'normal',
             'recall_preference_revision': updated.revision}
 
-def set_preference(records, scope, recognition_id, *, recognition_revision, preference_revision, state):
+def set_preference(records, scope, recognition_id, *, recognition_revision, preference_revision, state, _audit_writer=None,
+                   _usage_writer=None):
     if not isinstance(state, str) or state not in {"normal", "cooled", "forgotten"}:
         raise RecognitionError("recall state is invalid")
     for revision in (recognition_revision, preference_revision):
@@ -59,12 +60,17 @@ def set_preference(records, scope, recognition_id, *, recognition_revision, pref
         updated = tx.put(COLLECTION, recognition_id, {"id": recognition_id, "user_id": scope.user_id,
             "project_id": scope.project_id, "state": state, "by": "user",
             "changed_at": datetime.now(timezone.utc).isoformat()}, expected_revision=preference_revision)
+        if _audit_writer is not None:
+            _audit_writer(tx, current, updated)
         tx.commit()
     if state == 'forgotten' and (previous is None or previous.payload.get('state') != 'forgotten'):
         from .stats import record_activity
         record_activity(records, 'forget', scope.project_id, recognition_id,
                         event_id='forget-' + recognition_id + '-' + str(updated.revision))
     if state == "normal" and previous is not None and previous.payload.get("state") in {"forgotten", "cooled"}:
-        from .usage import safe_record_usage
-        safe_record_usage(records, "insight", recognition_id, scope.project_id, 1.0, reset=True)
+        if _usage_writer is not None:
+            _usage_writer()
+        else:
+            from .usage import safe_record_usage
+            safe_record_usage(records, "insight", recognition_id, scope.project_id, 1.0, reset=True)
     return {"recall_state": state, "recall_preference_revision": updated.revision}

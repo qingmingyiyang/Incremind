@@ -34,7 +34,7 @@ def _inherit_scene(domains, row, project_id):
     assign_scene(records, "document", document_id, project_id, scene["scene"], if_absent=True)
 
 
-async def process_and_confirm(domains, item_id, project_id, *, on_error=None) -> dict:
+async def process_and_confirm(domains, item_id, project_id, *, on_error=None, on_original=None) -> dict:
     """Process once, confirm once, and recover interrupted admission on reentry."""
     project_id = _project(project_id)
     row = domains.items.item_for(item_id, project_id)
@@ -49,6 +49,9 @@ async def process_and_confirm(domains, item_id, project_id, *, on_error=None) ->
                 "invalid_item_state", "record_revision_conflict", "processing_run_changed",
             ):
                 raise
+        finally:
+            if on_original is not None:
+                on_original()
         row = domains.items.item_for(item_id, project_id)
     if row.payload.get("status") in {"ready", "confirming"}:
         revision = (row.payload.get("reviewed_revision")

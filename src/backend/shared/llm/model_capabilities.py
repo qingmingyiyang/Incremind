@@ -28,15 +28,24 @@ class ModelCapabilities:
                 or type(self.developer_role) is not bool or type(self.stream_usage) is not bool
                 or type(self.background_resume) is not bool
                 or self.prices is not None and not isinstance(self.prices, ModelPrices)
-                or any(level not in {"minimal", "low", "medium", "high", "xhigh", "max"}
+                or any(level not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
                        for level in self.reasoning_efforts)):
             raise ValueError("invalid model capability declaration")
 
 
 def resolve_model_capabilities(provider: str, model: str, base_url: str) -> ModelCapabilities:
+    if is_official_terra(provider, model, base_url):
+        return ModelCapabilities(max_tokens_field='max_completion_tokens',
+            reasoning_efforts=('none', 'low', 'medium', 'high', 'xhigh', 'max'))
     # Provider aliases and a model name do not establish proxy capabilities.
     if provider.strip().lower() in {"openai", "deepseek"} and urlsplit(base_url).hostname == "api.deepseek.com":
         return ModelCapabilities(structured_modes=("json_object", "prompt"),
             developer_role=False, reasoning_efforts=("minimal", "low", "medium", "high", "xhigh", "max"),
             prices=official_prices(provider, model, base_url))
     return ModelCapabilities()
+
+
+def is_official_terra(provider: str, model: str, base_url: str) -> bool:
+    return (provider.strip().lower() == 'openai'
+        and model.removeprefix('openai/') == 'gpt-6.1-terra'
+        and base_url.rstrip('/') == 'https://api.openai.com/v1')

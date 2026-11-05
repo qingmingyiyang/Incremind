@@ -8,8 +8,10 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from threading import RLock
 
 from .vault_backup_restore import (
+    _native_io_path,
     compare_vault_to_backup,
     fingerprint_vault_root,
     fingerprint_vault_restore_source,
@@ -20,6 +22,7 @@ from .vault_backup_restore import (
 
 _SAFE_OPERATION_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,95}$")
 _SCHEMA_VERSION = "1.0.0"
+_JOURNAL_IO_LOCK = RLock()
 
 
 class VaultOperationalRecoveryError(ValueError):
@@ -86,6 +89,7 @@ def prepare_vault_recovery(
         file_count=snapshot.file_count,
     )
     with _OperationLease(operation, operations):
+        _require_no_pending_runtime_restore(operations, operation_id)
         operation_path = operations / f"{operation_id}.json"
         if operation_path.exists() or operation_path.is_symlink():
             existing = load_vault_recovery_operation(
@@ -248,7 +252,7 @@ def load_vault_recovery_operation(*, operations_root: Path, operation_id: str) -
     if path.is_symlink():
         raise VaultOperationalRecoveryError("Vault recovery operation cannot be a symlink")
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = _read_operation_payload(path)
         operation = VaultRecoveryOperation(**payload)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError) as error:
         raise VaultOperationalRecoveryError("Vault recovery operation is unreadable") from error
@@ -367,9 +371,9 @@ def _reconcile_rollback(operation: VaultRecoveryOperation, operations: Path) -> 
 
 
 class _OperationLease:
-    def __init__(self, operation: VaultRecoveryOperation, operations: Path) -> None:
+    def __init__(self, operation: VaultRecoveryOperation, operations: Path, *, lock_root: Path | None = None) -> None:
         self._operation = operation
-        self._path = Path(operation.active_root).parent / ".chriptmas-vault-recovery.lock"
+        self._path = (lock_root or Path(operation.active_root).parent) / ".chriptmas-vault-recovery.lock"
         self._operations = operations
 
     def __enter__(self) -> None:
@@ -439,6 +443,11 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _write_operation(operations: Path, operation: VaultRecoveryOperation) -> None:
+    with _JOURNAL_IO_LOCK:
+        _write_operation_unlocked(operations, operation)
+
+
+def _write_operation_unlocked(operations: Path, operation: VaultRecoveryOperation) -> None:
     operations.mkdir(parents=True, exist_ok=True)
     path = operations / f"{operation.operation_id}.json"
     descriptor, temporary = tempfile.mkstemp(prefix=".vault-operation-", suffix=".tmp", dir=operations)
@@ -451,6 +460,57 @@ def _write_operation(operations: Path, operation: VaultRecoveryOperation) -> Non
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def _read_operation_payload(path: Path):
+    with _JOURNAL_IO_LOCK:
+        return _read_operation_payload_unlocked(path)
+
+
+def _read_operation_payload_unlocked(path: Path):
+    if os.name != "nt":
+        with path.open(encoding="utf8") as stream:
+            return json.load(stream)
+    import msvcrt
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong,
+                                   ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p]
+    kernel32.CreateFileW.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+    # 状态回读允许原子替换同一记录，仍由独立操作租约串行控制写入。
+    handle = kernel32.CreateFileW(_native_io_path(path), 0x80000000, 0x7, None, 3, 0x00200000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        code = ctypes.get_last_error()
+        if code in {2, 3}:
+            raise FileNotFoundError(code, "recovery journal is absent")
+        raise OSError(code, "recovery journal read failed")
+    try:
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+    except OSError:
+        kernel32.CloseHandle(handle)
+        raise
+    with os.fdopen(descriptor, "r", encoding="utf8") as stream:
+        return json.load(stream)
+
+
+def _require_no_pending_runtime_restore(operations: Path, operation_id: str) -> None:
+    for path in operations.glob("*.json"):
+        if path.stem == operation_id:
+            continue
+        if path.is_symlink():
+            raise VaultOperationalRecoveryError("recovery operation entry is unsafe")
+        try:
+            payload = _read_operation_payload(path)
+        except (OSError, ValueError) as error:
+            raise VaultOperationalRecoveryError("recovery operation entry is unreadable") from error
+        if not isinstance(payload, dict):
+            raise VaultOperationalRecoveryError("recovery operation entry is invalid")
+        if "kind" in payload:
+            if payload["kind"] != "runtime":
+                raise VaultOperationalRecoveryError("recovery operation kind is invalid")
+            if payload.get("state") not in {"adopted", "failed"}:
+                raise VaultOperationalRecoveryConflict("another runtime recovery operation is pending")
 
 
 def _replace_operation(operation: VaultRecoveryOperation, **changes: object) -> VaultRecoveryOperation:

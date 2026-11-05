@@ -8,6 +8,7 @@ import re
 import time
 from functools import partial
 from .v2.policies import get, override, version
+from .v2.policies.compose import evidence_contract_version
 from .v2.policies.pipelines import versions_for_turn
 from .v2.policies.types import RankInput, ScopeInput
 from .v2.policies.scope import prefer_scene_ties, scene_priority
@@ -20,6 +21,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from starlette.concurrency import run_in_threadpool
 from .model_config import ModelConfigurationError
+from .model_billing_errors import model_billing_code, model_billing_status
 from .structured_generation import AskOutput
 from .answer_proof import REVIEW_KEY, review_messages, review_input_tokens, select_answer_input, quote_answer_messages
 from .v2.answer_evidence import EvidenceFirstAskOutput, SourceQuoteExtraction, verified_quote_bundle, answer_response_model, accept_evidence_structure, final_response_model, render_coverage, EvidencePartitionOutput, build_evidence_catalog, build_partition_messages, validate_partition, partition_output_tokens, render_partition, GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, FirstFactsOutput, ReviewedScopeAnswerOutput, FirstReferencedFactsOutput, ReviewedReferencedScopeOutput, FocusedReferencedFactsOutput, FocusedReviewedScopeOutput, ReconstructedReviewedOutput, first_fact_empty, first_fact_partition, validate_first_facts, reviewed_scope_answer, first_facts_output_minimum, grounded_usage_answer, grounded_scope_answer, grounded_output_minimum, grounded_output_limit, render_grounded_answer
@@ -41,7 +43,7 @@ from .v2.budget import WINDOW_SCAN_CHARS, structured_prompt_overhead, ask_instru
 from backend.recognition import RecognitionError, RecognitionConflict, WorkScope
 from backend.memory_app.source_egress import SourceEgressService
 from backend.memory_app.document_visibility import LegacyDocumentVisibility
-from core.search_and_recall.evidence_windows import EvidenceWindow, select_evidence_windows
+from core.search_and_recall.evidence_windows import EvidenceSelection, EvidenceWindow, select_evidence_windows
 from core.storage_provider.observability import stage, current_observation
 from .workspace_contracts import _COLLECTION, _project, _text, _now, _ASK_PART_KEYS, _empty_ask_context
 from .workspace_generation import _strip_fence
@@ -160,23 +162,124 @@ def _documents_forgotten(records, document_ids):
 
 
 class WorkspaceQuery:
-    def __init__(self, records, documents, source_store, models, service, *, read_only=False, source_index_records=None):
+    def __init__(self, records, documents, source_store, models, service, *, read_only=False, source_index_records=None,
+                 profile_owner=None, receipt_records=None, execution_owner=None, origin_admission=None,
+                 origin_dispatcher=None, source_readonly=False):
         self.records = records
         self.documents = documents
         self.source_store = source_store
         self.models = models
         self.service = service
+        self.profile_owner = self if profile_owner is None else profile_owner
+        self.receipt_records = records if receipt_records is None else receipt_records
+        self.execution_owner = self if execution_owner is None else execution_owner
+        self.origin_admission, self.origin_dispatcher = origin_admission, origin_dispatcher
+        self.source_readonly = source_readonly
+        self.offline = read_only and not source_readonly
+        if origin_admission is not None and (not read_only
+                or self.execution_owner is self or self.profile_owner is not self.execution_owner
+                or self.models is not self.execution_owner.models
+                or self.receipt_records is not self.execution_owner.records):
+            raise RecognitionConflict('material_origin_execution_owner_changed')
         self.ask_previews = OrderedDict()
         self.ask_preview_lock = RLock()
         from .v2.retrieval_index import RetrievalIndex
         self.retrieval_index = RetrievalIndex(self, read_only=read_only, source_records=source_index_records)
         self.retrieval_index.bootstrap()
 
+    def validate_retrieval_origin(self):
+        if self.origin_admission is not None:
+            self.origin_admission.validate_execution_owner()
+            self.origin_admission.lease.validate(self.origin_admission.registry, self.origin_admission.actor)
+            if self.models is not self.origin_admission.application.state.recognition_models:
+                raise RecognitionConflict('material_origin_model_owner_changed')
+
+    def cache_namespace(self, namespace):
+        if self.origin_admission is None:
+            return namespace
+        self.validate_retrieval_origin()
+        return json.dumps({'namespace': namespace, 'origin': self.origin_admission.lease.payload(),
+            'execution': self.origin_admission.personal}, sort_keys=True, ensure_ascii=False)
+
     def local_reader(self):
         """保持原查询独立，复用相同资料入口建立本机只读查询。"""
-        return WorkspaceQuery(self.records, self.documents, self.source_store,
+        ownership = (dict(profile_owner=self.profile_owner, receipt_records=self.receipt_records,
+            execution_owner=self.execution_owner, origin_admission=self.origin_admission,
+            origin_dispatcher=self.origin_dispatcher)
+            if self.origin_admission is not None else {})
+        reader = WorkspaceQuery(self.records, self.documents, self.source_store,
             self.models, self.service, read_only=True,
-            source_index_records=self.retrieval_index.source_records)
+            source_index_records=self.retrieval_index.source_records, **ownership)
+        if self.origin_admission is not None:
+            reader.origin_factory = self.origin_factory
+            reader.source_namespace = self.source_namespace
+            reader.material_owner = self.material_owner
+            reader.answer_turns = self.answer_turns
+        return reader
+
+    def _query_for_native_request(self, native_request):
+        if native_request is None:
+            return self
+        marked = any(isinstance(ref.get('uri'), str) and ref['uri'].startswith('crp://material-origin/')
+            for ref in native_request['input']['refs'])
+        if self.origin_admission is None and self.origin_dispatcher is None:
+            if marked:
+                raise RecognitionConflict('material_origin_dispatcher_unavailable')
+            return self
+        from .v2.material_origins import ORIGIN_KIND
+        store = self.execution_owner.answer_turns.application.state.ai_turn_store
+        bundle = store.restore_admission(native_request)
+        shared = bundle is not None and any(item.kind == ORIGIN_KIND for item in bundle.items)
+        if not shared:
+            if marked or self.origin_admission is not None:
+                raise RecognitionConflict('material_origin_binding_missing')
+            return self
+        if not marked:
+            raise RecognitionConflict('material_origin_binding_missing')
+        if self.origin_admission is not None:
+            self.origin_admission.restore(native_request)
+            return self
+        if self.origin_dispatcher is None:
+            raise RecognitionConflict('material_origin_dispatcher_unavailable')
+        query = self.origin_dispatcher(native_request)
+        if (not isinstance(query, WorkspaceQuery) or query is self or query.execution_owner is not self
+                or query.origin_admission is None):
+            raise RecognitionConflict('material_origin_execution_owner_changed')
+        return query._query_for_native_request(native_request)
+
+    def _validate_material_model_owner(self, models):
+        if self.origin_admission is None:
+            return
+        self.validate_retrieval_origin()
+        if models is self.models:
+            return
+        from .model_config import _AuxiliaryGenerationConfiguration
+        if not isinstance(models, _AuxiliaryGenerationConfiguration) or models.owner is not self.models:
+            raise RecognitionConflict('material_origin_model_owner_changed')
+        models._validate_binding()
+
+    def freeze_materials(self, models, project, materials, *, local_only=False, purpose='generation', native_request=None):
+        query = self._query_for_native_request(native_request)
+        if query is not self:
+            return query.freeze_materials(models, project, materials, local_only=local_only,
+                purpose=purpose, native_request=native_request)
+        if self.origin_admission is None:
+            from .v2.privacy import freeze_turn_materials
+            allowed, privacy = freeze_turn_materials(self.records, models, project, materials,
+                authority=SourceEgressService(self.records), local_only=local_only, purpose=purpose)
+            return allowed, privacy, None
+        if native_request is None:
+            raise RecognitionConflict('material_origin_binding_missing')
+        self._validate_material_model_owner(models)
+        from .v2.material_origin_privacy import freeze_origin_materials
+        origins = self.origin_admission.restore(native_request)
+        qualified = []
+        for material in materials:
+            owners = [owner for owner in (origins.shared, origins.profile) if owner.project_id == material['project_id']]
+            if len(owners) != 1 or material.get('namespace', owners[0].namespace) != owners[0].namespace:
+                raise RecognitionConflict('material_origin_scope_changed')
+            qualified.append({**material, 'namespace': owners[0].namespace})
+        return freeze_origin_materials(origins, models, project, qualified, local_only=local_only, purpose=purpose)
 
     def query_entries(self, project_id: str, *, selected: list[dict] | None = None, prepared=None) -> list[dict]:
         """Use current shared Documents and published Sources for both search and ask."""
@@ -241,8 +344,11 @@ class WorkspaceQuery:
                    (source for identity in selected_sources
                     if (source := self.source_store.read("sources", identity)) is not None))
         for source in sources:
+            from backend.recognition.material_logical_scope import material_scope_visible
             source_id = str(source.get("id") or "")
             if (not source_id or source.get("project_id", "default") != project_id
+                    or not material_scope_visible(self.records, material_type='original_source', identity=source_id,
+                        project_id=project_id, namespace_id=self.documents.namespace_id)
                     or source_id in pending_sources
                     or (source_id in archived_sources and source_id not in linked_sources)
                     or (source_id in linked_sources and source.get("identity_method") == "workspace_confirmation")):
@@ -283,21 +389,75 @@ class WorkspaceQuery:
         return {"items": items}
 
     def freeze_answer_privacy(self, project, *, local_only):
+        if self.origin_admission is not None:
+            self._validate_material_model_owner(self.models)
+            from .v2.material_origin_admission import BoundMaterialOrigins
+            from .v2.material_origin_privacy import freeze_origin_materials
+            origins = BoundMaterialOrigins(self.origin_admission, self.origin_admission.lease, {})
+            return freeze_origin_materials(origins, self.models, project, [], local_only=local_only)[1]
         from .v2.privacy import freeze_turn_materials
         _, privacy = freeze_turn_materials(self.records, self.models, project, (),
             authority=SourceEgressService(self.records), local_only=local_only)
         return privacy
 
     def validate_answer_request(self, models, request):
+        query = self._query_for_native_request(request)
+        if query is not self:
+            return query.validate_answer_request(models, request)
         from .v2.turn_requests import validate_frozen_inputs
-        validate_frozen_inputs(self.records, models, request, query=self)
+        if self.origin_admission is None:
+            validate_frozen_inputs(self.records, models, request, query=self)
+        else:
+            from .v2.material_origin_privacy import validate_origin_privacy
+            from .v2.part_context import validate_bound_context
+            self._validate_material_model_owner(models)
+            origins = self.origin_admission.restore(request)
+            validate_origin_privacy(origins, models, request['scope']['project_id'], request['privacy'])
+            validate_bound_context(self.execution_owner.records, models, request, self)
+        constraints = getattr(self, 'project_constraint_input', None)
+        if constraints is not None:
+            constraints.validate(request)
+
+    def prepare_model_material_proof(self, models, request, logical_invocation, messages, *, invocation_key=None):
+        query = self._query_for_native_request(request)
+        if query is not self:
+            return query.prepare_model_material_proof(models, request, logical_invocation, messages,
+                invocation_key=invocation_key)
+        if self.origin_admission is None:
+            return None
+        self._validate_material_model_owner(models)
+        from .v2.model_material_coverage import build_primary_material_proof
+        return build_primary_material_proof(self, request, logical_invocation, messages, invocation_key=invocation_key)
+
+    def validate_model_material_proof(self, models, material_proof, *, native_request, messages,
+            logical_invocation=None, input_ref=None, invocation_key=None):
+        query = self._query_for_native_request(native_request)
+        if query is not self:
+            return query.validate_model_material_proof(models, material_proof, native_request=native_request,
+                messages=messages, logical_invocation=logical_invocation, input_ref=input_ref, invocation_key=invocation_key)
+        if self.origin_admission is None:
+            if material_proof is not None:
+                raise RecognitionConflict('material_origin_binding_missing')
+            return
+        from .v2.model_material_coverage import validate_primary_material_proof
+        validate_primary_material_proof(self, models, material_proof, native_request=native_request,
+            messages=messages, logical_invocation=logical_invocation, input_ref=input_ref, invocation_key=invocation_key)
 
     def ask_target(self) -> dict:
-        public = getattr(self.models, "public", None)
-        settings = public() if callable(public) else {}
-        generation = settings.get("generation", {}) if isinstance(settings, dict) else {}
+        narrow = getattr(self.models, 'public_for_purpose', None)
+        lock = getattr(self.models, '_lock', None)
+        mode_reader = getattr(self.models, 'generation_mode', None)
+        if callable(narrow) and lock is not None and callable(mode_reader):
+            # 与旧完整投影相同的一把锁内冻结用途及模式，不跨调用保留授权。
+            with lock:
+                generation = narrow('generation')
+                mode = mode_reader()
+        else:
+            public = getattr(self.models, "public", None)
+            settings = public() if callable(public) else {}
+            generation = settings.get("generation", {}) if isinstance(settings, dict) else {}
+            mode = settings.get("generation_mode", {}) if isinstance(settings, dict) else {}
         generation = generation if isinstance(generation, dict) else {}
-        mode = settings.get("generation_mode", {}) if isinstance(settings, dict) else {}
         mode = mode if isinstance(mode, dict) else {}
         base_url = str(generation.get("base_url") or "")
         try:
@@ -314,26 +474,78 @@ class WorkspaceQuery:
             "mode_revision": mode.get("revision") or 0,
             "execution_location": location,
             **({"subscription_binding": generation["subscription_binding"]} if generation.get("subscription_binding") else {}),
+            **({'server_model_binding': dict(generation['server_model_binding'])}
+               if generation.get('server_model_binding') is not None else {}),
         }
 
     @with_question_vectors
-    def collect_candidates(self, project_id: str, question: str, *, scene=None, situation=None, local_only=False, rank_reference=None, external_client=None) -> dict:
+    def collect_candidates(self, project_id: str, question: str, *, scene=None, situation=None, local_only=False,
+                           rank_reference=None, external_client=None, external_authority=None) -> dict:
         if type(local_only) is not bool:
             raise ValueError('local_only_must_be_bool')
         if local_only and not self.retrieval_index.read_only:
             raise ValueError('local_coverage_requires_readonly_index')
+        if external_authority is not None and (not callable(external_authority)
+                or external_client is None or self.origin_admission is None):
+            raise RecognitionError('external_agent_remote_blocked')
         def validate_external():
-            if external_client is not None and not external_egress_allowed(self.records, project_id, external_client):
+            allowed = external_egress_allowed if external_authority is None else external_authority
+            if external_client is not None and not allowed(self.records, project_id, external_client):
                 raise RecognitionError('external_agent_remote_blocked')
         validate_external()
         selections = versions_for_turn('project.answer' if external_client is None else 'external.context')
         entrypoint = partial(self._collect_candidates, local_only=local_only,
-            rank_reference=rank_reference, external_client=external_client)
+            rank_reference=rank_reference, external_client=external_client, external_authority=external_authority)
         with override(**selections), stage("build_entries"):
             result = get('retrieve')(entrypoint, project_id, question, scene=scene,
                                      **({'situation': situation} if situation is not None else {}))
         validate_external()
         return {**result, 'policy_versions': selections}
+
+    @with_question_vectors
+    def collect_initial_candidates(self, project_id, question, *, scene=None, policy_versions=None):
+        """Candidate-only upper-layer probe through the existing retrieval owner."""
+        selections = policy_versions or versions_for_turn('project.answer')
+        with override(**selections), stage('build_entries'):
+            policy = get('retrieve')
+            if not getattr(policy, 'initial_memory_probe', False):
+                raise ValueError('initial_memory_policy_required')
+            layers = policy(None, operation='initial_layers')
+            result = policy(partial(self._collect_candidates, only_layers=layers),
+                            project_id, question, scene=scene)
+        return {**result, 'policy_versions': selections,
+                '_initial_binding': {'project': project_id, 'question': question, 'scene': scene}}
+
+    def validate_initial_candidates(self, project_id, question, initial, *, scene=None):
+        """A request-local cached probe retains the same current source/scene authority."""
+        if initial.get('_initial_binding') != {'project': project_id, 'question': question, 'scene': scene}:
+            raise RecognitionConflict('initial_memory_binding_changed')
+        rows = initial['candidates']
+        self.validate_ask_plan({'project_id': project_id, 'scope': WorkScope('local-user', project_id),
+                               'target': self.ask_target(), 'chosen': rows})
+        from .v2.reranking import _validate_scene
+        scope_policy = get('scope', version=initial['policy_versions']['scope'])
+        documents = (self.records.list_matching('documents', project_id=project_id)
+                     if any(row['kind'] == 'source' for row in rows) else ())
+        for row in rows:
+            _validate_scene(self, project_id, scene, row, scope_policy, documents)
+
+    @with_question_vectors
+    def collect_initial_remainder(self, project_id, question, initial, *, scene=None):
+        """Complete an unchanged probe query at L0 without recollecting its upper layers."""
+        self.validate_initial_candidates(project_id, question, initial, scene=scene)
+        selections = initial['policy_versions']
+        with override(**selections), stage('build_entries'):
+            policy = get('retrieve')
+            if not getattr(policy, 'initial_memory_probe', False):
+                raise ValueError('initial_memory_policy_required')
+            lower = policy(partial(self._collect_candidates, only_layers=('L0',),
+                                   rank_reference=initial.get('rank_reference')),
+                           project_id, question, scene=scene)
+            from .v2.multi_query import fuse_candidates
+            candidates = fuse_candidates([initial['candidates'], lower['candidates']])
+        return {**initial, 'candidates': candidates,
+                'excluded_sources': [*initial['excluded_sources'], *lower['excluded_sources']][:20]}
 
     @with_question_vectors
     def collect_lower_candidates(self, project_id: str, question: str, *, scene=None,
@@ -379,7 +591,9 @@ class WorkspaceQuery:
             prepared.append(row)
         return get('retrieve')(None, prepared, time_scope, time_documents, operation='time_candidates')
 
-    def _collect_candidates(self, project_id: str, question: str, *, scene=None, method_query=None, situation=None, time_query=None, local_only=False, rank_reference=None, only_layers=None, external_client=None) -> dict:
+    def _collect_candidates(self, project_id: str, question: str, *, scene=None, method_query=None, situation=None,
+                            time_query=None, local_only=False, rank_reference=None, only_layers=None,
+                            external_client=None, external_authority=None) -> dict:
         if local_only and not self.retrieval_index.read_only:
             raise ValueError('local_coverage_requires_readonly_index')
         scope = WorkScope("local-user", project_id)
@@ -483,7 +697,35 @@ class WorkspaceQuery:
             for span_slot, (layer, start, end, coordinates, chunks) in enumerate(spans):
                 if only_layers is not None and layer not in only_layers:
                     continue
-                if layer == "L2" and dynamic_policy is None:
+                vectors = {}
+                literal_selection = None
+                if (getattr(get('retrieve'), 'raw_evidence_probe', False)
+                        and entry['kind'] == 'source' and layer == 'L0'
+                        and coordinates == 'source_content_v1' and start == 0
+                        and 0 < end <= WINDOW_SCAN_CHARS):
+                    # Plain copular notes need not start with the entity name.
+                    # Retain complete related originals under the new candidate;
+                    # only the aggregate contract establishes literal support.
+                    # Keep the default dialogue ownership ladder unchanged.
+                    if current is None:
+                        current, hydrated = self.retrieval_index.hydrate(project_id, entry)
+                    if current is not None and all(current.get(key) == entry.get(key)
+                            for key in ('revision', 'item_revision', 'title', 'item_id')):
+                        body = current_text(coordinates)
+                        if len(body) == end:
+                            from .v2.raw_answer import parse_question
+                            request = parse_question(question)
+                            # Discovery is relevance, not sufficiency. Retain
+                            # all same-subject/property records, including
+                            # exceptions, conflicts and unparsed qualifiers.
+                            # The aggregate contract must decide admission.
+                            if (request is not None and request['subject'] in body
+                                    and request['predicate'] in body):
+                                literal_selection = EvidenceSelection(
+                                    (EvidenceWindow(0, end, body),), body, 1, 'content')
+                if literal_selection is not None:
+                    selection = literal_selection
+                elif layer == "L2" and dynamic_policy is None:
                     selection = _timed_evidence_windows(context_summary, question,
                         title=entry["title"], max_chars=WINDOW_SCAN_CHARS)
                 else:
@@ -618,6 +860,7 @@ class WorkspaceQuery:
         anchors = {identity for identity, recall in recalls.items() if recall}
         expansion_ids = (InsightLinks(self.records, self.service).expansion_ids(project_id, anchors)
                          if only_layers is None or 'L3' in only_layers else set())
+        external_allowed = external_egress_allowed if external_authority is None else external_authority
         for entry, own_scope in recognition_entries:
             scope = own_scope
             view = qualified_insight(entry, own_scope)
@@ -632,7 +875,7 @@ class WorkspaceQuery:
             from .v2.policies.retrieve import condition_score
             method_score = (condition_score(entry['conditions'], method_query)
                             if method_query and ((local_only or egress_allowed(self.records, self.models, project_id, 'generation'))
-                                if external_client is None else external_egress_allowed(self.records, project_id, external_client)) else 0)
+                                if external_client is None else external_allowed(self.records, project_id, external_client)) else 0)
             if not recall and entry["id"] not in expansion_ids and not method_score:
                 continue
             try:
@@ -899,7 +1142,7 @@ class WorkspaceQuery:
             numerator, denominator = caps.get('input_budget_share', (1, 2))
             budget = (max(0, min(caps["budget_cap"], (limits["window"] - limits["reserve"]) * numerator // denominator)) if valid
                       else caps["fallback_budget"])
-        overhead = structured_prompt_overhead() if (version('compose') in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} or answer_response_model(version('compose')) is EvidenceFirstAskOutput or any(callable(getattr(self.models, name, None))
+        overhead = structured_prompt_overhead() if (evidence_contract_version(version('compose')) in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} or answer_response_model(version('compose')) is EvidenceFirstAskOutput or any(callable(getattr(self.models, name, None))
             for name in ("complete_structured", "complete_stream"))) else 0
         return target, budget, overhead
 
@@ -921,8 +1164,17 @@ class WorkspaceQuery:
                 situation=situation, part_context=part_context, _pause_after='L2')
         return {**plan, 'policy_versions': selections}
 
-    def gap_materials(self, plan, models, *, local_only):
+    def gap_materials(self, plan, models, *, local_only, native_request=None):
         """Rebuild the selected upper text through its original domain owners."""
+        if native_request is None:
+            active = ACTIVE_ANSWER.get()
+            if active is not None:
+                native_request = active[1].get_request(active[0]['turn_id'])
+                if native_request is None or native_request['turn_id'] != active[0]['turn_id']:
+                    raise RecognitionConflict('gap_turn_identity_changed')
+        query = self._query_for_native_request(native_request)
+        if query is not self:
+            return query.gap_materials(plan, models, local_only=local_only, native_request=native_request)
         if '_rag' in plan:
             from .v2.agentic_rag import material_input
             return material_input(self, plan, models, local_only=local_only)
@@ -978,7 +1230,6 @@ class WorkspaceQuery:
         self.validate_ask_plan(plan)
         validation_request = {'scope': {'project_id': plan['project_id']}, 'privacy': privacy}
         if plan['policy_versions']['retrieve'] == '@5':
-            from .kernel.answer_turns import ACTIVE_ANSWER
             active = ACTIVE_ANSWER.get()
             if active is None or active[2] is not self:
                 raise RecognitionConflict('gap_turn_authority_unavailable')
@@ -994,6 +1245,42 @@ class WorkspaceQuery:
         with override(**plan['policy_versions']):
             messages = get('retrieve')(None, plan['_drilldown']['retrieval_question'], texts, operation='gap_messages')
         return {'messages': messages, 'privacy': privacy, 'selection': selection}
+
+    def select_rag_answer(self, plan, rows):
+        """最终证据整体复用原两轮容量合同；拒绝时保留原选择和真实窗口。"""
+        if len(rows) > 8:
+            return False
+        with override(**plan['policy_versions']):
+            self.validate_ask_plan({**plan, 'chosen': rows})
+            selected = evidence_contract_version(version('compose'))
+            if selected in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
+                catalog = build_evidence_catalog(rows, compose_version=selected)
+                arguments = dict(history=plan.get('history', ''), profile=plan.get('profile', {}),
+                    part_context=plan.get('part_context'), compose_version=selected)
+                first = build_partition_messages(rows, plan['question'], **arguments)
+                facts = selected in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}
+                partition = {'selected_ids': [unit['id'] for unit in catalog['units']],
+                    'irrelevant_ids': [], 'uncertain_ids': []}
+                final = build_partition_messages(rows, plan['question'], **arguments,
+                    **({'first_output': first_fact_empty(selected, catalog)} if facts else {'partition': partition}))
+                cost = max(review_input_tokens(first, response_model=answer_response_model(selected)),
+                    review_input_tokens(final, response_model=final_response_model(selected, plan['question'])) + 3)
+                required = (grounded_output_minimum(catalog, compose_version=selected)
+                    if selected not in {'@18', '@19'} else partition_output_tokens(catalog))
+                if selected in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
+                    required = max(required, first_facts_output_minimum(catalog, compose_version=selected)
+                        if facts else partition_output_tokens(catalog))
+                reserve = plan.get('answer_output_budget', {}).get('reserve',
+                    512 if plan['target']['execution_location'] == 'local' else 7000)
+                if cost > plan['budget'] or required > reserve:
+                    return False
+            else:
+                from .v2.budget import input_tokens
+                if input_tokens(rows, plan['question'], reserve_refutes=True,
+                        history=plan.get('history', '')) + plan['prompt_overhead'] > plan['budget']:
+                    return False
+            plan['chosen'] = list(rows)
+            return True
 
     def rag_read(self, plan, candidate, depth):
         """目录限定原 owner；按现有坐标读取对应正文或原件，容量不足不外扩。"""
@@ -1052,7 +1339,12 @@ class WorkspaceQuery:
             content = entry['content']
             row.update(windows=(EvidenceWindow(0, len(content), content),), excerpt=content)
         def fits(value):
-            return input_tokens([*plan['chosen'], value], plan['question'], reserve_refutes=True,
+            chosen = [*plan['chosen'], value]
+            if getattr(get('retrieve', version=plan['policy_versions']['retrieve']), 'explicit_answer_evidence', False):
+                from .v2.agentic_rag import _merge_observed
+                # 与调查和最终证据使用同一坐标并集，已读原文不重复占用容量。
+                chosen = _merge_observed(chosen)
+            return input_tokens(chosen, plan['question'], reserve_refutes=True,
                 history=plan.get('history', '')) + plan['prompt_overhead'] <= plan['budget']
         # 目录已明确选中读取对象，容量足够时保留原窗口，不再按问题启发式丢弃事实。
         fitted = row if fits(row) else self._fit_dynamic_candidate(row, plan['question'], limit=plan['budget'], admission=fits)
@@ -1114,9 +1406,17 @@ class WorkspaceQuery:
         from .v2.links import InsightLinks
         links = InsightLinks(self.records, self.service)
         target, budget, overhead = self.ask_budget()
-        answer_output_budget = self._answer_output_budget(target) if version('compose') in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else None
+        constraint_input = getattr(self, 'project_constraint_input', None)
+        constraint_snapshot = constraint_input.snapshot(project_id) if constraint_input is not None else None
+        constraint_tokens = (_estimate_input_tokens([{'role': 'system', 'content': constraint_snapshot['prompt']}])
+            if constraint_snapshot is not None and constraint_snapshot['prompt'] else 0)
+        overhead += constraint_tokens
+        if overhead > budget:
+            raise RecognitionError('project constraints exceed input budget')
+        answer_output_budget = self._answer_output_budget(target) if evidence_contract_version(version('compose')) in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else None
         from .v2.profile import confirmed_profile
-        profile = confirmed_profile(self.records, self.service, rank_reference=collected.get('rank_reference'))
+        profile = confirmed_profile(self.profile_owner.records, self.profile_owner.service,
+            rank_reference=collected.get('rank_reference'))
         ordinary_limit = evidence_limit
         if evidence_limit is not None or profile_limit is not None:
             from .v2.profile import bounded_profile
@@ -1129,7 +1429,12 @@ class WorkspaceQuery:
             if evidence_limit is not None:
                 ordinary_limit = evidence_limit - len(profile['items'])
         if part_context:
-            from .v2.part_context import validate_context
+            from .v2.part_context import validate_context, fit_attachment_context
+            def dependency_fits(value):
+                messages = build_partition_messages([], question, history=history, profile=profile,
+                    part_context=value, compose_version=version('compose'))
+                return review_input_tokens(messages, response_model=answer_response_model(version('compose'))) <= budget
+            part_context = fit_attachment_context(self.records, self, part_context, question, dependency_fits)
             validate_context(self.records, self, part_context)
             overhead += _estimate_input_tokens([{'role':'user', 'content':part_context['text']}])
             if overhead > budget:
@@ -1155,26 +1460,26 @@ class WorkspaceQuery:
             if callable(getattr(get('ladder'), 'demand', None)):
                 options['fit'] = self._fit_dynamic_candidate
                 options['semantic_anchors'] = tuple(dict.fromkeys((retrieval_question, *(coverage_questions or ()))))
-                if version('compose') in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+                if evidence_contract_version(version('compose')) in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
                     # 两轮共用真实目录；原文、画像、历史、依赖及三种包装全部计入。
                     def partition_cost(rows):
-                        catalog = build_evidence_catalog(rows)
+                        catalog = build_evidence_catalog(rows, compose_version=version('compose'))
                         first = build_partition_messages(rows, question, history=history,
                             profile=profile, part_context=part_context, compose_version=version('compose'))
                         worst = {'selected_ids': [unit['id'] for unit in catalog['units']],
                             'irrelevant_ids': [], 'uncertain_ids': []}
                         final = build_partition_messages(rows, question, history=history,
                             profile=profile, part_context=part_context, compose_version=version('compose'),
-                            **({'first_output': first_fact_empty(version('compose'), catalog)} if version('compose') in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else {'partition': worst}))
-                        return max(review_input_tokens(first, response_model=answer_response_model(version('compose'))),
+                            **({'first_output': first_fact_empty(version('compose'), catalog)} if evidence_contract_version(version('compose')) in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else {'partition': worst}))
+                        return constraint_tokens + max(review_input_tokens(first, response_model=answer_response_model(version('compose'))),
                             review_input_tokens(final, response_model=final_response_model(version('compose'), question)) + 3)
                     def partition_admission(rows):
                         # 分类输出有界；实际公开原话仍在末轮渲染时单独检查，不能预先截资料。
-                        catalog = build_evidence_catalog(rows)
-                        required = (grounded_output_minimum(catalog, compose_version=version('compose')) if version('compose') in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
+                        catalog = build_evidence_catalog(rows, compose_version=version('compose'))
+                        required = (grounded_output_minimum(catalog, compose_version=version('compose')) if evidence_contract_version(version('compose')) in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}
                             else partition_output_tokens(catalog))
-                        if version('compose') in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
-                            required = max(required, first_facts_output_minimum(catalog, compose_version=version('compose')) if version('compose') in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else partition_output_tokens(catalog))
+                        if evidence_contract_version(version('compose')) in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
+                            required = max(required, first_facts_output_minimum(catalog, compose_version=version('compose')) if evidence_contract_version(version('compose')) in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else partition_output_tokens(catalog))
                         return required <= (
                             answer_output_budget['reserve'] if answer_output_budget is not None
                             else 512 if target['execution_location'] == 'local' else 7000)
@@ -1199,11 +1504,16 @@ class WorkspaceQuery:
                                  "revision":candidate["entry"]["revision"],
                                  "reason":"recognition_evidence_budget_insufficient"})
         plan = {"project_id": project_id, "question": question, "scope": WorkScope("local-user", project_id),
+                **({'_project_constraints': constraint_snapshot} if constraint_snapshot is not None else {}),
                 **({'rank_reference': collected['rank_reference']} if collected.get('rank_reference') else {}),
                 **({key: collected[key] for key in ('time_scope', 'time_documents')} if collected.get('time_scope') else {}),
                 "target": target, **({'answer_output_budget': answer_output_budget} if answer_output_budget is not None else {}), **planned, '_rerank_state': rerank_state, "profile": profile, **({'part_context':part_context} if part_context else {}), "overview_guard": overview_guard, "history": history, "prompt_overhead": overhead, "excluded_sources": excluded, "state": "pending",
                 "expires_monotonic": time.monotonic() + 300,
                 "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()}
+        if getattr(get('retrieve'), 'evidence_answer_probe', False):
+            plan.update(retrieval_question=retrieval_question, situation=situation)
+        if self.origin_admission is not None:
+            plan['origin_lease'] = self.origin_admission.lease.payload()
         if _pause_after is not None:
             plan['drilldown_needed'] = get('retrieve')(None,
                 {**plan, 'policy_versions': collected.get('policy_versions') or versions_for_turn('project.answer')},
@@ -1270,6 +1580,14 @@ class WorkspaceQuery:
             for kind,identity,revision in roots]) if roots else None
 
     def validate_ask_plan(self, plan: dict) -> None:
+        if self.origin_admission is not None:
+            if (plan.get('origin_lease') not in (None, self.origin_admission.lease.payload())
+                    or plan['project_id'] != self.origin_admission.lease.project_id):
+                raise RecognitionConflict('material_origin_binding_changed')
+            self.validate_retrieval_origin()
+        constraints = getattr(self, 'project_constraint_input', None)
+        if constraints is not None:
+            constraints.validate_plan(plan)
         if '_rag_proof' in plan:
             from .v2.agentic_rag import validate_rag_proof
             validate_rag_proof(self, plan)
@@ -1281,13 +1599,13 @@ class WorkspaceQuery:
             code = ("private_project_remote_blocked" if is_private_project(self.records, plan["project_id"])
                     else "remote_disabled")
             raise ModelConfigurationError(code)
-        if plan.get('policy_versions', {}).get('compose') in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} and self._answer_output_budget(plan['target']) != plan.get('answer_output_budget'):
+        if evidence_contract_version(plan.get('policy_versions', {}).get('compose')) in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} and self._answer_output_budget(plan['target']) != plan.get('answer_output_budget'):
             raise ValueError('grounded_output_budget_changed')
         if self.ask_target() != plan["target"]:
             raise ModelConfigurationError("ask_model_target_changed")
         if plan.get("profile") is not None:
             from .v2.profile import validate_profile
-            validate_profile(self.records, self.service, plan["profile"])
+            validate_profile(self.profile_owner.records, self.profile_owner.service, plan["profile"])
         if plan.get("overview_guard") is not None:
             plan["overview_guard"]()
         if plan.get("bookshelf_guard") is not None:
@@ -1295,6 +1613,15 @@ class WorkspaceQuery:
         if plan.get("history_guard") is not None:
             plan["history_guard"]()
         self._validate_ask_sources(plan)
+        if plan.get('initial_answer_proof') is not None:
+            from .v2.initial_answer import validate_plan
+            validate_plan(self, plan)
+        if 'raw_answer_proof' in plan:
+            from .v2.raw_fast_path import validate_raw_plan
+            validate_raw_plan(self, plan)
+        if 'evidence_answer_proof' in plan:
+            from .v2.evidence_fast_path import validate_evidence_plan
+            validate_evidence_plan(self, plan)
 
     def _validate_ask_sources(self, plan, *, local_only=False):
         project_id = plan["project_id"]
@@ -1302,6 +1629,7 @@ class WorkspaceQuery:
                     if candidate["kind"] not in {"recognition", "search"} and not candidate.get('inspiration')]
         current_entries = {(entry["kind"], entry["id"]): entry for entry in self.query_entries(project_id, selected=selected)}
         authority = SourceEgressService(self.records)
+        generation_allowed = {}
         for candidate in plan["chosen"]:
             if candidate['kind'] == 'search':
                 if not callable(plan.get('search_guard')):
@@ -1316,9 +1644,13 @@ class WorkspaceQuery:
                 continue
             if not local_only and is_private_project(self.records, own_scope.project_id):
                 raise RecognitionError("source excluded from recall during question")
-            if (not local_only and plan["target"]["execution_location"] == "remote"
-                    and not egress_allowed(self.records, self.models, own_scope.project_id, "generation")):
-                raise ModelConfigurationError("remote_disabled")
+            if not local_only and plan["target"]["execution_location"] == "remote":
+                # 仅本次来源复验按项目复用；me独立检查，下一chunk重新读取。
+                if own_scope.project_id not in generation_allowed:
+                    generation_allowed[own_scope.project_id] = egress_allowed(
+                        self.records, self.models, own_scope.project_id, "generation")
+                if not generation_allowed[own_scope.project_id]:
+                    raise ModelConfigurationError("remote_disabled")
             if candidate["kind"] != "recognition":
                 current_snapshot = self.original_snapshot(own_scope,frozen,authority)
                 if current_snapshot != candidate["snapshot"]:
@@ -1356,18 +1688,42 @@ class WorkspaceQuery:
         if plan.get('search_guard') is not None:
             plan['search_guard']()
 
-    def mark_ask_receipt(self, preview_id: str, status: str, *, usage: dict | None = None) -> None:
-        with self.records.begin() as tx:
+    def mark_ask_receipt(self, preview_id: str, status: str, *, usage: dict | None = None, unverified_claims=None) -> None:
+        if unverified_claims is not None and (type(unverified_claims) is not int or unverified_claims < 0):
+            raise ValueError('unverified_claims_invalid')
+        with self.receipt_records.begin() as tx:
             row = tx.read("workspace_ask_receipts", preview_id)
             if row is None:
                 return
             payload = {**row.payload, "status": status, "updated_at": _now()}
             if usage is not None:
                 payload["usage"] = usage
+            if unverified_claims is not None:
+                payload['unverified_claims'] = unverified_claims
             tx.put("workspace_ask_receipts", preview_id, payload, expected_revision=row.revision)
             tx.commit()
 
+    def _closed_shared_answer_stop(self, interrupted):
+        from backend.shared.llm.model_transport import is_provider_closed_witness
+
+        active = ACTIVE_ANSWER.get()
+        if (self.origin_admission is None or active is None or interrupted.interruption != 'stopped'
+                or not is_provider_closed_witness(interrupted.close_witness)):
+            return False
+        request, store, owner, handles = active
+        state = self.execution_owner.answer_turns.application.state
+        runtime = state.ai_runtime
+        lease = runtime._run_lease_context.get()
+        identity = request['turn_id']
+        stops = runtime.product_stops
+        return (owner is self.execution_owner and stops is not None and store is state.ai_turn_store
+            and stops.records is self.receipt_records and stops.store is store
+            and lease is not None and lease.turn_id == identity and store.assert_active_run_lease(lease) is not None
+            and stops.requested(identity) and any(getattr(call, 'close_witness', None) is interrupted.close_witness
+                and getattr(call, 'interruption', None) == 'stopped' for call in handles.values()))
+
     async def execute_ask(self, preview_id: str, project_id: str, question: str, consent: bool, *, on_delta=None, continuation=None, on_retry=None):
+        from .v2.shared_projects import SharedProjectError
         if ACTIVE_ANSWER.get() is None:
             from uuid import uuid5, NAMESPACE_URL
             with self.ask_preview_lock:
@@ -1382,6 +1738,8 @@ class WorkspaceQuery:
                     raise HTTPException(409, "ask_preview_used")
             return await self.answer_turns.run(turn_id="turn-" + uuid5(NAMESPACE_URL, "workspace-ask:" + preview_id).hex, project=project_id,
                 question=question, policy_versions=preview.get('policy_versions'),
+                **({'admission_prepare': self.origin_admission.prepare,
+                    'privacy_prepare': self.freeze_answer_privacy} if self.origin_admission is not None else {}),
                 operation=lambda: self.execute_ask(preview_id, project_id, question, consent, on_delta=on_delta, on_retry=on_retry))
         with self.ask_preview_lock:
             plan = self.ask_previews.get(preview_id)
@@ -1395,13 +1753,18 @@ class WorkspaceQuery:
                 raise HTTPException(409, "ask_preview_used")
             try:
                 self.validate_ask_plan(plan)
+            except SharedProjectError as failure:
+                raise HTTPException(failure.status, str(failure)) from None
             except RecognitionError:
                 raise HTTPException(409, "source_changed_retry") from None
             except ModelConfigurationError as failure:
+                billing = model_billing_code(failure, ModelConfigurationError)
+                if billing is not None:
+                    raise HTTPException(model_billing_status(billing), billing) from None
                 code = str(failure)
                 raise HTTPException(409, code if code in {"remote_disabled", "private_project_remote_blocked"}
                                     else "ask_model_target_changed") from None
-            with self.records.begin() as tx:
+            with self.receipt_records.begin() as tx:
                 tx.put("workspace_ask_receipts", preview_id, {
                     "id": preview_id, "project_id": project_id, "status": "started",
                     "created_at": _now(), "updated_at": _now(),
@@ -1434,6 +1797,55 @@ class WorkspaceQuery:
                            **({"conditions": c["entry"]["conditions"]} if c["kind"] == "recognition" else {}),
                            "coordinate_space": c.get("coordinate_space", "workspace_query_content_v1")}
                           for index, c in enumerate(chosen, 1)]
+        if 'evidence_answer_proof' in plan or 'raw_answer_proof' in plan:
+            try:
+                evidence_answer = 'evidence_answer_proof' in plan
+                if evidence_answer:
+                    from .v2.evidence_fast_path import frozen_result, INVOCATION
+                    from .answer_proof import select_evidence_answer_input as select_input
+                else:
+                    from .v2.raw_fast_path import frozen_result, INVOCATION
+                    from .answer_proof import select_raw_answer_input as select_input
+                output, messages, metadata = frozen_result(self, plan)
+                self.validate_ask_plan(plan)
+                result = {'answer': output.answer.strip(),
+                    **({'unverified_claims': 0, 'unverified_claim_spans': []}
+                        if plan.get('policy_versions', {}).get('compose') == '@37' else {}),
+                    'sources': [answer_sources[number - 1] for number in dict.fromkeys(output.citations)],
+                    'model_used': True, 'model_usage': metadata.get('usage', {}),
+                    'excluded_sources': plan['excluded_sources'],
+                    'context': _ask_context(chosen, format_source_texts(chosen), messages,
+                        metadata.get('context_budget'))}
+                active_request, store, _, _ = ACTIVE_ANSWER.get()
+                identity = active_request['turn_id']
+                sent = store.get_immutable_payload(identity, 'answer-model-input-' + INVOCATION)
+                received = store.get_immutable_payload(identity, 'answer-model-result-' + INVOCATION)
+                capsule = store.get_immutable_payload(identity, 'answer-continuation-plan-v1')
+                if select_input(store.get_request(identity), result,
+                        sent[1] if sent else None, received[1] if received else None,
+                        capsule[1] if capsule else None) is None:
+                    raise ValueError('evidence_answer_public_binding_changed' if evidence_answer
+                                     else 'raw_answer_public_binding_changed')
+                self.mark_ask_receipt(preview_id, 'completed', usage=result['model_usage'],
+                    **({'unverified_claims': 0} if plan.get('policy_versions', {}).get('compose') == '@37' else {}))
+                with self.ask_preview_lock:
+                    plan.update(result=result, state='completed', chosen=[])
+                if on_delta is not None:
+                    on_delta(result['answer'])
+                return result
+            except RecognitionError:
+                self.mark_ask_receipt(preview_id, 'failed')
+                plan['state'] = 'failed'
+                raise HTTPException(409, 'source_changed_retry') from None
+            except (ValueError, ModelConfigurationError) as failure:
+                self.mark_ask_receipt(preview_id, 'failed')
+                plan['state'] = 'failed'
+                if isinstance(failure, SharedProjectError):
+                    raise HTTPException(failure.status, str(failure)) from None
+                billing = model_billing_code(failure, ModelConfigurationError)
+                if billing is not None:
+                    raise HTTPException(model_billing_status(billing), billing) from None
+                raise HTTPException(502, 'answer_generation_failed') from None
         with stage("prompt_build"):
             source_texts = format_source_texts(chosen)
             messages = [{"role": "system", "content": get('compose')(ask_instruction, chosen)},
@@ -1444,8 +1856,10 @@ class WorkspaceQuery:
                 messages.insert(1 if plan.get('profile', {}).get('text') else 0,
                     {'role':'user', 'content':plan['part_context']['text']})
         invocation_key = continuation['invocation_key'] if continuation else 'answer'
-        compose_version = plan.get('policy_versions', {}).get('compose')
-        review_required = compose_version in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
+        publication_version = plan.get('policy_versions', {}).get('compose')
+        compose_version = evidence_contract_version(publication_version)
+        publication = {}
+        review_required = compose_version in {'@12', '@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}
         response_model = answer_response_model(plan.get('policy_versions', {}).get('compose'))
         if continuation:
             # 续答恢复同轮实际冻结的合同，不把旧两字段输出升级为新合同。
@@ -1457,7 +1871,7 @@ class WorkspaceQuery:
             messages = get('retry')({'kind': 'continue_messages', 'messages': continuation['messages'],
                 'partial': continuation['partial']})
             if review_required:
-                if continuation['partial'] or response_model is not (FocusedReferencedFactsOutput if compose_version in {'@27', '@28', '@29', '@30', '@31', '@32', '@33'} else FirstReferencedFactsOutput if compose_version == '@26' else FirstFactsOutput if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else EvidencePartitionOutput if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else SourceQuoteExtraction if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else AskOutput):
+                if continuation['partial'] or response_model is not (FocusedReferencedFactsOutput if compose_version in {'@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else FirstReferencedFactsOutput if compose_version == '@26' else FirstFactsOutput if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else EvidencePartitionOutput if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else SourceQuoteExtraction if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else AskOutput):
                     raise ValueError('answer_review_continuation_unavailable')
                 # 新合同没有公开草稿段落；恢复同轮键可复用已完成草稿及审核，不另发草稿调用。
                 messages, invocation_key, continuation = frozen_input[1]['messages'], 'answer', None
@@ -1467,14 +1881,14 @@ class WorkspaceQuery:
         context_messages = messages
         partition_catalog, partition_tokens = None, None
         try:
-            if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+            if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
                 if continuation is None:
                     messages = build_partition_messages(chosen, question, history=plan.get('history', ''),
                         profile=plan.get('profile', {}), part_context=plan.get('part_context'), compose_version=compose_version)
                 context_messages = messages
-                partition_catalog = build_evidence_catalog(chosen)
+                partition_catalog = build_evidence_catalog(chosen, compose_version=compose_version)
                 partition_tokens = partition_output_tokens(partition_catalog)
-            if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+            if self.origin_admission is not None or compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
                 from .kernel.answer_continuations import PLAN_KIND, save_plan
                 active_request, turn_store, _, _ = ACTIVE_ANSWER.get()
                 if turn_store.get_immutable_payload(active_request['turn_id'], PLAN_KIND) is None:
@@ -1492,19 +1906,19 @@ class WorkspaceQuery:
                         request=active_request, store=turn_store,
                         runtime=self.answer_turns.application.state.ai_runtime)
             review_budget = get('compose')(None, operation='review_budget') if review_required else None
-            if compose_version in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+            if compose_version in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
                 review_budget = plan.get('budget')
                 if type(review_budget) is not int or review_budget <= 0:
                     raise ValueError('answer_review_budget_unavailable')
                 if review_input_tokens(messages, response_model=response_model) > review_budget:
                     raise ValueError('answer_draft_budget_exceeded')
-            if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
-                output_limit = (grounded_output_limit(plan, review_input_tokens(messages, response_model)) if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}
+            if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
+                output_limit = (grounded_output_limit(plan, review_input_tokens(messages, response_model)) if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}
                     else 512 if plan['target']['execution_location'] == 'local' else 7000)
-                required_output = (grounded_output_minimum(partition_catalog, compose_version=compose_version) if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else partition_tokens)
-                if compose_version in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+                required_output = (grounded_output_minimum(partition_catalog, compose_version=compose_version) if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else partition_tokens)
+                if compose_version in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
                     # 旧首全集或26稀疏首外壳各按真实合同准入，事实容量仍须首后重核。
-                    required_output = max(required_output, first_facts_output_minimum(partition_catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else partition_tokens)
+                    required_output = max(required_output, first_facts_output_minimum(partition_catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else partition_tokens)
                 if required_output > output_limit:
                     raise ValueError('evidence_partition_output_budget_exceeded')
                 # 首wire前核真实Schema与最小外壳；空facts只是预估，首后重核完整原件，不换资料。
@@ -1512,7 +1926,7 @@ class WorkspaceQuery:
                     'irrelevant_ids': [], 'uncertain_ids': []}
                 worst_review = build_partition_messages(chosen, question, history=plan.get('history', ''),
                     profile=plan.get('profile', {}), part_context=plan.get('part_context'), compose_version=compose_version,
-                    **({'first_output': first_fact_empty(compose_version, partition_catalog)} if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else {'partition': worst_partition}))
+                    **({'first_output': first_fact_empty(compose_version, partition_catalog)} if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else {'partition': worst_partition}))
                 if review_input_tokens(worst_review, response_model=final_response_model(compose_version, question)) + 3 > review_budget:
                     raise ValueError('answer_review_budget_exceeded')
             dispatched_at = time.perf_counter()
@@ -1536,11 +1950,12 @@ class WorkspaceQuery:
 
                 try:
                     return generate_answer(self.models, messages, response_model=response_model,
-                        max_tokens=(output_limit if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else partition_tokens if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else min(get('compose')(None, operation='answer_contract')['draft_max_tokens'],
+                        max_tokens=(output_limit if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else partition_tokens if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else min(get('compose')(None, operation='answer_contract')['draft_max_tokens'],
                             512 if plan["target"]["execution_location"] == "local" else 7000)
-                            if compose_version in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else 512 if plan["target"]["execution_location"] == "local" else 7000),
+                            if compose_version in {'@14', '@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else 512 if plan["target"]["execution_location"] == "local" else 7000),
                         validate_current=lambda: self.validate_ask_plan(plan),
-                        on_delta=measured_delta if on_delta is not None and compose_version not in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else None, invocation_key=invocation_key,
+                        phase='first' if review_required else 'single', phase_logical=invocation_key,
+                        on_delta=measured_delta if on_delta is not None and compose_version not in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else None, invocation_key=invocation_key,
                         **({'on_retry': on_retry} if on_retry is not None else {}))
                 finally:
                     _record_elapsed("generation", started)
@@ -1550,9 +1965,9 @@ class WorkspaceQuery:
             self.validate_ask_plan(plan)
             if evidence_first:
                 output = accept_evidence_structure(output, chosen)
-            if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
-                if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
-                    if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'}:
+            if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
+                if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
+                    if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
                         validate_first_facts(output, partition_catalog, chosen=chosen, question=question, compose_version=compose_version)
                     else:
                         validate_partition(output, partition_catalog)
@@ -1576,26 +1991,27 @@ class WorkspaceQuery:
             if review_required:
                 reviewed = (build_partition_messages(chosen, question, history=plan.get('history', ''),
                     profile=plan.get('profile', {}), part_context=plan.get('part_context'), compose_version=compose_version,
-                    **({'first_output': output.model_dump()} if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else {'partition': output.model_dump()})) if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else
-                    quote_answer_messages(messages, output.model_dump(), chosen, compose_version=compose_version, question=question) if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else
+                    **({'first_output': output.model_dump()} if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else {'partition': output.model_dump()})) if compose_version in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else
+                    quote_answer_messages(messages, output.model_dump(), chosen, compose_version=compose_version, question=question) if compose_version in {'@15', '@16', '@17', '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else
                     review_messages(messages, output.model_dump(), get('compose')(None, operation='review_instruction')))
                 final_model = final_response_model(compose_version, question)
                 if review_input_tokens(reviewed, response_model=final_model) > review_budget:
                     raise ValueError('answer_review_budget_exceeded')
                 review_started = True
                 final_output_limit = (grounded_output_limit(plan, review_input_tokens(reviewed, final_model))
-                    if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else None)
+                    if compose_version in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else None)
                 if compose_version == '@32':
                     from .v2.answer_evidence import review_output_minimum
                     if review_output_minimum(partition_catalog, extracted_output, chosen=chosen, question=question) > final_output_limit:
                         raise ValueError('grounded_output_budget_exceeded')
-                if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} and grounded_output_minimum(partition_catalog, compose_version=compose_version) > final_output_limit:
+                if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} and grounded_output_minimum(partition_catalog, compose_version=compose_version) > final_output_limit:
                     raise ValueError('grounded_output_budget_exceeded')
                 def review():
                     return generate_answer(self.models, reviewed, response_model=final_model,
                         max_tokens=(final_output_limit if final_model in (GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, ReviewedScopeAnswerOutput, ReviewedReferencedScopeOutput, FocusedReviewedScopeOutput, ReconstructedReviewedOutput) else partition_tokens if final_model is EvidencePartitionOutput else
                             512 if plan['target']['execution_location'] == 'local' else 7000),
                         validate_current=lambda: self.validate_ask_plan(plan), invocation_key=REVIEW_KEY,
+                        phase='final-review', phase_logical=REVIEW_KEY,
                         **({'on_retry': on_retry} if on_retry is not None else {}))
                 output, reviewed_meta = await run_in_threadpool(review)
                 review_usage = reviewed_meta.get('usage', {})
@@ -1604,14 +2020,23 @@ class WorkspaceQuery:
                 self.validate_ask_plan(plan)
                 if final_model in (GroundedAnswerOutput, GroundedUsageAnswerOutput, GroundedScopeAnswerOutput, ReviewedScopeAnswerOutput, ReviewedReferencedScopeOutput, FocusedReviewedScopeOutput, ReconstructedReviewedOutput):
                     if final_model in (ReviewedScopeAnswerOutput, ReviewedReferencedScopeOutput, FocusedReviewedScopeOutput, ReconstructedReviewedOutput):
-                        output = reviewed_scope_answer(output, partition_catalog, extracted_output, chosen=chosen, question=question, compose_version=compose_version)
+                        projection = {}
+                        output = reviewed_scope_answer(output, partition_catalog, extracted_output,
+                            chosen=chosen, question=question, compose_version=publication_version,
+                            **({'_on_projection': projection.update} if compose_version in {'@35', '@36'} else {}))
+                        if projection:
+                            plan['trace'][0]['calendar_review'] = projection
                     elif final_model is GroundedScopeAnswerOutput:
                         output = grounded_scope_answer(output, partition_catalog, extracted_output, chosen=chosen)
                     elif final_model is GroundedUsageAnswerOutput:
                         output = grounded_usage_answer(output, partition_catalog, extracted_output, chosen=chosen)
-                    output = render_grounded_answer(output, partition_catalog, first_fact_partition(extracted_output, partition_catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33'} else extracted_output,
+                    if plan.get('initial_answer_proof') is not None:
+                        from .v2.initial_answer import validate_output
+                        validate_output(plan, output, partition_catalog)
+                    output = render_grounded_answer(output, partition_catalog, first_fact_partition(extracted_output, partition_catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else extracted_output,
                         max_output_tokens=final_output_limit, chosen=chosen, **get('compose')(None,
-                            operation='grounded_render', question=question))
+                            operation='grounded_render', question=question),
+                        **({'_on_publication': publication.update} if publication_version == '@37' else {}))
                 elif final_model is EvidencePartitionOutput:
                     output = render_partition(output, partition_catalog,
                         **get('compose')(None, question, operation='render_limits',
@@ -1631,7 +2056,7 @@ class WorkspaceQuery:
                 frozen = [turn_store.get_immutable_payload(active_request['turn_id'], kind) for kind in (
                     'answer-model-input-answer', 'answer-model-result-answer',
                     'answer-model-input-' + REVIEW_KEY, 'answer-model-result-' + REVIEW_KEY)]
-                public_proof = {'answer': answer.strip(), 'sources': [{'number': number} for number in dict.fromkeys(citations)]}
+                public_proof = {'answer': answer.strip(), 'sources': [{'number': number} for number in dict.fromkeys(citations)], **publication}
                 selected = select_answer_input(frozen_request, public_proof,
                     *(payload[1] if payload else None for payload in frozen),
                     capsule=(turn_store.get_immutable_payload(active_request['turn_id'], 'answer-continuation-plan-v1') or (None, None))[1])
@@ -1644,6 +2069,7 @@ class WorkspaceQuery:
                 on_delta(output.answer.strip())
             result = {"answer": answer.strip(), "sources": [answer_sources[number - 1]
                       for number in dict.fromkeys(citations)], "model_used": True,
+                      **publication,
                       "model_usage": meta.get("usage", {}), "excluded_sources": plan["excluded_sources"],
                       "context": _ask_context(chosen, source_texts, messages, meta.get("context_budget"),
                           plan.get("history", ""), plan.get("history_count", 0), plan.get("profile"), plan.get('part_context'),
@@ -1651,7 +2077,8 @@ class WorkspaceQuery:
             if any(candidate.get('supplemented') for candidate in chosen) and ACTIVE_ANSWER.get() is not None:
                 result['context']['feedback'] = {'turn_id': ACTIVE_ANSWER.get()[0]['turn_id'],
                                                  'project_id': project_id}
-            self.mark_ask_receipt(preview_id, "completed", usage=result["model_usage"])
+            self.mark_ask_receipt(preview_id, "completed", usage=result["model_usage"],
+                **({'unverified_claims': publication['unverified_claims']} if publication else {}))
             with self.ask_preview_lock:
                 plan["result"] = result
                 plan["state"] = "completed"
@@ -1666,11 +2093,19 @@ class WorkspaceQuery:
                     error = HTTPException(409, 'source_changed_retry')
                 except ModelConfigurationError as failure:
                     code = str(failure)
-                    error = (HTTPException(409, code) if code in {
+                    billing = model_billing_code(failure, ModelConfigurationError)
+                    error = (HTTPException(model_billing_status(billing), billing) if billing is not None else
+                        HTTPException(409, code) if code in {
                         'ask_model_target_changed', 'remote_disabled', 'private_project_remote_blocked'
                     } else HTTPException(502, 'answer_generation_failed'))
             else:
-                self.validate_ask_plan(plan)
+                source_lost = False
+                try:
+                    self.validate_ask_plan(plan)
+                except (RecognitionError, SharedProjectError):
+                    if not self._closed_shared_answer_stop(interrupted):
+                        raise
+                    source_lost = True
                 observation = answer_observation(invocation_key)
                 from .v2.followup import sum_usage
                 usage = sum_usage(*observation['observations'])
@@ -1681,16 +2116,22 @@ class WorkspaceQuery:
                 self.mark_ask_receipt(preview_id, 'failed', usage=usage)
                 with self.ask_preview_lock:
                     plan['state'] = 'failed'
+                if source_lost:
+                    # 原执行保存实际关闭证明，失效来源不再生成新的公开片段。
+                    raise interrupted
                 return {'answer': None, 'partial': (continuation['partial'] if continuation else '') + (interrupted.partial
                         if interrupted.interruption == 'stopped' or not evidence_first else ''),
                     'interruption': interrupted.interruption, 'sources': [],
                     'model_used': True, 'model_usage': usage, 'excluded_sources': plan['excluded_sources'],
                     'context': _ask_context(chosen, source_texts, messages, None,
                         plan.get('history', ''), plan.get('history_count', 0), plan.get('profile'))}
+        except SharedProjectError as failure:
+            error = HTTPException(failure.status, str(failure))
         except RecognitionError:
             error = HTTPException(409, "source_changed_retry")
         except ModelConfigurationError as failure:
             code = str(failure)
+            billing = model_billing_code(failure, ModelConfigurationError)
             if plan["target"]["execution_location"] == "remote" and code in {
                 "model_configuration_changed_before_request", "model_egress_remote_not_consented"
             }:
@@ -1698,9 +2139,12 @@ class WorkspaceQuery:
                     code = "private_project_remote_blocked" if is_private_project(self.records, plan["project_id"]) else "remote_disabled"
                 elif code == "model_configuration_changed_before_request" or self.ask_target() != plan["target"]:
                     code = "ask_model_target_changed"
-            error = HTTPException(409, code) if code in {"ask_model_target_changed", "remote_disabled", "private_project_remote_blocked"} else HTTPException(502, "answer_generation_failed")
-        except Exception:
-            logging.getLogger(__name__).exception("ask_preview_failed")
+            error = (HTTPException(model_billing_status(billing), billing) if billing is not None else
+                HTTPException(409, code) if code in {"ask_model_target_changed", "remote_disabled", "private_project_remote_blocked"}
+                else HTTPException(502, "answer_generation_failed"))
+        except Exception as failure:
+            from .answer_diagnostics import log_answer_validation_failure
+            log_answer_validation_failure(failure, compose_version=publication_version)
             error = HTTPException(502, "answer_generation_failed")
         try:
             if review_required and review_started and review_usage is None:

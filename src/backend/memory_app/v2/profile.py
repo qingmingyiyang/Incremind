@@ -9,6 +9,7 @@ from backend.shared.memory_sidecars import decayed_score, utc_now
 from ..context_adapter import ContextSelectionError, format_recognition_content
 from ..recall_state import is_recall_excluded
 from ..source_egress import SourceEgressService
+from ..transaction_records import TransactionRecords
 from .budget import text_tokens
 from .privacy import is_private_project, privacy_revision
 
@@ -21,7 +22,8 @@ def _eligible(records, service, *, rank_reference=None):
     scope = WorkScope('local-user', 'me')
     if is_private_project(records, 'me'):
         return []
-    authority = SourceEgressService(records)
+    authority = (SourceEgressService(service.records, reader=records)
+        if isinstance(records, TransactionRecords) else SourceEgressService(records))
     result = []
     for entry in service.retrieval_entries(scope=scope):
         if is_recall_excluded(records, scope, entry['id']):

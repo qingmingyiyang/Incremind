@@ -44,6 +44,7 @@ def begin_nested_model_call(
     *,
     invocation_key: str | None = None,
     purpose: str | None = None,
+    steer_grant: Mapping[str, object] | None = None,
 ) -> NestedModelCallHandlePort:
     """Begin one dispatcher-owned model lifecycle without treating tool control as its sink."""
 
@@ -54,7 +55,8 @@ def begin_nested_model_call(
     handle = (
         take()
         if invocation_key is None and purpose is None
-        else take(invocation_key=invocation_key, purpose=purpose)
+        else take(invocation_key=invocation_key, purpose=purpose,
+            **({'steer_grant': steer_grant} if steer_grant is not None else {}))
     )
     required = (
         "model_call_routed",

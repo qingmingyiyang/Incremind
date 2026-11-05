@@ -2,7 +2,8 @@
 from urllib.parse import urlsplit
 
 from ..model_config import ModelConfigurationError
-from ..turn_routing import CONFIGURATION_FIELDS, SNAPSHOT_KIND, RecognitionRoutingSnapshot, _revision
+from ..model_binding import public_model_configuration
+from ..turn_routing import SNAPSHOT_KIND, RecognitionRoutingSnapshot, _revision
 
 
 class ProductGenerationRouting:
@@ -45,9 +46,7 @@ class ProductGenerationRouting:
                 boundary_profile_id, boundary_profile_revision, capability_ids):
         turn_id = request["turn_id"]
         public = self.models.public()["generation"]
-        configuration = {key: public.get(key) for key in CONFIGURATION_FIELDS}
-        if public.get("subscription_binding"):
-            configuration["subscription_binding"] = dict(public["subscription_binding"])
+        configuration = public_model_configuration(public)
         address = str(configuration["base_url"] or "")
         url = urlsplit(address)
         local = not address or url.hostname in {"localhost", "127.0.0.1", "::1"}

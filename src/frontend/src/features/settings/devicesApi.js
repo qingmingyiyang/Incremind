@@ -17,6 +17,16 @@ async function request(path = '', body, method = body === undefined ? 'GET' : 'P
   return value;
 }
 export const devicesApi = {
+  login: async (login_name, password) => {
+    const response = await productFetch(libraryBackendUrl('/api/v2/auth/login'), {
+      method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login_name, password }),
+    });
+    const value = await readResponseJson(response);
+    if (!response.ok) { const error = new Error('login_failed'); error.status = response.status; error.code = value?.detail; throw error; }
+    return value;
+  },
+  logout: () => request('/logout', {}, 'POST', 200),
   list: () => request(),
   pair: () => request('/pair', {}),
   exchange: (code, name) => request('/exchange', { code, name }),

@@ -5,7 +5,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 import re
 
-from core.storage_provider.record_lineage import verify_lineage
+from core.storage_provider.record_lineage import verify_first_created, verify_lineage
 from .external_turn_facts import delivery_facts, encoded, source_store, source_is_committed, IDENTITIES
 from .sql_source_identities import KIND as SQL_IDENTITIES
 
@@ -17,6 +17,7 @@ _ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$')
 _REF = {'turn_id', 'id', 'immutable_ref', 'identities_ref', 'identities_kind', 'outcome_ref', 'completed_sequence'}
 _MARKER = {'schema_version', 'owner_id', 'client', 'scope', 'experience_id', 'experience_revision',
     'ownexperience_identity', 'references'}
+_SHARED_MARKER = _MARKER | {'namespace', 'actor_user_id'}
 _COMPANION = {'schema_version', 'owner_id', 'turn_id', 'immutable_ref', 'entries'}
 _REPLAY = ContextVar('external_input_replay', default=None)
 
@@ -157,7 +158,7 @@ def _reference(reader, scope, client, reference, *, _sql_validator=None):
 
 
 def freeze_references(reader, scope, client, references, *, _sql_validator=None):
-    if (client not in {'claude', 'codex', 'deepseek-harness'} or not isinstance(references, list) or not 1 <= len(references) <= 256):
+    if (client not in {'claude', 'codex', 'deepseek-harness', 'chatgpt'} or not isinstance(references, list) or not 1 <= len(references) <= 256):
         _invalid()
     try:
         with _replaying():
@@ -189,28 +190,72 @@ def _read_external_input_dependencies(reader, scope, experience, *, _sql_validat
             _invalid()
         return None
     value, provenance = marker.payload, experience.payload.get('provenance', {})
-    if (marker.revision != 1 or not isinstance(value, Mapping) or set(value) != _MARKER
-            or type(value['schema_version']) is not int or value['schema_version'] != 2
+    shared = isinstance(value, Mapping) and value.get('schema_version') == 3
+    if (marker.revision != 1 or not isinstance(value, Mapping) or set(value) != (_SHARED_MARKER if shared else _MARKER)
+            or type(value['schema_version']) is not int or value['schema_version'] not in {2, 3}
             or value['owner_id'] != scope.user_id or value['scope'] != {'user_id': scope.user_id, 'project_id': scope.project_id}
             or not EXTERNAL_ID.fullmatch(experience.object_id) or value['experience_id'] != experience.object_id
             or type(value['experience_revision']) is not int or value['experience_revision'] != experience.revision
+            or shared and value['experience_revision'] != 1
             or experience.payload.get('id') != experience.object_id or experience.payload.get('scope') != value['scope']
             or not isinstance(provenance, Mapping) or provenance.get('kind') != 'user_statement'
-            or provenance.get('actor') != value['client']):
+            or provenance.get('actor') != value['actor_user_id' if shared else 'client']):
         _invalid()
     identity = value['ownexperience_identity']
     if (not isinstance(identity, Mapping) or identity.get('collection') != 'recognition_experiences'
             or identity.get('object_id') != experience.object_id):
         _invalid()
     try:
-        verify_lineage(reader, identity)
+        if shared:
+            verify_first_created(reader, identity, collection='recognition_experiences', object_id=experience.object_id)
+        else:
+            verify_lineage(reader, identity)
     except Exception:
         _invalid()
-    refs, snapshots = freeze_references(reader, scope, value['client'], value['references'], _sql_validator=_sql_validator)
-    if encoded(refs) != encoded(value['references']):
-        _invalid()
+    if shared:
+        snapshots = _shared_references(reader, scope, value, _sql_validator)
+    else:
+        refs, snapshots = freeze_references(reader, scope, value['client'], value['references'], _sql_validator=_sql_validator)
+        if encoded(refs) != encoded(value['references']):
+            _invalid()
     return ExternalInputDependencies({'external_input_revision': marker.revision,
         'external_experience_id': experience.object_id}, snapshots)
+
+
+def _shared_references(reader, scope, value, validator):
+    refs, namespace = value['references'], value['namespace']
+    if (not callable(validator) or not isinstance(namespace, str) or not namespace
+            or not isinstance(value['actor_user_id'], str) or not _ID.fullmatch(value['actor_user_id'])
+            or value['client'] not in {'claude', 'codex', 'deepseek-harness', 'chatgpt'}
+            or not isinstance(refs, list) or not 1 <= len(refs) <= 256):
+        _invalid()
+    state, snapshots, seen = _REPLAY.get(), [], set()
+    for entry in refs:
+        if not isinstance(entry, Mapping) or set(entry) != {'proof', 'sql_identities'}:
+            _invalid()
+        proof = entry['proof']
+        if not isinstance(proof, Mapping) or set(proof) != {'material', 'snapshot', 'usage_kind'}:
+            _invalid()
+        material = proof['material']
+        if (not isinstance(material, Mapping) or set(material) != {'type', 'id', 'revision', 'project_id', 'namespace'}
+                or material['project_id'] != scope.project_id or material['namespace'] != namespace
+                or material['type'] not in ('original_item', 'original_source', 'document', 'recognition')
+                or not isinstance(material['id'], str) or not _ID.fullmatch(material['id'])
+                or type(material['revision']) is not int or material['revision'] < 1
+                or not isinstance(entry['sql_identities'], list)):
+            _invalid()
+        identity = encoded(material)
+        if identity in seen:
+            _invalid()
+        seen.add(identity)
+        entry_bytes, snapshot_bytes = encoded(entry), encoded(proof['snapshot'])
+        snapshot = validator(reader, scope, entry, trail=state['trail'], budget=state['budget'])
+        if encoded(entry) != entry_bytes or encoded(snapshot) != snapshot_bytes:
+            _invalid()
+        snapshots.append(snapshot)
+    if len({(node['type'], node['id']) for snapshot in snapshots for node in snapshot['nodes']}) > 256:
+        _invalid()
+    return tuple(snapshots)
 
 
 def read_external_input_dependencies(reader, scope, experience, *, _trail=(), _budget=None, _sql_validator=None):

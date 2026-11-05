@@ -37,12 +37,12 @@ class _LateBoundRuntimePort:
             raise AgentRuntimeCompositionError("Agent runtime binding already exists")
         self._runtime = runtime
 
-    def accept_turn(self, request: Mapping[str, object]) -> TurnReceipt:
+    def accept_turn(self, request: Mapping[str, object], *, admission_bundle=None) -> TurnReceipt:
         target = self._require()
         accept = getattr(target, "accept_turn", None)
         if not callable(accept):
             raise AgentRuntimeCompositionError("AI Turn runtime is unavailable")
-        return accept(request)
+        return accept(request,**({'admission_bundle':admission_bundle} if admission_bundle is not None else {}))
 
     def receipt_for(self, turn_id: str, *, replayed: bool = False) -> TurnReceipt:
         target = self._require()
@@ -66,8 +66,9 @@ class _LateBoundRunnerPort:
             raise AgentRuntimeCompositionError("Agent runner binding already exists")
         self._runner = runner
 
-    def accept_and_submit(self, request: Mapping[str, object]) -> TurnReceipt:
-        return self._call("accept_and_submit", request)
+    def accept_and_submit(self, request: Mapping[str, object], *, admission_bundle=None) -> TurnReceipt:
+        return self._call("accept_and_submit", request,
+            **({'admission_bundle':admission_bundle} if admission_bundle is not None else {}))
 
     def request_turn_cancel(self, turn_id: str, *, reason: str) -> bool:
         return self._call("request_turn_cancel", turn_id, reason=reason)

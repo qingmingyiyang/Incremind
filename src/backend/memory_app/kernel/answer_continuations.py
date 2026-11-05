@@ -1,16 +1,30 @@
 """Closed JSON continuation facts; original Turn/lease remain the authority."""
 import math
+from contextlib import nullcontext
 from datetime import datetime, timezone, timedelta
 from time import monotonic
 
 from backend.recognition import WorkScope
 from core.search_and_recall.evidence_windows import EvidenceWindow
 from core.storage_provider import SQLiteStructuredRecord
+from ..transaction_records import TransactionRecords
 
 
 COLLECTION = 'v2_answer_continuations'
 PLAN_KIND = 'answer-continuation-plan-v1'
 PREPARATION_KIND = 'answer-stop-preparation-v1'
+
+
+def _source_scope(query):
+    admission = getattr(query, 'origin_admission', None)
+    if admission is None:
+        return nullcontext()
+    from ..v2.shared_auxiliary import _qualified_commit
+    return _qualified_commit(admission)
+
+
+def _execution_records(query):
+    return query.execution_owner.records
 
 
 def save_preparation(query, identity, parameters, *, request, store, runtime):
@@ -29,11 +43,13 @@ def save_preparation(query, identity, parameters, *, request, store, runtime):
             raise ValueError('answer_preparation_changed')
         return
     ref = store.get_or_create_immutable_payload(identity, PREPARATION_KIND, binding)
-    with query.records.begin() as tx:
+    with _source_scope(query) as qualification, _execution_records(query).begin() as tx:
         if tx.read(COLLECTION, identity) is not None:
             raise ValueError('answer_preparation_already_exists')
         tx.put(COLLECTION, identity, {'project_id': binding['project_id'], 'question': binding['question'],
             'state': 'prepared', 'plan_ref': ref}, expected_revision=0)
+        if qualification is not None:
+            qualification._actor_reader(TransactionRecords(tx))
         tx.commit()
 
 
@@ -120,7 +136,7 @@ def save_plan(query, identity, plan, history, *, request, store, runtime):
          'request': frozen, 'lease': {'owner_id': lease.owner_id, 'generation': lease.generation}, 'capsule': capsule})
     if store.assert_active_run_lease(lease) is None:
         raise ValueError('answer_continuation_lease_changed')
-    with query.records.begin() as tx:
+    with _source_scope(query) as qualification, _execution_records(query).begin() as tx:
         old = tx.read(COLLECTION, identity)
         preparation = store.get_immutable_payload(identity, PREPARATION_KIND)
         if old is not None and (preparation is None or old.payload['plan_ref'] != preparation[0]
@@ -129,6 +145,8 @@ def save_plan(query, identity, plan, history, *, request, store, runtime):
         tx.put(COLLECTION, identity, {**(old.payload if old else {}), 'project_id': plan['project_id'],
             'question': plan['question'], 'state': 'prepared', 'plan_ref': ref},
             expected_revision=old.revision if old else 0)
+        if qualification is not None:
+            qualification._actor_reader(TransactionRecords(tx))
         tx.commit()
 
 

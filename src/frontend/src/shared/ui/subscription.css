@@ -6,5 +6,11 @@
 .ui-subscription a { color: var(--red); }
 .ui-subscription [role="alert"] { padding: 8px 12px; font: 13px var(--sans); color: var(--red); }
 .ui-subscription-login { display: inline-block; margin: 8px 12px; }
+.ui-subscription-callback { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 12px; min-width: 0; }
+.ui-subscription-callback p { width: 100%; margin: 0; font: 13px var(--sans); color: var(--ink3); line-height: 1.6; }
+.ui-subscription-callback label { display: flex; flex: 1 1 200px; min-width: 0; flex-direction: column; gap: 6px; font: 13px var(--sans); color: var(--ink2); }
+.ui-subscription-callback input { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 12px; font: 14px var(--mono); color: var(--ink); border: 1px solid var(--line2); border-radius: var(--r-control); background: var(--paper); }
+.ui-subscription-callback input:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.ui-subscription-callback input:disabled { opacity: .5; }
 .ui-subscription button:disabled, .ui-subscription select:disabled { opacity: .5; cursor: default; }
 .ui-subscription button:focus-visible, .ui-subscription select:focus-visible, .ui-subscription a:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }

@@ -497,6 +497,8 @@ class SQLiteStructuredRecordUnitOfWork:
                     f"expected revision {expected_revision}, found {actual_revision}"
                 )
             revision = actual_revision + 1
+            from .persistence_budget import consume_record
+            consume_record(self._connection, collection, object_id, payload_json, revision)
             if row is None:
                 self._connection.execute(
                     """

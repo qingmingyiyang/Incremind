@@ -5,8 +5,11 @@ from __future__ import annotations
 from core.storage_provider.source_retrieval_index import project_original
 
 import asyncio
+import base64
+from copy import deepcopy
 import json
 import mimetypes
+import os
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -95,6 +98,58 @@ def _sqlite_lock_contention(exc: sqlite3.OperationalError) -> bool:
 
 async def _read_existing_source(owner, item, project_id, item_id, run_id, asr_target, checkpoint, validate_remote):
     return item, item["source_text"]
+
+
+async def _read_file_source(owner, item, project_id, item_id, run_id, asr_target, checkpoint, validate_remote):
+    from backend.recognition import RecognitionConflict
+    from backend.shared.llm.oxr_gateway import is_oxr_endpoint
+    from .uploaded_media import original_path, UploadedImageReference
+    from .v2.image_read import read_uploaded_images, effective_image_read, uploaded_images
+    from .v2.privacy import freeze_turn_materials
+    from .source_egress import SourceEgressService
+    if Path(item.get('original_path', '')).suffix.lower() != '.pdf':
+        return item, item['source_text']
+    row = owner.items.item_for(item_id, project_id)
+    materials = [{'type': 'original_item', 'id': item_id, 'revision': row.revision, 'project_id': project_id}]
+    images = uploaded_images(owner.items.records, owner.runtime_root, project_id, materials)
+    def validate():
+        owner.items.processing_lease.guard(item_id, project_id, run_id)
+        current = owner.items.item_for(item_id, project_id)
+        if (current.revision != row.revision or current.payload['status'] != 'processing'
+                or current.payload.get('processing_run_id') != run_id
+                or uploaded_images(owner.items.records, owner.runtime_root, project_id, materials) != images):
+            raise RecognitionConflict('image_original_changed')
+    validate()
+    retained = effective_image_read(owner.items.records, row)
+    if retained is not None and retained['run_id'] == run_id:
+        if retained['images'] != images:
+            raise RecognitionConflict('image_original_changed')
+        return item, retained['source_text']
+    configuration = owner.models.vision_binding()
+    # 资料资格沿用原 generation 上限，识图外发另查 vision 独立开关。
+    allowed, _ = freeze_turn_materials(owner.items.records, owner.models, project_id, materials,
+        authority=SourceEgressService(owner.items.records), purpose='generation')
+    remote = (configuration['mode'] == 'remote' and bool(allowed)
+        and egress_allowed(owner.items.records, owner.models, project_id, 'vision')
+        and is_oxr_endpoint(configuration.get('base_url') or '', configuration.get('model')))
+    if remote:
+        source = await run_in_threadpool(read_uploaded_images, owner, project_id, item_id, run_id, UploadedImageReference)
+        source = _text(source, 'source_text')
+        item = owner.items.update(item_id, project_id, {'processing'}, expected_run_id=run_id, source_text=source)
+        return item, source
+    # 私密或关闭外发时继续读取本机文本，扫描件明确报告无法提取。
+    try:
+        source = await run_in_threadpool(BuiltinDocumentTextExtractor().extract,
+            original_path(owner.runtime_root, item), 'application/pdf')
+    except LocalDocumentInputError as error:
+        if error.code == 'document_text_empty':
+            raise ValueError('source_text_empty') from None
+        raise
+    validate()
+    source = _text(source, 'source_text')
+    if source != item['source_text']:
+        item = owner.items.update(item_id, project_id, {'processing'}, expected_run_id=run_id, source_text=source)
+    return item, source
 
 
 async def _read_media_source(reader, owner, item, project_id, item_id, run_id, validate_remote):
@@ -228,23 +283,135 @@ async def _read_xhs_images_source(owner, item, project_id, item_id, run_id, capt
 
 
 SOURCE_READERS = MappingProxyType({
-    "text": _read_existing_source, "file": _read_existing_source, "link": _read_existing_source,
+    "text": _read_existing_source, "file": _read_file_source, "link": _read_existing_source,
     "image": _read_image_source, "video": _read_audio_source, "audio": _read_audio_source, "bilibili": _read_bilibili_source, "xiaohongshu": _read_xiaohongshu_source,
 })
 
 
+class GeneratedTaskFiles:
+    def __init__(self, intake, proof):
+        from .v2.external_task_files import QualifiedTaskFiles
+        from .v2.external_workspace import validate_task_path
+        if type(proof) is not QualifiedTaskFiles or proof.records is not intake.items.records:
+            raise ValueError('generated_file_authority_invalid')
+        self.intake, self.proof = intake, proof
+        value = proof.validate(proof.records)
+        if not value['files']:
+            raise ValueError('generated_files_missing')
+        self.payloads, self.attachments, self._identities = [], [], {}
+        self._publication = None
+        for ordinal, file in enumerate(value['files'], 1):
+            data = base64.b64decode(file['content'], validate=True)
+            name = Path(file['name']).name
+            suffix = Path(name).suffix.lower()
+            identity = 'workspace-agent-' + proof.request['turn_id'].removeprefix('turn-') + '-' + str(ordinal)
+            path = intake.root / (identity + suffix)
+            validate_task_path(path)
+            created_identity = None
+            try:
+                with path.open('xb') as output:
+                    output.write(data)
+                    output.flush()
+                    os.fsync(output.fileno())
+                    actual = os.fstat(output.fileno())
+                    created_identity = [actual.st_dev, actual.st_ino, actual.st_mode, actual.st_size, actual.st_mtime_ns]
+            except FileExistsError:
+                # 复用副本前，下一步会在实际打开的同一fd核验字节、身份及单链接。
+                pass
+            self._identities[str(path)] = self._managed_identity(path, data, expected_identity=created_identity)
+            self.payloads.append(dict(id=identity, project_id=proof.request['scope']['project_id'],
+                input_kind='file', title=_upload_name(name), source_text=data.decode('utf-8'),
+                status='confirmed', draft=None, error=None, document_id=None,
+                created_at=value['captured_at'], original_path=str(path), original_name=_upload_name(name)))
+            self.attachments.append({'source_id': identity, 'name': file['name'], 'bytes': len(data)})
+        self.inputs = {'immutable_ref': value['immutable_ref'], 'files': self.attachments}
+        self._prepared = deepcopy((self.payloads, self.attachments, self.inputs, self._identities))
+
+    def validate(self, tx):
+        self.proof.validate(tx)
+        if (self.payloads, self.attachments, self.inputs, self._identities) != self._prepared:
+            raise ValueError('generated_file_authority_invalid')
+
+    @staticmethod
+    def _managed_identity(path, expected, *, expected_identity=None):
+        from .v2.external_workspace import verify_task_material
+        return verify_task_material(path, expected, expected_identity=expected_identity, require_single_link=True)
+
+    def check_managed_files(self):
+        for payload in self.payloads:
+            path = Path(payload['original_path'])
+            self._managed_identity(path, payload['source_text'].encode('utf-8'), expected_identity=self._identities[str(path)])
+
+    def enlist(self, tx, operation, result):
+        self.validate(tx)
+        self._publication = (tx, operation, deepcopy(result), deepcopy(self.proof.value))
+
+    def validate_publication(self, tx, document_id):
+        from .v2.external_task_files import FILES_KIND
+        if (self._publication is None or self._publication[0] is not tx or self._publication[2]['document_id'] != document_id
+                or self.intake.items.records is not self.proof.records
+                or (self.payloads, self.attachments, self.inputs, self._identities) != self._prepared
+                or self.proof.value != self._publication[3]):
+            raise ValueError('generated_file_authority_invalid')
+        product = tx.read('v2_turns', self.proof.product_id)
+        execution = tx.read('v2_task_executions', self.proof.product_id)
+        operation = tx.read('v2_task_draft_operations', self._publication[1])
+        value = self.proof.value
+        if (product is None or execution is None or execution.payload.get('owner') is not None
+                or execution.payload.get('request') != self.proof.request or execution.payload.get('started') is not True
+                or product.payload.get('project_id') != self.proof.request['scope']['project_id']
+                or product.payload.get('receipt', {}).get('do', {}).get('state') != 'done'
+                or product.payload['receipt']['do'].get('document_id') != document_id
+                or product.payload['receipt']['do'].get('kernel_turn_id') != self.proof.request['turn_id']
+                or operation is None or operation.payload.get('result') != self._publication[2]
+                or self.proof.turns.get_immutable_payload(self.proof.request['turn_id'], FILES_KIND)
+                    != (value['immutable_ref'], {key: item for key, item in value.items() if key != 'immutable_ref'})):
+            raise ValueError('generated_file_authority_invalid')
+
+    def save_in_uow(self, tx, document_id, parent):
+        from .transaction_records import TransactionRecords
+        from core.storage_provider.record_lineage import capture_lineage
+        self.validate_publication(tx, document_id)
+        self.check_managed_files()
+        items = self.intake.items.with_records(TransactionRecords(tx))
+        births = []
+        for payload in self.payloads:
+            created = items.create_upload({**payload, 'document_id': document_id,
+                'provenance': {'source_refs': [{'type': 'experience', 'id': parent.object_id, 'revision': parent.revision}]}})
+            births.append({'source_id': created['id'], 'revision': created['revision'],
+                'payload': {key: value for key, value in created.items() if key != 'revision'},
+                'lineage': capture_lineage(tx, 'workspace_items', created['id'])})
+        return births
+
+
 class WorkspaceIntake:
-    def __init__(self, runtime_root, items, models, *, admission=None, job_submitter=None):
+    def __init__(self, runtime_root, items, models, *, admission=None, job_submitter=None, source_factory=None):
         self.runtime_root = runtime_root
         self.root = runtime_root / "workspace"
         self.items = items
         self.models = models
         self.admission = admission
         self.job_submitter = job_submitter
+        if source_factory is not None:
+            from .v2.shared_organize import SharedOrganizeFactory
+            if not isinstance(source_factory, SharedOrganizeFactory) or source_factory.query.models is not models:
+                raise ValueError('shared_organize_owner_changed')
+        self.source_factory = source_factory
 
     def with_items(self, items, models):
         """Reuse intake behavior with an enlisted transactional item store."""
-        return WorkspaceIntake(self.runtime_root, items, models, admission=self.admission,job_submitter=self.job_submitter)
+        return WorkspaceIntake(self.runtime_root, items, models, admission=self.admission,
+            job_submitter=self.job_submitter, source_factory=self.source_factory)
+
+    @_admitted
+    async def prepare_generated_task_files(self, proof):
+        # 只接受真实冻结产物的内部资格对象，公开上传入口仍按原合同处理。
+        from .v2.external_task_files import QualifiedTaskFiles
+        if type(proof) is not QualifiedTaskFiles or proof.records is not self.items.records:
+            raise ValueError('generated_file_authority_invalid')
+        value = proof.validate(proof.records)
+        _check_intake_bytes(sum(len(base64.b64decode(file['content'], validate=True)) for file in value['files']))
+        return await run_in_threadpool(GeneratedTaskFiles, self, proof)
 
     def read_images(self, project_id, item_id, run_id, reference_factory):
         from .v2.image_read import read_uploaded_images
@@ -269,12 +436,17 @@ class WorkspaceIntake:
         return item, source
 
     @_admitted
-    async def add_text(self, body: dict, *, preserve_text: bool = False):
+    async def add_text(self, body: dict, *, preserve_text: bool = False, stage_created=None, created_item_id=None):
+        if {'stage_created', 'created_item_id'} & set(body):
+            raise HTTPException(400, 'invalid_text_fields')
+        if stage_created is not None and not callable(stage_created):
+            raise TypeError('intake_stage_created_must_be_callable')
         text = _text(body.get("text"), "text")
         title = _optional_title(body.get("title")) or text.splitlines()[0][:80]
         text = body["text"] if preserve_text else text
         _check_intake_bytes(len(text.encode('utf8')))
-        return self.items.create(_project(body.get("project_id", "default")), "text", title, text)
+        return self.items.create(_project(body.get("project_id", "default")), "text", title, text,
+            stage_created=stage_created, created_item_id=created_item_id)
 
     async def bind_link_images(self, item_id, project_id, url, *, expected_revision):
         if (not isinstance(url, str) or len(url) > 2048 or url != url.strip()
@@ -284,7 +456,11 @@ class WorkspaceIntake:
             expected_revision=expected_revision, runtime_root=self.runtime_root)
 
     @_admitted
-    async def add_link(self, body: dict):
+    async def add_link(self, body: dict, *, stage_created=None, created_item_id=None):
+        if {'stage_created', 'created_item_id'} & set(body):
+            raise HTTPException(400, 'invalid_link_fields')
+        if stage_created is not None and not callable(stage_created):
+            raise TypeError('intake_stage_created_must_be_callable')
         project_id = _project(body.get("project_id", "default"))
         url = body.get("url")
         if not isinstance(url, str) or len(url) > 2048:
@@ -295,11 +471,13 @@ class WorkspaceIntake:
             parsed = urlsplit(url)
             public_url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
             return _public(self.items.create(project_id, "link", f"{platform} 视频", "", url=public_url,
-                                  platform=platform, content_kind="video", media_request_url=url))
+                                  platform=platform, content_kind="video", media_request_url=url,
+                                  stage_created=stage_created, created_item_id=created_item_id))
         # Fetch before creating an item so rejected addresses never become retryable work.
         content = await run_in_threadpool(links._fetch_url, url)
         _check_intake_bytes(len(content.encode('utf8')))
-        return self.items.create(project_id, "link", urlsplit(url).hostname or url, content, url=url)
+        return self.items.create(project_id, "link", urlsplit(url).hostname or url, content, url=url,
+            stage_created=stage_created, created_item_id=created_item_id)
 
     @_admitted
     async def add_file(self, project_id: str = Form("default"), file: UploadFile = File(...)):
@@ -340,7 +518,10 @@ class WorkspaceIntake:
                     content = _text(await run_in_threadpool(BuiltinDocumentTextExtractor().extract, path,
                                     mimetypes.guess_type(name)[0] or "application/octet-stream"), "source_text")
                 except LocalDocumentInputError as error:
-                    raise HTTPException(400, error.code) from None
+                    if suffix == '.pdf' and error.code == 'document_text_empty':
+                        content = ''
+                    else:
+                        raise HTTPException(400, error.code) from None
             payload = dict(id=item_id, project_id=project_id, input_kind=kind, title=name,
                            source_text=content, status="staged", draft=None, error=None,
                            document_id=None, created_at=_now(), original_path=str(path), original_name=name)
@@ -397,6 +578,9 @@ class WorkspaceIntake:
         project_id = _project(body.get("project_id", "default"))
         self.items.processing_lease.recover_expired()
         current_row = self.items.item_for(item_id, project_id)
+        if self.source_factory is not None and 'expected_revision' in body and (type(body['expected_revision']) is not int
+                or body['expected_revision'] != current_row.revision):
+            raise HTTPException(409, 'item_revision_conflicted')
         current = current_row.payload
         if current["status"] not in {"staged", "failed"}:
             raise HTTPException(409, "invalid_item_state")
@@ -404,6 +588,17 @@ class WorkspaceIntake:
         if current["input_kind"] in {"audio", "video"} and current.get("audio_transcription") is not None:
             audio_checkpoint = audio._validated_audio_transcription(current, self.runtime_root)
         generation_target = generation._remote_generation_target(self.models)
+        if self.source_factory is None and current['input_kind'] == 'conversation':
+            from backend.recognition import RecognitionConflict
+            from core.storage_provider.record_lineage import RecordLineageError
+            from .v2.conversation_shares import protect_conversation_archive
+            from .v2.shared_projects import SharedProjectError
+            try:
+                protected = await run_in_threadpool(protect_conversation_archive, self.items.records, current_row)
+            except (RecognitionConflict, RecordLineageError, SharedProjectError) as error:
+                raise HTTPException(409, 'conversation_archive_binding_changed') from error
+            if protected and generation_target:
+                raise HTTPException(409, 'private_source_remote_blocked')
         from .v2.source_sections import paired_input
         xhs_binding = paired_input(self.items.records, current_row)
         xhs_capture, xhs_error = None, None
@@ -476,12 +671,11 @@ class WorkspaceIntake:
                         or _settings_revision(current_configuration) != consent["settings_revision"]):
                     raise ModelConfigurationError("remote_processing_target_changed")
                 from .source_egress import SourceEgressService
-                from .transaction_records import TransactionRecords
                 from backend.recognition import WorkScope, RecognitionError
                 try:
                     with self.items.records.begin() as reader:
                         row = reader.read("workspace_items",item_id)
-                        authority = SourceEgressService(TransactionRecords(reader))
+                        authority = SourceEgressService(self.items.records, reader=reader)
                         snapshot = authority.snapshot(WorkScope("local-user",project_id),[
                             {"type":"original_item","id":item_id,"revision":row.revision}])
                         authority.require(snapshot,"generation")
@@ -545,10 +739,10 @@ class WorkspaceIntake:
                 "validate_current": lambda: validate_remote("generation"),
             }
             from .v2.organize_turns import OrganizeTurns
-            organize = OrganizeTurns(root=self.runtime_root, records=self.items.records,
-                models=self.models, item_id=item_id, project_id=project_id, source=source,
-                validate_current=completion_options["validate_current"],
-                lease=self.items.processing_lease, run_id=run_id)
+            arguments = dict(item_id=item_id, project_id=project_id, source=source,
+                validate_current=completion_options["validate_current"], lease=self.items.processing_lease, run_id=run_id)
+            organize = (self.source_factory.create(self, **arguments) if self.source_factory is not None else
+                OrganizeTurns(root=self.runtime_root, records=self.items.records, models=self.models, **arguments))
             from .v2.material_analysis import selected_flow, run_analysis
             candidate_flow = selected_flow(organize)
             from .v2.transcript_correction import (
@@ -557,6 +751,8 @@ class WorkspaceIntake:
             correction_owner = TranscriptCorrection(organize, root=self.runtime_root)
             correction = await run_in_threadpool(correction_owner.run, candidate_flow=candidate_flow)
             if correction is not None:
+                if correction.get('state') == 'completed':
+                    organize.retain_stage_proofs(correction.get('stage_refs', []))
                 completion_options['validate_current'] = correction_owner.guard
             if candidate_flow:
                 draft, model_meta = await run_in_threadpool(run_analysis, organize,
@@ -597,10 +793,20 @@ class WorkspaceIntake:
             # A timeout fails this run; it never permits a late result to publish.
             stop_heartbeat.set()
             await asyncio.wait_for(heartbeat_task, timeout=_PROCESSING_HEARTBEAT_DRAIN_TIMEOUT)
-            return _public(self.items.update(item_id, project_id, {"processing"}, expected_run_id=run_id,
+            if self.source_factory is not None:
+                return _public(self.source_factory.publish(organize, self, item_id=item_id,
+                    project_id=project_id, run_id=run_id, source=source, draft=draft,
+                    processing_seconds=round(time.monotonic() - started, 2), metadata=model_meta))
+            from .transaction_records import TransactionRecords
+            with self.items.records.begin() as tx:
+                organize.validate_commit(tx)
+                result = self.items.with_records(TransactionRecords(tx)).update(item_id, project_id,
+                                  {"processing"}, expected_run_id=run_id,
                                   source_text=source, draft=draft,
                                   title=draft["title"], status="ready", processing_seconds=round(time.monotonic() - started, 2),
-                                  model_usage=model_meta.get("usage", {}), model_name=model_meta.get("model", "")))
+                                  model_usage=model_meta.get("usage", {}), model_name=model_meta.get("model", ""))
+                tx.commit()
+            return _public(result)
         except asyncio.CancelledError:
             await _run_lease_operation(self.items.processing_lease.interrupt, item_id, project_id, run_id)
             raise

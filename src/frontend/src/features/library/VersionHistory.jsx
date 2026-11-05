@@ -7,16 +7,19 @@ export default function VersionHistory({ projectId, recognitionId, api = recogni
   const [versions, setVersions] = useState([]);
   const [imported, setImported] = useState([]);
   const [error, setError] = useState("");
+  const [reading, setReading] = useState(true), [refresh, setRefresh] = useState(0);
   useEffect(() => {
     let current = true;
-    setVersions([]); setImported([]); setError("");
+    setVersions([]); setImported([]); setError(""); setReading(true);
     api.loadRecognitionVersions({ projectId, recognitionId }).then((result) => {
       if (current) { setVersions(result.versions || []); setImported(result.imported_versions || []); }
-    }).catch((failure) => { if (current) setError(failure.message); });
+    }).catch(() => { if (current) setError('读取未完成'); })
+      .finally(() => { if (current) setReading(false); });
     return () => { current = false; };
-  }, [projectId, recognitionId, api]);
-  return <details className="recognition-version-history"><summary>修改历史 · {versions.length} 个版本{imported.length ? ` · ${imported.length} 个来源版本` : ""}</summary>
-    {error ? <p role="alert">{error}</p> : null}
+  }, [projectId, recognitionId, api, refresh]);
+  return <details className="recognition-version-history"><summary>修改历史 · {reading || error ? '—' : versions.length} 个版本{imported.length ? ` · ${imported.length} 个来源版本` : ""}</summary>
+    {error ? <p role="alert">{error}<button type="button" disabled={reading} onClick={() => setRefresh(value => value + 1)}>重新读取</button></p> : null}
+    {reading && <p role="status">读取修改历史</p>}
     {versions.map((version) => <details key={version.id}><summary>版本 {version.version} · {actions[version.action] || version.action} · {version.recorded_at}</summary>
       <p style={{ whiteSpace: "pre-wrap" }}>{version.snapshot.content}</p>
       {version.snapshot.conditions?.length ? <p>适用条件：{version.snapshot.conditions.join("；")}</p> : null}

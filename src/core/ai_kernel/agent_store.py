@@ -935,14 +935,19 @@ class SQLiteAgentStore:
             raise AgentStoreLimitExceeded("parent budget reservation limit reached")
 
     @staticmethod
-    def _assert_profile_snapshot(connection: sqlite3.Connection, run: AgentRun) -> None:
-        row = connection.execute("SELECT payload_json FROM ai_agent_profiles WHERE profile_id=?", (run.profile_id,)).fetchone()
+    def profile_in_transaction(connection: sqlite3.Connection, profile_id: str) -> AgentProfile:
+        row = connection.execute("SELECT payload_json FROM ai_agent_profiles WHERE profile_id=?", (profile_id,)).fetchone()
         if row is None:
-            profile = next((item for item in builtin_agent_profiles() if item.profile_id == run.profile_id), None)
+            profile = next((item for item in builtin_agent_profiles() if item.profile_id == profile_id), None)
             if profile is None:
                 raise AgentStoreInvalidTransition("custom agent profile must be persisted")
         else:
             profile = _profile(_load(row[0]))
+        return profile
+
+    @staticmethod
+    def _assert_profile_snapshot(connection: sqlite3.Connection, run: AgentRun) -> None:
+        profile = SQLiteAgentStore.profile_in_transaction(connection,run.profile_id)
         if (profile.revision, profile.role, profile.model_tier) != (run.profile_revision, run.role, run.model_tier):
             raise AgentStoreInvalidTransition("agent run profile snapshot drifted")
         if not profile.enabled or not run.budget_limit.is_subset_of(profile.budget_limit) or not set(run.capability_ids).issubset(profile.capability_ids):

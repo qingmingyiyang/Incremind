@@ -3,6 +3,7 @@ from contextlib import contextmanager, nullcontext
 from functools import lru_cache, wraps
 from pathlib import Path
 from threading import RLock, Lock, local
+from .native_io import native_io_path
 
 _guard = Lock()
 _locks = {}
@@ -25,8 +26,8 @@ def object_lock(path):
         if key in held:
             yield
             return
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open('a+b') as handle:
+        Path(native_io_path(path.parent, resolve=False)).mkdir(parents=True, exist_ok=True)
+        with Path(native_io_path(path, resolve=False)).open('a+b') as handle:
             handle.seek(0, 2)
             if handle.tell() == 0:
                 handle.write(b'0')

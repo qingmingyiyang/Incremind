@@ -15,19 +15,19 @@ def task_receipt(status, previous=None):
         'progress': {'done': done, 'total': total}, 'document_id': status.get('document_id')}
 
 
-def read_task(records, scope, documents, previous, *, models=None, usage_reader=None):
+def read_task(records, scope, documents, previous, *, models=None, usage_reader=None, turn_id=None):
+    from .task_display import product_task_display
+    previous = product_task_display(records, scope.project_id, turn_id, previous)
     if previous.get('executor'):
-        progress = previous.get('progress')
-        if previous.get('state') == 'running' and previous.get('kernel_turn_id'):
-            from .external_runs import ExternalRuns
-            from .external_runs import ExternalRunError
-            try:
-                run = ExternalRuns(records).read(previous['kernel_turn_id'], owner_id=scope.user_id)
-                if run['status'] == 'running':
-                    progress = {'done': 1, 'total': 3}
-            except ExternalRunError:
-                pass
-        return {**previous, 'progress': progress, 'model_usage': previous.get('usage'), 'model_cost': None,
+        from .external_progress import external_usage, validate_progress
+        progress = validate_progress(previous['external_progress'], executor=previous['executor']) if previous.get('external_progress') else None
+        usage = external_usage(previous['executor'], previous['usage']) if previous.get('usage') is not None else (
+            progress['usage'] if progress else external_usage(previous['executor']))
+        return {**previous, 'progress': {'done': None, 'total': None}, 'external_progress': progress,
+            **({'external_citations_binding': {'product_id': turn_id, 'project_id': scope.project_id}}
+                if turn_id and previous.get('state') == 'done' else {}),
+            'external_files': previous.get('external_files', {'state': 'not_agreed', 'count': 0, 'rejected': 0}),
+            'external_usage': usage, 'model_usage': previous.get('usage'), 'model_cost': None,
             'model': previous['executor']}
     if previous.get('task_id') is None:
         if previous.get('kernel_turn_id'):

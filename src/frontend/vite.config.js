@@ -74,7 +74,7 @@ export default defineConfig({
     proxy: {
       "/api": {
         target: backendProxyOrigin,
-        changeOrigin: true,
+        changeOrigin: false,
       },
     },
   },

@@ -11,6 +11,7 @@ from core.model_gateway import ModelExecutionControlPort
 
 if TYPE_CHECKING:
     from .dispatcher import ToolDispatchRequest
+    from .product_admission import ProductAdmissionBundle
 
 
 TurnStatus = Literal[
@@ -395,7 +396,7 @@ class AIRuntimePort(Protocol):
 
     def submit_turn(self, request: Mapping[str, object]) -> TurnReceipt: ...
 
-    def accept_turn(self, request: Mapping[str, object]) -> TurnReceipt: ...
+    def accept_turn(self, request: Mapping[str, object], *, admission_bundle: ProductAdmissionBundle | None = None) -> TurnReceipt: ...
 
     def run_accepted_turn(self, turn_id: str, run_lease: RunLeaseToken | None = None) -> TurnReceipt: ...
 
@@ -748,6 +749,8 @@ class TurnStateStorePort(Protocol):
     """Durable Turn request, idempotency, approval and action authority."""
 
     def claim_turn(self, request: Mapping[str, object]) -> tuple[str, bool]: ...
+
+    def admission_bundle(self, request: Mapping[str, object], binding: ProductAdmissionBundle) -> ContextManager[None]: ...
 
     def get_request(self, turn_id: str) -> Mapping[str, object] | None: ...
 

@@ -20,6 +20,7 @@ from .privacy import (
     external_catalog_allowed, external_egress_allowed, is_private_project, privacy_revision, resolve_turn_material,
 )
 from .policies.handoff import MAX_BUDGET
+from .native_mcp_scope import require_native_current
 
 
 _BINDINGS = 'v2_external_agent_bindings'
@@ -48,7 +49,7 @@ def _identifier(value):
 
 def _request(value, owner):
     if (not isinstance(value, Mapping) or set(value) != _REQUEST_FIELDS
-            or not isinstance(value['client'], str) or value['client'] not in {'claude', 'codex', 'deepseek-harness'}
+            or not isinstance(value['client'], str) or value['client'] not in {'claude', 'codex', 'deepseek-harness', 'chatgpt'}
             or not isinstance(value['tool'], str) or value['tool'] not in {'projects', 'recall', 'methods', 'read'}
             or not isinstance(value['query'], str) or '\x00' in value['query']
             or type(value['budget']) is not int or not 1 <= value['budget'] <= MAX_BUDGET
@@ -66,7 +67,7 @@ def _encoded(value):
 
 def _write_request(client, tool, project_id, owner_id):
     project_id = _identifier(project_id)
-    if (not isinstance(client, str) or client not in {'claude', 'codex', 'deepseek-harness'}
+    if (not isinstance(client, str) or client not in {'claude', 'codex', 'deepseek-harness', 'chatgpt'}
             or not isinstance(tool, str) or tool not in {'remember', 'propose_insight'}):
         raise ExternalAgentGuardError('external_agent_request_invalid')
     return {'client': client, 'tool': tool,
@@ -105,14 +106,19 @@ def _quota_collection(day):
 class ExternalAgentGuard:
     """Bind one supplied owner to this existing record space; no routing occurs."""
 
-    def __init__(self, records, *, owner_id, now=None):
+    def __init__(self, records, *, owner_id, now=None, reader=None):
+        if isinstance(records, TransactionRecords):
+            raise ExternalAgentGuardError('external_agent_binding_invalid')
         self.records, self.owner_id = records, _identifier(owner_id)
+        self._reader = TransactionRecords(reader) if reader is not None else None
         self.now = now or (lambda: datetime.now(timezone.utc))
 
     @contextmanager
     def _transaction(self):
         try:
-            with self.records.begin() as tx:
+            with (self.records.begin() if self._reader is None else self._reader.begin()) as tx:
+                if self._reader is not None:
+                    SourceEgressService(self.records, reader=tx)
                 yield tx
         except ExternalAgentGuardError:
             raise
@@ -120,7 +126,8 @@ class ExternalAgentGuard:
             raise ExternalAgentGuardError('external_agent_binding_invalid') from None
 
     def _current(self, tx, turn_id, request, materials):
-        settings = external_agent_settings(tx)
+        require_native_current()
+        settings = external_agent_settings(tx, client=request['client'])
         project, client = request['scope']['project_id'], request['client']
         allowed = (external_catalog_allowed(tx, client)
             if request['tool'] == 'projects' and project == 'default' and materials == []
@@ -134,7 +141,7 @@ class ExternalAgentGuard:
         if project == 'me' and not settings['include_profile']:
             raise ExternalAgentGuardError('external_agent_profile_disabled')
         epoch = privacy_revision(tx)
-        authority = SourceEgressService(TransactionRecords(tx))
+        authority = SourceEgressService(self.records, reader=tx)
         resolved, snapshots = [], []
         for material in materials:
             own_project = material['project_id']
@@ -182,7 +189,7 @@ class ExternalAgentGuard:
         # original-source delete/recreation even when its revision returns to 1.
         if _encoded(current) != _encoded(dict(row.payload)):
             raise ExternalAgentGuardError('external_agent_binding_invalid')
-        authority = SourceEgressService(TransactionRecords(tx))
+        authority = SourceEgressService(self.records, reader=tx)
         for material, snapshot in zip(materials, row.payload['source_snapshots']):
             scope = WorkScope(self.owner_id, material['project_id'])
             authority.validate_snapshot(scope, snapshot)
@@ -242,16 +249,21 @@ class ExternalAgentGuard:
         with self._transaction() as tx:
             self._current(tx, 'external-write-admission', request, [])
 
+    def _validate_reservation(self, tx, row, identity_field, identity, request):
+        if row is None:
+            raise ExternalAgentGuardError('external_agent_binding_invalid')
+        payload = row.payload
+        if (row.revision != 1 or set(payload) != {'owner_id', identity_field, 'request_json', 'day'}
+                or payload['owner_id'] != self.owner_id or payload[identity_field] != identity
+                or payload['request_json'] != _encoded(request)
+                or self._quota(tx, payload['day']) is None):
+            raise ExternalAgentGuardError('external_agent_binding_invalid')
+        return deepcopy(dict(payload))
+
     def _reserve_once(self, tx, collection, identity_field, identity, request):
         old = tx.read(collection, identity)
         if old is not None:
-            payload = old.payload
-            if (old.revision != 1 or set(payload) != {'owner_id', identity_field, 'request_json', 'day'}
-                    or payload['owner_id'] != self.owner_id or payload[identity_field] != identity
-                    or payload['request_json'] != _encoded(request)
-                    or self._quota(tx, payload['day']) is None):
-                raise ExternalAgentGuardError('external_agent_binding_invalid')
-            return deepcopy(dict(payload))
+            return self._validate_reservation(tx, old, identity_field, identity, request)
         now = self.now()
         if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
             raise ExternalAgentGuardError('external_agent_clock_invalid')

@@ -21,6 +21,186 @@ _ROUTES = {'recognition-model-routing-snapshot-v1', 'memory-model-route-v1',
            'organize-model-route-v1', 'product-aux-model-routing-v1', 'workbench-route-model-v1'}
 
 
+def frozen_public_turn_requests(records, actual_runtime_root, public_id, *, reader=None):
+    from backend.recognition.external_turn_facts import source_store
+    from backend.security.audited_records import AuditedRecordStore
+    from backend.security.user_context import USER_ACCESS
+    from core.storage_provider import SQLiteStructuredRecordStore
+    from ..transaction_records import TransactionRecords
+    access = USER_ACCESS.get()
+    if (not isinstance(records,(SQLiteStructuredRecordStore,AuditedRecordStore))
+            or (access is not None and (not isinstance(records,AuditedRecordStore)
+                or access.target_user_id != records.user_id))):
+        raise ValueError('public_native_actual_owner_required')
+    current = records if reader is None else reader
+    if reader is not None and (not isinstance(reader,TransactionRecords) or not reader.connection.in_transaction
+            or Path(reader.database_path).resolve() != Path(records.database_path).resolve()):
+        raise ValueError('public_native_transaction_owner_changed')
+    source = source_store(records)
+    root = Path(actual_runtime_root).resolve()
+    if source.root.resolve() != root / '.rebuild-data':
+        raise ValueError('public_native_owner_root_changed')
+    databases = [path for path in (root / '.rebuild-data/ai-turns.sqlite3', root / 'ai-turns.sqlite3') if path.is_file()]
+    if len(databases) > 1:
+        raise ValueError('public_native_owner_ambiguous')
+    public = current.read('v2_turns', public_id)
+    if public is None:
+        raise ValueError('public_native_turn_unavailable')
+    observed = {('v2_turns',public_id):public}
+
+    def read(collection, identity):
+        row = current.read(collection,identity)
+        if row is None:
+            raise ValueError('public_native_binding_unavailable')
+        observed[(collection,identity)] = row
+        return row
+
+    if public.payload.get('intent') == 'multi':
+        children = public.payload.get('part_turn_ids')
+        parts = public.payload.get('receipt',{}).get('parts')
+        if (not isinstance(children,list) or not children or len(children) != len(set(children))
+                or not isinstance(parts,list) or len(parts) != len(children)):
+            raise ValueError('public_native_parts_changed')
+        leaves = [read('v2_turns',identity) for identity in children]
+        if any(leaf.payload.get('parent_turn_id') != public_id for leaf in leaves):
+            raise ValueError('public_native_parent_changed')
+    else:
+        leaves = [public]
+    mapped = [leaf for leaf in leaves if leaf.payload.get('intent') in {'ask','do'}]
+    if not mapped:
+        return ()
+    if not databases:
+        raise ValueError('public_native_request_unavailable')
+    owner = getattr(records,'user_id',None) or 'local-user'
+    namespace = getattr(records,'namespace',None) or source.namespace_id
+    connection = observe_connection(sqlite3.connect(databases[0].resolve().as_uri()+'?mode=ro',uri=True,timeout=5))
+    try:
+        connection.execute('PRAGMA query_only=ON')
+        connection.execute('BEGIN')
+        entries = tuple(_public_native_leaf(connection,read,leaf,owner,namespace,records,current) for leaf in mapped)
+        # 公共行和原执行行可能在读取 native 证明时推进，要求本次快照仍来自同一修订。
+        for (collection,identity), prior in observed.items():
+            fresh = current.read(collection,identity)
+            if fresh is None or fresh.revision != prior.revision or fresh.payload != prior.payload:
+                raise ValueError('public_native_public_revision_changed')
+        return entries
+    finally:
+        connection.close()
+
+
+def _public_native_leaf(connection, read, row, owner, namespace, actual_records, current_reader):
+    from core.ai_kernel.product_admission import ADMISSION_KINDS, MANIFEST_KIND
+    from core.ai_kernel.product_snapshot import admission_base_refs, restore_admission_snapshot
+    value, identity = row.payload, row.object_id
+    project, thread_id = value['project_id'], value['thread_id']
+    thread = read('v2_threads',thread_id)
+    parent_id, part, parent = value.get('parent_turn_id'), None, None
+    planned = None
+    if parent_id is not None:
+        parent = read('v2_turns',parent_id)
+        children = parent.payload.get('part_turn_ids')
+        parts = parent.payload.get('receipt',{}).get('parts')
+        if (parent.payload.get('intent') != 'multi' or not isinstance(children,list)
+                or len(children) != len(set(children)) or identity not in children
+                or not isinstance(parts,list) or len(parts) != len(children)):
+            raise ValueError('public_native_parent_changed')
+        part = children.index(identity)
+        if parent_id.startswith('turn-route-'):
+            from ..route_correction_scopes import planned_child_scope
+            from ..transaction_records import TransactionRecords
+            planned = planned_child_scope(actual_records,parent_id,identity,
+                reader=current_reader if isinstance(current_reader,TransactionRecords) else None)
+            if (planned is None or planned['target']['project_id'] != project
+                    or planned['target']['thread_id'] != thread_id or planned['target']['namespace'] != f'personal/{owner}/{namespace}'
+                    or planned['part_index'] != part):
+                raise ValueError('public_native_planned_scope_changed')
+        if (parts[part].get('index') != part or parts[part].get('intent') != value['intent']
+                or parts[part].get('turn_id') not in {None,identity}
+                or parts[part].get('project_id') not in {None,project}
+                or planned is None and (parent.payload.get('thread_id') != thread_id
+                    or parent.payload.get('project_id') != project)):
+            raise ValueError('public_native_part_changed')
+    if thread.payload.get('project_id') != project:
+        raise ValueError('public_native_thread_changed')
+    execution = None
+    if value['intent'] == 'ask':
+        native_id = identity
+    else:
+        execution = read('v2_task_executions',identity).payload
+        requested = validate_turn_request(execution['request'])
+        native_id = requested['turn_id']
+        receipt = value.get('receipt',{}).get('do',{})
+        if (execution.get('project_id') != project or receipt.get('kernel_turn_id') != native_id
+                or receipt.get('executor','builtin') != execution.get('executor','builtin')):
+            raise ValueError('public_native_task_changed')
+    raw = connection.execute('SELECT request_json FROM ai_turns WHERE turn_id=?',(native_id,)).fetchone()
+    if raw is None:
+        raise ValueError('public_native_request_unavailable')
+    request = validate_turn_request(json.loads(raw[0]))
+    if (request['turn_id'] != native_id or request['scope']['project_id'] != project
+            or request['session_id'] != 'session-'+identity):
+        raise ValueError('public_native_request_changed')
+    if value['intent'] == 'ask':
+        question = (parent.payload['receipt']['parts'][part].get('instruction') if parent is not None else None) or value['user_text']
+        if (request['desired_outcome'] != 'project.answer' or request['operation_id'] != 'answer-'+identity
+                or request['idempotency_key'] != 'answer-'+identity or request['input']['text'] != question
+                or request['capability_request'] != {'mode':'execute_exact_v1',
+                    'capability_id':'workbench.answer.execute','arguments':{'query':question}}):
+            raise ValueError('public_native_answer_changed')
+    else:
+        # Organization 仅追加其原生 agent 许可，产品冻结输入及其余字段逐项保留。
+        additions = {'agent_binding','agent_policy_binding'}
+        if (any(request.get(key) != item for key,item in execution['request'].items())
+                or set(request)-set(execution['request'])-additions
+                or request['desired_outcome'] != 'project.task'
+                or json.loads(request['input']['text']).get('task') != execution.get('task_text')):
+            raise ValueError('public_native_task_request_changed')
+    immutable = {kind:(reference,json.loads(body)) for kind,reference,body in connection.execute(
+        'SELECT kind,payload_ref,payload_json FROM ai_turn_immutable_payloads WHERE turn_id=?',(native_id,))}
+    if execution is not None and execution.get('executor','builtin') != 'builtin':
+        archive = immutable.get('external-task-run-v1')
+        if (archive is None or archive[1].get('request') != request or archive[1].get('owner_id') != owner
+                or archive[1].get('turn_id') != native_id
+                or archive[1].get('launch',{}).get('executor') != execution.get('executor')):
+            raise ValueError('public_native_external_owner_changed')
+    admission_base_refs(request,immutable)
+    qualified, binding = False, None
+    if MANIFEST_KIND in immutable or any(kind in immutable for kind in ADMISSION_KINDS):
+        bundle = restore_admission_snapshot(request,immutable)
+        item = next((item for item in bundle.items if item.kind == 'workbench-steer-binding-v1'),None)
+        if item is None:
+            raise ValueError('public_native_identity_unavailable')
+        binding = item.payload
+        expected = {'owner_user_id':owner,'namespace_id':namespace,'origin_kind':'personal',
+            'public_turn_id':parent_id or identity,'target_turn_id':identity,'thread_id':thread_id,
+            'project_id':project,'part':part,'turn_id':native_id,
+            'part_turn_ids':parent.payload['part_turn_ids'] if parent is not None else [identity]}
+        if any(binding.get(key) != item for key,item in expected.items()):
+            raise ValueError('public_native_identity_changed')
+        if planned is not None:
+            if binding.get('planned_scope') != planned or binding.get('scene') != planned['target']['scene']:
+                raise ValueError('public_native_planned_identity_changed')
+        elif 'planned_scope' in binding:
+            raise ValueError('public_native_planned_identity_changed')
+        parent_proof = binding.get('parent')
+        if parent is None:
+            if parent_proof is not None:
+                raise ValueError('public_native_parent_changed')
+        elif (not isinstance(parent_proof,dict) or parent_proof.get('id') != parent_id
+                or parent_proof.get('thread_id') != parent.payload['thread_id'] or parent_proof.get('project_id') != parent.payload['project_id']
+                or parent_proof.get('uri') != f'crp://{namespace}/v2_turns/{parent_id}'
+                or parent_proof.get('part_turn_ids') != parent.payload['part_turn_ids']
+                or type(parent_proof.get('revision')) is not int or not 1 <= parent_proof['revision'] <= parent.revision):
+            raise ValueError('public_native_parent_changed')
+        if execution is not None and binding.get('scene') != execution.get('scene'):
+            raise ValueError('public_native_scene_changed')
+        qualified = True
+    if planned is not None and not qualified:
+        raise ValueError('public_native_planned_identity_unavailable')
+    return {'public_id':identity,'parent_id':parent_id,'part':part,'public_revision':row.revision,
+        'native_request':request,'qualified':qualified,'identity':binding}
+
+
 def frozen_answer_request(runtime_root, identity, project, *, question):
     """Validate one existing frozen request; never initialize or recover a Turn."""
     return _frozen_request(runtime_root, identity, project, question=question, kind='project.answer')
@@ -29,6 +209,42 @@ def frozen_answer_request(runtime_root, identity, project, *, question):
 def frozen_task_request(runtime_root, identity, project, *, question):
     """Task frame metadata has the same exact, read-only frozen-request seam."""
     return _frozen_request(runtime_root, identity, project, question=question, kind='project.task')
+
+
+def frozen_task_assignment(runtime_root, original, assignment_id):
+    if not isinstance(assignment_id, str) or not assignment_id:
+        return None
+    identity, project = original.get('turn_id'), original.get('scope', {}).get('project_id')
+    question = original.get('input', {}).get('text')
+    accepted = frozen_task_request(runtime_root, identity, project, question=question)
+    if accepted is None or any(original.get(name) != accepted.get(name) for name in (
+            'turn_id', 'session_id', 'operation_id', 'idempotency_key', 'scope', 'input',
+            'desired_outcome', 'privacy', 'execution_policy', 'policy_versions', 'created_at')):
+        return None
+    found = None
+    for database in (Path(runtime_root) / '.rebuild-data/ai-turns.sqlite3', Path(runtime_root) / 'ai-turns.sqlite3'):
+        if not database.is_file():
+            continue
+        def open_readonly():
+            return observe_connection(sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True, timeout=5))
+        connection = borrow_read_connection(database, open_readonly)
+        try:
+            row = connection.execute('SELECT payload_json FROM ai_turn_immutable_payloads WHERE turn_id=? AND kind=?',
+                (identity, 'agent.dispatch.task.' + assignment_id + '.v1')).fetchone()
+            if row is None:
+                continue
+            payload = _parse(row[0])
+            if (payload.get('schema_version') != '1.0.0' or payload.get('assignment_id') != assignment_id
+                    or payload.get('task') != question or 'division' in payload):
+                return None
+            if found is not None and found != payload:
+                return None
+            found = payload
+        except sqlite3.Error:
+            return None
+        finally:
+            connection.close()
+    return found
 
 
 def _frozen_request(runtime_root, identity, project, *, question, kind):
@@ -184,7 +400,32 @@ def egress_basis(calls):
             'settings_revision': latest.get('settings_revision')}
 
 
-def _calls(connection, identity, project, tables, *, remote_only, records=None, turn_kind=None):
+def _answer_input(connection, identity, request, immutable):
+    from ..answer_proof import (EVIDENCE_ANSWER_KEY, RAW_ANSWER_KEY, REVIEW_KEY,
+        has_evidence_answer_proof, has_raw_answer_proof, select_answer_input,
+        select_evidence_answer_input, select_raw_answer_input, read_answer_input)
+    from core.ai_kernel.product_snapshot import read_product_turn_snapshot, requires_product_answer_snapshot
+    if requires_product_answer_snapshot(request, immutable):
+        from ..answer_effective import NativeAnswerSnapshot
+        snapshot = read_product_turn_snapshot(connection, identity)
+        if snapshot is None:
+            raise ValueError('answer_effective_snapshot_unavailable')
+        selected = read_answer_input(NativeAnswerSnapshot(snapshot), identity)
+        return selected[1] if selected is not None else None
+    capsule = immutable.get('answer-continuation-plan-v1')
+    product = immutable.get('product-answer-result-v2')
+    if has_evidence_answer_proof(request, capsule):
+        return select_evidence_answer_input(request, product, immutable.get('answer-model-input-' + EVIDENCE_ANSWER_KEY),
+            immutable.get('answer-model-result-' + EVIDENCE_ANSWER_KEY), capsule)
+    if has_raw_answer_proof(request, capsule):
+        return select_raw_answer_input(request, product, immutable.get('answer-model-input-' + RAW_ANSWER_KEY),
+            immutable.get('answer-model-result-' + RAW_ANSWER_KEY), capsule)
+    return select_answer_input(request, product, immutable.get('answer-model-input-answer'),
+        immutable.get('answer-model-result-answer'), immutable.get('answer-model-input-' + REVIEW_KEY),
+        immutable.get('answer-model-result-' + REVIEW_KEY), capsule=capsule)
+
+
+def _calls(connection, identity, project, tables, *, remote_only, records=None, turn_kind=None, include_attempts=False):
     immutable = {}
     if 'ai_turn_immutable_payloads' in tables:
         immutable = {kind: _parse(raw) for kind, raw in connection.execute(
@@ -219,7 +460,13 @@ def _calls(connection, identity, project, tables, *, remote_only, records=None, 
         wire_usage = aggregate_usage(attempts)
         # Count actual attempts, including paid responses whose logical call
         # failed validation. Never count the logical receipt a second time.
-        call['cost'] = aggregate_cost([{'cost': attempt_cost(records, attempt)} for attempt in attempts])
+        costs = [attempt_cost(records,attempt) for attempt in attempts]
+        call['cost'] = aggregate_cost([{'cost':cost} for cost in costs])
+        if include_attempts:
+            fields = ('attempt_id','turn_id','model_request_id','attempt_number','started_at',
+                'completed_at','duration_ms','status','usage_status','usage')
+            call['wire_attempts'] = [{**{field:attempt[field] for field in fields},'cost':cost}
+                for attempt,cost in zip(attempts,costs)]
         if wire_usage:
             call['usage'] = {k: v for k, v in wire_usage.items() if k != 'observed_only'}
             call['usage_status'] = 'recorded' if not wire_usage.get('observed_only') else 'partial'
@@ -252,7 +499,7 @@ def _calls(connection, identity, project, tables, *, remote_only, records=None, 
     return result, immutable
 
 
-def kernel_call_groups(runtime_root, *, turn_id=None, project=None, remote_only=True, records=None, include_answer_input=False, include_no_wire_answers=False):
+def kernel_call_groups(runtime_root, *, turn_id=None, project=None, remote_only=True, records=None, include_answer_input=False, include_no_wire_answers=False, include_attempts=False):
     if runtime_root is None:
         return []
     root = Path(runtime_root)
@@ -307,7 +554,7 @@ def kernel_call_groups(runtime_root, *, turn_id=None, project=None, remote_only=
                 if not isinstance(root_scope, dict) or root_scope.get('project_id') != own_project:
                     continue
                 calls, immutable = _calls(connection, identity, own_project, tables, remote_only=remote_only, records=records,
-                    turn_kind=request.get('desired_outcome'))
+                    turn_kind=request.get('desired_outcome'),include_attempts=include_attempts)
                 terminal = completed_answer(identity, root_request, immutable) if identity == parent else None
                 if not calls and terminal is None:
                     continue
@@ -321,11 +568,7 @@ def kernel_call_groups(runtime_root, *, turn_id=None, project=None, remote_only=
                     if include_no_wire_answers:
                         group['terminal'] = terminal
                     if include_answer_input:
-                        from ..answer_proof import REVIEW_KEY, select_answer_input
-                        group['answer_input'] = select_answer_input(root_request, group['answer'],
-                            immutable.get('answer-model-input-answer'), immutable.get('answer-model-result-answer'),
-                            immutable.get('answer-model-input-' + REVIEW_KEY), immutable.get('answer-model-result-' + REVIEW_KEY),
-                            capsule=immutable.get('answer-continuation-plan-v1'))
+                        group['answer_input'] = _answer_input(connection, identity, root_request, immutable)
             for group in selected.values():
                 fresh = []
                 for call in group['calls']:

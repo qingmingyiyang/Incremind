@@ -80,7 +80,7 @@ def test_new_private_schema_and_two_call_budget_are_frozen_separately():
     assert final_response_model('@27', 'Question?').__name__ == 'FocusedReviewedScopeOutput'
     assert answer_response_model('@26').__name__ == 'FirstReferencedFactsOutput'
     assert {name: ACTIVE[name] for name in ('compose', 'ladder', 'retrieve', 'rerank')} == {
-        'compose': '@30', 'ladder': '@15', 'retrieve': '@5', 'rerank': '@2'}
+        'compose': '@37', 'ladder': '@15', 'retrieve': '@9', 'rerank': '@2'}
     assert get('compose', version='@27')(None, operation='answer_contract')['nested_model_handle_budget'] == 4
 
 

@@ -1210,3 +1210,69 @@ def v33(entrypoint, /, *args, **kwargs):
 
 
 register('compose', '@33')(v33)
+
+
+def v34(entrypoint, /, *args, **kwargs):
+    """保留33两轮Schema，以有限英文日偏移和去坐标投影减少重复输入。"""
+    operation = kwargs.get('operation')
+    if operation == 'sources':
+        from .date_calculation import append_date_notes
+        result = v5(entrypoint, *args, **kwargs)
+        return [append_date_notes(text, row, quote_version=3, calendar_version=3)
+            for text, row in zip(result, args[0])]
+    result = v33(entrypoint, *args, **kwargs)
+    if operation in {'instruction', 'partition_final_instruction'} and kwargs.get('response_schema'):
+        result += (
+            ' The catalog projection retains every real unit text and source label. Boundary flags mark actual '
+            'missing context; only units sharing a continuity_group are contiguous, never join different groups. '
+            'Absent program coordinates are not missing evidence. date_provenance includes all '
+            'available legal computations. same_sentence_date_ref_ids establishes only sentence binding; '
+            'matching_date_ref_ids additionally matches this exact calendar value and precision. record_date_context '
+            'is context only, never an event date. Correct every diagnosed value in a statement, not only the first. '
+            'Answer at the requested granularity (for example countries or occupations), with supported inference '
+            'when asked. Distinguish the person from companions, and interests/plans from completed events. '
+            'Do not use unknown to hide explicit facts. In final review use first_fact_uses.merge to combine '
+            'grounded atomic premises into the requested recommendation, explanation or list item, retaining '
+            'each independent meaning, subject and support. Do not first repeat background facts and then repeat '
+            'the same premises as a recommendation list. A merge reason is not evidence or a field correction.')
+    return result
+
+
+register('compose', '@34')(v34)
+
+
+def v35(entrypoint, /, *args, **kwargs):
+    """保留34两轮模型合同；末稿的有限日期投影由共享纯守卫执行。"""
+    return v34(entrypoint, *args, **kwargs)
+
+
+register('compose', '@35')(v35)
+
+
+def v36(entrypoint, /, *args, **kwargs):
+    """沿用35模型合同；仅扩展已绑定日偏移的算术参照锚守卫。"""
+    return v35(entrypoint, *args, **kwargs)
+
+
+register('compose', '@36')(v36)
+
+
+def v37(entrypoint, /, *args, **kwargs):
+    """沿用34的完整模型合同，只改变最终语义失败的公开呈现。"""
+    if kwargs.get('operation') == 'unverified_publication':
+        return {
+            'codes': ('invalid_first_fact_requires_correction', 'first_fact_adoption_quote_missing',
+                'grounded_statement_duplicate', 'grounded_statement_without_support',
+                'grounded_statement_uncertain', 'grounded_date_note_kind_invalid',
+                'grounded_calendar_provenance_invalid'),
+            'unknown': '没找到足够依据',
+        }
+    return v34(entrypoint, *args, **kwargs)
+
+
+register('compose', '@37')(v37)
+
+
+def evidence_contract_version(selected):
+    """37完整复用34的模型输入和Schema，公开呈现仍按真实冻结版本选择。"""
+    return '@34' if selected == '@37' else selected

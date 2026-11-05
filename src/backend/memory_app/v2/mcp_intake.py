@@ -1,4 +1,5 @@
 """External-client intake through the existing original and pending owners."""
+import re
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
@@ -11,7 +12,9 @@ from backend.shared.secret_detection import redact_secrets
 from ..transaction_records import TransactionRecords
 from ..workspace_contracts import _now, _project, _text
 from .external_agent_guard import ExternalAgentGuardError
+from .external_context import ExternalContextError
 from .projects import assign_scene
+from .shared_projects import SharedProjectError
 
 
 INTAKES = 'v2_external_agent_intakes'
@@ -24,13 +27,23 @@ def _invalid():
 
 def _arguments(value, tool):
     if (not isinstance(value, dict) or set(value) != {'client', 'arguments'}
-            or not isinstance(value['client'], str) or value['client'] not in {'claude', 'codex', 'deepseek-harness'}
+            or not isinstance(value['client'], str) or value['client'] not in {'claude', 'codex', 'deepseek-harness', 'chatgpt'}
             or not isinstance(value['arguments'], dict) or tool not in _TOOLS):
         _invalid()
     arguments = value['arguments']
     allowed = ({'text', 'url', 'project', 'scene'} if tool == 'remember'
                else {'text', 'conditions', 'project', 'scene', 'evidence_ids'})
+    allowed |= {'scope_kind', 'idempotency_key'}
     if set(arguments) - allowed:
+        _invalid()
+    kind = arguments.get('scope_kind', 'personal')
+    if kind not in ('personal', 'shared'):
+        _invalid()
+    if kind == 'shared':
+        key = arguments.get('idempotency_key')
+        if 'project' not in arguments or not isinstance(key, str) or re.fullmatch('[A-Za-z0-9][A-Za-z0-9._-]{0,127}', key) is None:
+            _invalid()
+    elif 'idempotency_key' in arguments:
         _invalid()
     if tool == 'remember':
         if ('text' in arguments) == ('url' in arguments):
@@ -40,7 +53,8 @@ def _arguments(value, tool):
     try:
         project = _project(arguments.get('project', 'inbox'))
         scene = arguments.get('scene')
-        if scene is not None and (not isinstance(scene, str) or not scene.strip()):
+        if scene is not None and (not isinstance(scene, str) or not scene.strip()
+                or kind == 'shared' and redact_secrets(scene) != scene):
             _invalid()
         for field in ('text', 'url'):
             if field in arguments:
@@ -57,6 +71,9 @@ def _arguments(value, tool):
     if (not isinstance(evidence, list) or any(not isinstance(ref, dict)
             or set(ref) != {'turn_id', 'id'} or any(not isinstance(ref[key], str) or not ref[key]
                 for key in ref) for ref in evidence)):
+        _invalid()
+    if kind == 'shared' and (len(evidence) > 256
+            or len(evidence) != len({(ref['turn_id'], ref['id']) for ref in evidence})):
         _invalid()
     return value['client'], arguments, project, scene.strip() if scene is not None else None
 
@@ -109,9 +126,26 @@ def install_mcp_intake_routes(application, *, workspace, records, service, reser
             _invalid()
         return _arguments(value, tool)
 
+    async def shared_intake(tool, client, arguments, project, scene):
+        if api.shared is None:
+            raise HTTPException(403, 'shared_project_unavailable')
+        try:
+            value = await api.shared.intake.run(client, tool, arguments, project, scene)
+        except SharedProjectError as error:
+            raise HTTPException(error.status, str(error)) from None
+        except (ExternalContextError, ExternalAgentGuardError) as error:
+            raise HTTPException(409, str(error)) from None
+        except HTTPException:
+            _invalid()
+        except Exception:
+            raise HTTPException(409, 'external_context_unavailable') from None
+        return {'turn_id': None, 'result': value}
+
     @router.post('/remember')
     async def remember(request: Request):
         client, arguments, project, scene = await inputs(request, 'remember')
+        if arguments.get('scope_kind') == 'shared':
+            return await shared_intake('remember', client, arguments, project, scene)
         try:
             # Admission precedes even the public-link acquisition. The quota
             # owner rechecks it again in the actual writer transaction.
@@ -136,6 +170,8 @@ def install_mcp_intake_routes(application, *, workspace, records, service, reser
     @router.post('/propose_insight')
     async def propose_insight(request: Request):
         client, arguments, project, scene = await inputs(request, 'propose_insight')
+        if arguments.get('scope_kind') == 'shared':
+            return await shared_intake('propose_insight', client, arguments, project, scene)
         receipt_id = 'external-intake-' + uuid4().hex
         try:
             scope = WorkScope(owner_id, project)
@@ -145,7 +181,8 @@ def install_mcp_intake_routes(application, *, workspace, records, service, reser
                 reserve_write(tx, receipt_id=receipt_id, client=client,
                     tool='propose_insight', project_id=project)
                 enlisted = TransactionRecords(tx)
-                writer = recognition_service(enlisted, cache_invalidation=service.cache_invalidation)
+                writer = recognition_service(enlisted, cache_invalidation=service.cache_invalidation,
+                    source_owner=records)
                 evidence = arguments.get('evidence_ids', [])
                 references = freeze_references(tx, scope, client, evidence,
                     _sql_validator=writer._external_input_validator)[0] if evidence else None

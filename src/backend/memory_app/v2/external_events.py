@@ -29,16 +29,27 @@ class ExternalEventParser:
         self.executor = executor
         self._secrets = tuple(sorted({value for value in secret_values if value}, key=len, reverse=True))
         self._usage = None
+        self._observed_usage = None
         self.failed = False
         self._finished = False
         self._texts = []
         self._streamed_ids = set()
         self._stream_id = None
         self._has_stream_text = False
+        self._last_agent_text = None
+        self._final_response = None
+
+    @property
+    def final_response(self) -> dict | None:
+        return dict(self._final_response) if self._final_response is not None else None
 
     @property
     def usage(self) -> dict | None:
         return dict(self._usage) if self._usage is not None else None
+
+    @property
+    def observed_usage(self) -> dict | None:
+        return dict(self._observed_usage) if self._observed_usage is not None else None
 
     @property
     def finished(self) -> bool:
@@ -57,19 +68,26 @@ class ExternalEventParser:
             return ()
         return self._codex(event) if self.executor == 'codex' else self._claude(event)
 
-    def _finish(self, event, failed=False):
+    def _redact(self, text):
+        for value in self._secrets:
+            text = text.replace(value, REDACTED_SECRET)
+        return _PATH.sub('[REDACTED_PATH]', redact_secrets(text))
+
+    def _finish(self, event, failed=False, *, final_text=None, source=None):
         self._finished = True
         self.failed = failed
         usage = event.get('usage')
+        if isinstance(usage, dict):
+            self._observed_usage = {key: value for key, value in usage.items()
+                if key in _TOKENS and type(value) is int and value >= 0} or None
         if isinstance(usage, dict) and {'input_tokens', 'output_tokens'} <= usage.keys():
             selected = {key: value for key, value in usage.items() if key in _TOKENS}
             if all(type(value) is int and value >= 0 for value in selected.values()):
                 self._usage = selected
         # 未发布的所有文字一起脱敏，避免秘密跨 delta、消息或截断边界逃逸。
-        text = ''.join(self._texts)
-        for value in self._secrets:
-            text = text.replace(value, REDACTED_SECRET)
-        text = _PATH.sub('[REDACTED_PATH]', redact_secrets(text))
+        text = self._redact(''.join(self._texts))
+        self._final_response = ({'source': source, 'text': self._redact(final_text)}
+            if not failed and isinstance(final_text, str) and len(final_text) <= 200000 else None)
         self._texts.clear()
         self._streamed_ids.clear()
         self._stream_id = None
@@ -80,13 +98,15 @@ class ExternalEventParser:
     def _codex(self, event):
         kind = event.get('type')
         if kind == 'thread.started':
+            self._last_agent_text = None
             return ({'kind': 'started'},)
         if kind == 'turn.started':
+            self._last_agent_text = None
             return ({'kind': 'step', 'stage': 'turn'},)
         if kind in {'turn.failed', 'error'}:
             return self._finish(event, True)
         if kind == 'turn.completed':
-            return self._finish(event)
+            return self._finish(event, final_text=self._last_agent_text, source='codex.last-agent-message@1')
         item = event.get('item')
         if kind not in {'item.started', 'item.updated', 'item.completed'} or not isinstance(item, dict):
             return ()
@@ -96,6 +116,9 @@ class ExternalEventParser:
         if name == 'agent_message' and kind == 'item.completed':
             if isinstance(item.get('text'), str):
                 self._texts.append(item['text'])
+                self._last_agent_text = item['text']
+            else:
+                self._last_agent_text = None
         elif name in {'command_execution', 'web_search', 'mcp_tool_call'}:
             return ({'kind': 'tool', 'name': name},) if kind != 'item.updated' else ()
         elif name == 'error':
@@ -125,7 +148,10 @@ class ExternalEventParser:
                 and event['subtype'].startswith('error'))
             if not self._texts and not failed and isinstance(event.get('result'), str):
                 self._texts.append(event['result'])
-            return self._finish(event, failed)
+            return self._finish(event, failed, final_text=event.get('result')
+                if event.get('subtype') == 'success' and event.get('is_error') is False
+                    and event.get('parent_tool_use_id') is None else None,
+                source='claude.result@1')
         if kind == 'assistant':
             message = event.get('message')
             if not isinstance(message, dict) or not isinstance(message.get('content'), list):

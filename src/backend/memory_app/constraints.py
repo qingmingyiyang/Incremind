@@ -65,6 +65,17 @@ class ProjectConstraintService:
         valid_from: str | None = None,
         valid_until: str | None = None,
     ) -> dict[str, object]:
+        with self._records.begin() as tx:
+            result = self.upsert_in_uow(tx, scope, constraint_id, expected_revision, content,
+                enabled=enabled, valid_from=valid_from, valid_until=valid_until)
+            tx.commit()
+        return result
+
+    def upsert_in_uow(
+        self, tx, scope: WorkScope, constraint_id: str, expected_revision: int, content: str,
+        *, enabled: bool = True, valid_from: str | None = None, valid_until: str | None = None,
+    ) -> dict[str, object]:
+        # 约束正文与附加范围共用调用方的事务，提交仍由外层负责。
         constraint_id = _id(constraint_id, "constraint_id")
         expected_revision = _expected_revision(expected_revision)
         content = _content(content)
@@ -76,34 +87,31 @@ class ProjectConstraintService:
             raise ProjectConstraintError("valid_from must be before valid_until")
         current_time = _as_utc(self._now(), "now")
 
-        with self._records.begin() as tx:
-            existing = tx.read(_CONSTRAINTS, constraint_id)
-            if existing is not None and not _same_scope(existing.payload, scope):
-                raise ProjectConstraintError("constraint is unavailable in this project")
-            if existing is not None and existing.revision != expected_revision:
-                raise ProjectConstraintError(
-                    f"expected revision {expected_revision}, found {existing.revision}"
-                )
-            if existing is None and expected_revision != 0:
-                raise ProjectConstraintError(f"expected revision {expected_revision}, found 0")
+        existing = tx.read(_CONSTRAINTS, constraint_id)
+        if existing is not None and not _same_scope(existing.payload, scope):
+            raise ProjectConstraintError("constraint is unavailable in this project")
+        if existing is not None and existing.revision != expected_revision:
+            raise ProjectConstraintError(
+                f"expected revision {expected_revision}, found {existing.revision}"
+            )
+        if existing is None and expected_revision != 0:
+            raise ProjectConstraintError(f"expected revision {expected_revision}, found 0")
 
-            created_at = existing.payload.get("created_at") if existing is not None else _time_text(current_time)
-            payload = {
-                "id": constraint_id,
-                "scope": {"user_id": scope.user_id, "project_id": scope.project_id},
-                "project_id": scope.project_id,
-                "content": content,
-                "enabled": enabled,
-                "valid_from": _time_text(start) if start is not None else None,
-                "valid_until": _time_text(end) if end is not None else None,
-                "created_at": created_at,
-                "updated_at": _time_text(current_time),
-            }
-            if existing is not None and _same_constraint(existing.payload, payload):
-                tx.rollback()
-                return _payload(existing, current_time)
-            stored = tx.put(_CONSTRAINTS, constraint_id, payload, expected_revision=expected_revision)
-            tx.commit()
+        created_at = existing.payload.get("created_at") if existing is not None else _time_text(current_time)
+        payload = {
+            "id": constraint_id,
+            "scope": {"user_id": scope.user_id, "project_id": scope.project_id},
+            "project_id": scope.project_id,
+            "content": content,
+            "enabled": enabled,
+            "valid_from": _time_text(start) if start is not None else None,
+            "valid_until": _time_text(end) if end is not None else None,
+            "created_at": created_at,
+            "updated_at": _time_text(current_time),
+        }
+        if existing is not None and _same_constraint(existing.payload, payload):
+            return _payload(existing, current_time)
+        stored = tx.put(_CONSTRAINTS, constraint_id, payload, expected_revision=expected_revision)
         return _payload(stored, current_time)
 
     def validate_snapshot(

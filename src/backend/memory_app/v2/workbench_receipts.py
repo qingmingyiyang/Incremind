@@ -48,7 +48,7 @@ _ERRORS = {"processing_failed", "insight_generation_failed", "insight_invalid_ou
 _ASK_LAYERS = {"L3": "insight", "L2": "summary", "L1": "note", "L0": "source", "inspiration": "inspiration"}
 
 
-def _ask_receipt(plan, chosen, result, egress_receipt_id, egress=None):
+def _ask_receipt(plan, chosen, result, egress_receipt_id, egress=None, *, audio_positions=None):
     layers = dict.fromkeys(('insight', 'summary', 'note', 'source', 'persona'), 0)
     if any(candidate['layer'] == 'inspiration' for candidate in chosen):
         layers['inspiration'] = 0
@@ -63,9 +63,12 @@ def _ask_receipt(plan, chosen, result, egress_receipt_id, egress=None):
         layer = _ASK_LAYERS[candidate["layer"]]
         identity = (entry["id"] if layer in {"insight", "inspiration"} else entry["document_id"] if layer in {"summary", "note"}
                     else entry.get("item_id") or entry["source_id"])
+        windows = [{**window, 'seconds': audio_positions.citation_seconds(
+            candidate, window, source['coordinate_space']) if audio_positions is not None else None}
+            for window in source['windows']]
         citations.append({"n": source["number"], "layer": layer, "persona": bool(candidate.get("persona")),
             "id": identity, "title": source["title"], "quote": source["excerpt"],
-            "locator": {"coordinate_space": source["coordinate_space"], "windows": source["windows"]},
+            "locator": {"coordinate_space": source["coordinate_space"], "windows": windows},
             **({'url':candidate['url']} if candidate.get('url') else {}),
             **({"bookshelf": True} if candidate.get("bookshelf") else {}),
             **({"stale": True} if layer == "insight" and candidate.get("stale") is True else {}),
@@ -84,6 +87,8 @@ def _ask_receipt(plan, chosen, result, egress_receipt_id, egress=None):
         "trace": [{**row, "layer": _ASK_LAYERS[row["layer"]]} for row in plan["trace"]],
         "egress_receipt_id": egress_receipt_id, "no_match": result.get("no_match", False),
         "context": context,
+        **({key: result[key] for key in ('unverified_claims', 'unverified_claim_spans')}
+            if 'unverified_claims' in result else {}),
         "model_usage": result.get("model_usage", {}), "excluded_sources": result.get("excluded_sources", []),
         **({key: result[key] for key in ('partial', 'interruption')} if 'interruption' in result else {})}
 

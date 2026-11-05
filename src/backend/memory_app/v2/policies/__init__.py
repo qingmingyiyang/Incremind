@@ -5,6 +5,7 @@ import re
 from threading import RLock
 
 ACTIVE = {
+    'steer': '@2',
     'rerank': '@2',
     'vector': '@1',
     'ladder': '@15',
@@ -15,16 +16,17 @@ ACTIVE = {
     'context_preparation': '@3',
     'place': '@2',
     'extract': '@5',
-    'route': '@1',
+    'route': '@5',
+    'agent_data': '@4',
     'scope': '@2',
-    'retrieve': '@8',
+    'retrieve': '@9',
     'rank': '@4',
     'strength': '@1',
     'forget': '@1',
     'enough': '@1',
-    'compose': '@33',
+    'compose': '@37',
     'trigger': '@2',
-    'consolidate': '@2',
+    'consolidate': '@3',
     'handoff': '@1',
     'reask': '@1',
     'outcome_correction': '@1',
@@ -34,6 +36,7 @@ ACTIVE = {
     'search': '@1',
     'continuation': '@2',
     'style': '@1',
+    'evidence_pick': '@1',
 }
 _REGISTRY = {}
 _LOCK = RLock()
@@ -120,6 +123,7 @@ def parse_overrides(options):
 from . import organize, place, extract, route, scope, retrieve, rank, strength, forget, enough, compose, trigger, consolidate, image_read, handoff, retry
 from . import extract_comments
 from . import extract_material
+from . import extract_inspiration
 from . import material_analysis
 from . import material_analysis_fallback, context_preparation
 from . import material_analysis_nullable
@@ -134,6 +138,13 @@ for _module in (organize, place, extract, route, scope, retrieve, rank, strength
     register(_module.__name__.rsplit('.', 1)[-1], '@1')(_module.v1)
 
 register('scope', '@2')(scope.v2)
+register('route', '@2')(route.v2)
+register('route', '@3')(route.v3)
+register('route', '@4')(route.v4)
+register('route', '@5')(route.v5)
+from . import route_correction
+register('route_correction', '@1')(route_correction.v1)
+register('route_correction', '@2')(route_correction.v2)
 register('organize', '@2')(organize.v1)
 register('material_analysis', '@1')(material_analysis.v1)
 register('material_analysis', '@2')(material_analysis_fallback.v2)
@@ -145,15 +156,24 @@ register('context_preparation', '@3')(context_preparation.v3)
 register('rank', '@2')(rank.v2)
 register('rank', '@3')(rank.v3)
 register('handoff', '@2')(handoff.v2)
+register('handoff', '@3')(handoff.v3)
+register('handoff', '@4')(handoff.v4)
 register('extract', '@2')(extract.v2)
 register('extract', '@3')(extract_comments.v3)
 register('extract', '@4')(extract_comments.v4)
 register('extract', '@5')(extract_comments.v5)
 register('extract', '@6')(extract_material.v6)
+register('extract', '@7')(extract_inspiration.v7)
 register('trigger', '@2')(trigger.v2)
 register('consolidate', '@2')(consolidate.v2)
+from . import consolidate_steer
+register('consolidate', '@3')(consolidate_steer.v3)
 register('retry', '@1')(retry.decide)
 register('retry', '@2')(retry.v2)
+register('retry', '@3')(retry.v3)
+
+from . import inspiration_schedule
+register('inspiration_schedule', '@1')(inspiration_schedule.v1)
 
 from . import reask
 register('reask', '@1')(reask.v1)
@@ -184,6 +204,12 @@ register('nudge', '@2')(nudge.v2)
 from . import external_task_input
 register('external_task_input', '@1')(external_task_input.v1)
 
+from . import external_task_output
+register('external_task_output', '@1')(external_task_output.v1)
+
+from . import attachment_context
+register('attachment_context', '@1')(attachment_context.v1)
+
 from . import proxy_context
 register('proxy_context', '@1')(proxy_context.v1)
 
@@ -204,3 +230,28 @@ register('ladder', '@4')(ladder.v4)
 
 from . import rerank
 register('rerank', '@1')(rerank.v1)
+
+from . import evidence_pick
+register('evidence_pick', '@1')(evidence_pick.v1)
+
+from . import steer, stale, outcome_update
+register('steer', '@1')(steer.v1)
+register('steer', '@2')(steer.v2)
+register('stale', '@1')(stale.v1)
+register('outcome_update', '@1')(outcome_update.v1)
+
+from . import constraint_scope
+register('constraint_scope', '@1')(constraint_scope.v1)
+
+from . import backup_schedule, backup_archive
+register('backup_schedule', '@1')(backup_schedule.v1)
+register('backup_archive', '@1')(backup_archive.v1)
+
+from . import native_mcp_auth_v1
+register('native_mcp_auth', '@1')(native_mcp_auth_v1.native_mcp_auth)
+
+from . import restore_preview
+register('restore_preview', '@1')(restore_preview.v1)
+
+from . import archive_copy
+register('archive_copy', '@1')(archive_copy.v1)

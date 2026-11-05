@@ -1,12 +1,14 @@
-"""桌面代理编排；原始转发、交接资格和录制各由既有 owner 承担。"""
+# 按当前物理用户空间编排代理，转发、交接资格和录制仍由原所有者承担。
 import ipaddress
 import json
 import logging
 import sys
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import httpx
 import anyio
+from litellm.llms.custom_httpx.http_handler import get_ssl_configuration
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
@@ -18,6 +20,7 @@ from .external_proxy_protocol import insert_context, last_user_text
 from .external_proxy_recording import ConversationRecorder, _json
 from .external_proxy_settings import external_proxy_settings
 from .external_proxy_transport import ProxyTransport, ProxyTransportError
+from .external_proxy_identity import proxy_identity, validate_proxy_body
 from .route import resolve_scope_project
 
 
@@ -58,6 +61,31 @@ def _credentials(headers):
     return tuple(values)
 
 
+async def _record_conversation(workspace, records, *, client, project, text, recorded, lease):
+    def validate():
+        if lease is not None:
+            lease.validate()
+        if (not external_proxy_settings(records)['record_conversations'][client]
+                or resolve_scope_project(records, text, 'default') != project):
+            raise ValueError('external_proxy_recording_changed')
+    owner = workspace.intake
+    if lease is not None:
+        admission = owner.admission
+        if not callable(admission):
+            raise ValueError('external_proxy_user_domain_invalid')
+        @asynccontextmanager
+        async def current_admission():
+            async with admission() as check:
+                # 原准入锁可能等待，取得锁之后再核对身份及用户的录制选择。
+                validate()
+                yield check
+        owner = owner.with_items(owner.items, owner.models)
+        owner.admission = current_admission
+    else:
+        validate()
+    await owner.add_text({'project_id': project, 'text': recorded, 'title': client + ' 对话'})
+
+
 def install_external_proxy_routes(application, *, runtime_root, records, workspace):
     router = APIRouter(prefix='/api/v2/external-agent/proxy')
 
@@ -75,19 +103,28 @@ def install_external_proxy_routes(application, *, runtime_root, records, workspa
             return None
 
     async def proxy(request: Request, client: str, protocol: str):
-        layout = getattr(application.state, 'deployment', None)
-        if layout is not None and layout.mode != 'desktop':
-            raise HTTPException(503, 'external_proxy_user_domains_unavailable')
+        lease, headers, device_secrets = proxy_identity(request, application=application,
+            records=records, workspace=workspace, runtime_root=runtime_root)
+        try:
+            return await proxy_owned(request, client, protocol, lease, headers, device_secrets)
+        except BaseException:
+            if lease is not None:
+                lease.close()
+            raise
+
+    async def proxy_owned(request, client, protocol, lease, headers, device_secrets):
         try:
             local = request.client is not None and ipaddress.ip_address(request.client.host).is_loopback
         except ValueError:
             local = False
-        if not local:
+        if lease is None and not local:
             raise HTTPException(403, 'external_proxy_loopback_required')
         if client not in {'claude', 'codex'}:
             raise HTTPException(404, 'external_proxy_client_unknown')
         raw = await request.body()
-        credentials = _credentials(request.headers)
+        credentials = (*_credentials(headers), *device_secrets)
+        if lease is not None and not (headers.get('authorization') or headers.get('x-api-key')):
+            raise HTTPException(401, 'external_proxy_model_credentials_required')
         payload, text, project = None, None, None
         try:
             payload = _json(raw.decode('utf-8'))
@@ -96,8 +133,12 @@ def install_external_proxy_routes(application, *, runtime_root, records, workspa
                 project = resolve_scope_project(records, text, 'default')
         except Exception:
             pass
+        if lease is not None:
+            validate_proxy_body(raw, payload, device_secrets)
         prepared = await run_in_threadpool(prepare, client, text, credentials) if text else None
         def before_send():
+            if lease is not None:
+                lease.validate()
             if prepared is not None:
                 try:
                     prepared.validate()
@@ -107,6 +148,8 @@ def install_external_proxy_routes(application, *, runtime_root, records, workspa
                     _LOG.warning('external_proxy_injection_unavailable')
             return raw
 
+        if lease is not None:
+            lease.validate()
         recorder = None
         if project is not None:
             try:
@@ -117,9 +160,11 @@ def install_external_proxy_routes(application, *, runtime_root, records, workspa
         transport = getattr(application.state, 'external_proxy_transport', None)
         http_client = None
         if transport is None:
-            http_client = httpx.AsyncClient(trust_env=False, timeout=httpx.Timeout(None, connect=10.0))
+            # 与原模型网关使用同一环境代理和证书配置，仍由独立 Request 限定外发头。
+            http_client = httpx.AsyncClient(verify=get_ssl_configuration(),
+                follow_redirects=False, timeout=httpx.Timeout(None, connect=10.0))
             transport = ProxyTransport(http_client)
-        manager = transport.open(protocol, raw, request.headers, before_send=before_send)
+        manager = transport.open(protocol, raw, headers, before_send=before_send)
         try:
             relay = await manager.__aenter__()
         except BaseException as error:
@@ -164,13 +209,14 @@ def install_external_proxy_routes(application, *, runtime_root, records, workspa
                         recorded = recorder.finish(status_code=relay.status_code,
                             content_type=relay.headers.get('content-type', ''),
                             content_encoding=relay.headers.get('content-encoding', ''))
-                        if (recorded and external_proxy_settings(records)['record_conversations'][client]
-                                and resolve_scope_project(records, text, 'default') == project):
-                            await workspace.intake.add_text({'project_id':project,
-                                'text':recorded, 'title':client+' 对话'})
+                        if recorded:
+                            await _record_conversation(workspace, records, client=client, project=project,
+                                text=text, recorded=recorded, lease=lease)
                     except Exception:
                         _LOG.warning('external_proxy_recording_unavailable')
             finally:
+                if lease is not None:
+                    lease.close()
                 if recorder:
                     recorder.close()
                 if http_client:

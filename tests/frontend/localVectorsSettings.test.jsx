@@ -18,6 +18,7 @@ afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 it('shows actual download size and installs with frozen mode revision', async () => {
   render(<SettingsPage api={api}/>); await settle();
+  fireEvent.click(screen.getByRole('button', { name: '向量', exact: true }));
   const row = within(vectorRow());
   expect(row.getByText('≈ 1.53 GB')).toHaveAttribute('title', '安装后约 579 MB，文字权重约 542 MB');
   expect(row.queryByRole('switch', { name: '向量外发' })).toBeNull();
@@ -27,6 +28,7 @@ it('shows actual download size and installs with frozen mode revision', async ()
 
 it('chooses remote mode through independent revision without rewriting credentials', async () => {
   render(<SettingsPage api={api}/>); await settle();
+  fireEvent.click(screen.getByRole('button', { name: '向量', exact: true }));
   fireEvent.click(within(vectorRow()).getByRole('button', { name: '外接', exact: true })); await settle();
   expect(api.saveEmbeddingMode).toHaveBeenCalledWith({ mode: 'remote', expectedRevision: 3 });
   expect(api.saveModel).not.toHaveBeenCalled();
@@ -47,13 +49,14 @@ it('shows ready model and dimension on the original row', async () => {
   value.model.embedding.local.status = 'ready';
   render(<SettingsPage api={api}/>); await settle();
   const row = within(vectorRow());
-  expect(row.getByText('EmbeddingGemma 2 · 256')).toBeTruthy();
+  expect(row.getByText('EmbeddingGemma 2 · 未加载')).toBeTruthy();
   expect(row.queryByRole('button', { name: '安装' })).toBeNull();
 });
 
 it('shows exact download progress with accessible counts', async () => {
   value.model.embedding.local = { status: 'installing', progress: { done: 25, total: 100 } };
   render(<SettingsPage api={api}/>); await settle();
+  fireEvent.click(screen.getByRole('button', { name: '向量', exact: true }));
   const progress = within(vectorRow()).getByRole('progressbar', { name: '下载' });
   expect(progress).toHaveAttribute('aria-valuenow', '25');
   expect(progress).toHaveAttribute('aria-valuemax', '100');
@@ -63,6 +66,7 @@ it('shows exact download progress with accessible counts', async () => {
 it('shows indexed count while preserving unfinished work', async () => {
   value.model.embedding.local = { status: 'ready', dims: 256, index: { done: 3, total: 7 } };
   render(<SettingsPage api={api}/>); await settle();
+  fireEvent.click(screen.getByRole('button', { name: '向量', exact: true }));
   expect(within(vectorRow()).getByRole('progressbar', { name: '已索引' })).toHaveAttribute('aria-valuenow', '3');
   expect(within(vectorRow()).getByText('3 / 7')).toBeTruthy();
 });
@@ -70,6 +74,7 @@ it('shows indexed count while preserving unfinished work', async () => {
 it('keeps failure code in title and retries through the original install operation', async () => {
   value.model.embedding.local = { status: 'failed', can_install: true, reason_code: 'embedding_install_interrupted' };
   render(<SettingsPage api={api}/>); await settle();
+  fireEvent.click(screen.getByRole('button', { name: '向量', exact: true }));
   const row = within(vectorRow());
   expect(row.getByLabelText('向量安装失败')).toHaveAttribute('title', 'embedding_install_interrupted');
   fireEvent.click(row.getByRole('button', { name: '重试', exact: true })); await settle();
@@ -79,6 +84,7 @@ it('keeps failure code in title and retries through the original install operati
 it('does not offer install to ordinary server users', async () => {
   value.model.embedding.local.can_install = false;
   render(<SettingsPage api={api}/>); await settle();
+  fireEvent.click(screen.getByRole('button', { name: '向量', exact: true }));
   expect(within(vectorRow()).queryByRole('button', { name: '安装' })).toBeNull();
   expect(within(vectorRow()).getByText('≈ 1.53 GB')).toBeTruthy();
 });

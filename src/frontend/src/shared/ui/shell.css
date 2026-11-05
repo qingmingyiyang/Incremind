@@ -2,6 +2,8 @@
 :where(.ui-shell) button,:where(.ui-project-switcher) button,:where(.ui-tray) button{font:inherit;color:inherit;border:0;background:transparent;cursor:pointer}
 .ui-shell-avatar{grid-column:1;grid-row:1;display:flex;align-items:center;justify-content:center;z-index:2;margin-top:16px}
 .ui-shell-avatar img{width:34px;height:34px;object-fit:cover;border-radius:999px;background:var(--sunk)}
+.ui-shell-avatar-face{position:relative;display:inline-flex}
+.ui-shell-avatar-notice{position:absolute;top:0;right:0;outline:2px solid var(--paper);animation:none}
 .ui-shell-navigation{grid-column:1;grid-row:2;display:flex;flex-direction:column;align-items:center;border-right:1px solid var(--line);padding-top:24px}
 .ui-shell-navigation button{position:relative;width:64px;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted);font-size:11px}
 .ui-shell-navigation svg{width:20px;height:20px}

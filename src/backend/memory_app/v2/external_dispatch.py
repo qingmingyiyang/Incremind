@@ -17,6 +17,8 @@ class DispatchResult:
     events: tuple[dict, ...]
     output_bytes: int
     may_have_started: bool = field(default=False, compare=False, repr=False)
+    observed_usage: dict | None = field(default=None, compare=False)
+    final_response: dict | None = field(default=None, compare=False, repr=False)
 
 
 class _CancellationView:
@@ -100,7 +102,8 @@ def dispatch_external(plan: LaunchPlan, context: ToolExecutionContext, *, enviro
     except ProcessCleanupError as error:
         process = error._cleanup_result
         error._dispatch_result = DispatchResult('failed', process.exit_code, parser.usage,
-            process.tail, tuple(events), process.output_bytes, process.may_have_started)
+            process.tail, tuple(events), process.output_bytes, process.may_have_started,
+            observed_usage=parser.observed_usage)
         raise
     status, tail = process.status, process.tail
     if status == 'completed':
@@ -122,4 +125,5 @@ def dispatch_external(plan: LaunchPlan, context: ToolExecutionContext, *, enviro
             terminal = {'kind':'finished','status':status}
     events.append(terminal)
     return DispatchResult(status, process.exit_code, parser.usage, tail, tuple(events), process.output_bytes,
-        process.may_have_started)
+        process.may_have_started, observed_usage=parser.observed_usage,
+        final_response=parser.final_response if status == 'completed' and isinstance(parser, ExternalEventParser) else None)

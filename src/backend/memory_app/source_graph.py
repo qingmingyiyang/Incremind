@@ -3,12 +3,16 @@ from collections.abc import Mapping
 import re
 
 from backend.recognition import RecognitionConflict
-from backend.recognition.product_draft_dependencies import PRODUCT_DRAFT_OWNER_FIELDS
+from backend.recognition.product_draft_dependencies import (
+    PRODUCT_DRAFT_OWNER_FIELDS, RESTORED_DRAFT_OWNER_FIELDS, ANSWER_DRAFT_OWNER_FIELDS, DRAFT_OWNER_FIELD_SETS,
+)
 from backend.recognition.document_filings import FILED_EDIT_OWNER_FIELDS, DocumentFilingError, validate_filed_edit_owner
 from backend.recognition.external_input_dependencies import (
     OWNER_FIELDS as EXTERNAL_INPUT_OWNER_FIELDS, metadata as external_input_metadata, ExternalInputDependencyError,
 )
 from .source_evidence_refs import READS
+from .route_original_metadata import ROUTE_ORIGINAL_OWNER_FIELDS, validate_route_original_metadata, route_original_id
+from .steer_learning_metadata import STEER_LEARNING_FIELD_SETS, validate_steer_learning_metadata
 
 LIMIT = 256
 MAX_REVISION = 9223372036854775807
@@ -43,18 +47,26 @@ def revision(value, *, minimum=1):
 
 
 def owner_metadata(value):
-    if not isinstance(value, Mapping) or set(value) != PRODUCT_DRAFT_OWNER_FIELDS:
+    if not isinstance(value, Mapping) or set(value) not in DRAFT_OWNER_FIELD_SETS:
         raise RecognitionConflict('product graph owner is invalid')
-    for field in PRODUCT_DRAFT_OWNER_FIELDS:
-        (identifier if field in _OWNER_IDS else revision)(value[field])
-    if value['task_draft_operation_id'] != 'deliver-' + value['product_turn_id']:
+    fields = ANSWER_DRAFT_OWNER_FIELDS if 'answer_turn_id' in value else PRODUCT_DRAFT_OWNER_FIELDS
+    for field in fields:
+        (identifier if field in _OWNER_IDS | {'answer_turn_id'} else revision)(value[field])
+    if fields == PRODUCT_DRAFT_OWNER_FIELDS and value['task_draft_operation_id'] != 'deliver-' + value['product_turn_id']:
         raise RecognitionConflict('product graph operation is invalid')
+    if 'restoration_id' in value:
+        identifier(value['restoration_id']); identifier(value['source_document_id'])
+        if not value['restoration_id'].startswith('restore-'):
+            raise RecognitionConflict('product graph restoration is invalid')
+        for field in RESTORED_DRAFT_OWNER_FIELDS - PRODUCT_DRAFT_OWNER_FIELDS - {'restoration_id', 'source_document_id'}:
+            revision(value[field])
 
 
 def key(node):
     scope = node['scope']
     if node['kind'] == 'material':
-        return 'material', scope['user_id'], scope['project_id'], node['type'], node['id']
+        own = ('material', scope['user_id'], scope['project_id'], node['type'], node['id'])
+        return (*own, node['namespace']) if 'namespace' in node else own
     return ('read_proof', scope['user_id'], scope['project_id'], node['product_turn_id'],
         node['turn_id'], node['tool_call_id'])
 
@@ -95,8 +107,14 @@ def _validate_entry(node, user):
                 raise RecognitionConflict('product graph read result is invalid')
         return
     if node.get('kind') != 'material' or not _MATERIAL <= set(node) or set(node) - _MATERIAL - {
-            'incarnation', 'dependency_revisions'}:
+            'incarnation', 'dependency_revisions', 'namespace'}:
         raise RecognitionConflict('product graph material is invalid')
+    if 'namespace' in node:
+        namespace = node['namespace']
+        parts = namespace.split('/') if isinstance(namespace, str) else []
+        if len(parts) != 3 or parts[0] not in {'personal', 'shared'}:
+            raise RecognitionConflict('product graph namespace is invalid')
+        identifier(parts[1]); identifier(parts[2])
     if not isinstance(node['type'], str) or node['type'] not in _TYPES:
         raise RecognitionConflict('product graph material type is invalid')
     identifier(node['id']); revision(node['source_revision']); revision(node['policy_revision'], minimum=0)
@@ -108,10 +126,18 @@ def _validate_entry(node, user):
     dependency = node.get('dependency_revisions')
     if dependency is None:
         return
+    if node['type'] == 'original_item' and isinstance(dependency, Mapping) and set(dependency) == ROUTE_ORIGINAL_OWNER_FIELDS:
+        route_original_id(node['id'])
+        validate_route_original_metadata(dependency, identifier, revision)
+        return
+    if node['type'] == 'recognition' and isinstance(dependency, Mapping) and set(dependency) in STEER_LEARNING_FIELD_SETS:
+        validate_steer_learning_metadata(dependency, identifier, revision, recognition_id=node['id'],
+            recognition_revision=node['source_revision'], max_nodes=LIMIT)
+        return
     if node['type'] != 'experience' or not isinstance(dependency, Mapping):
         raise RecognitionConflict('product graph dependency is invalid')
     fields = set(dependency)
-    if fields == PRODUCT_DRAFT_OWNER_FIELDS:
+    if fields in DRAFT_OWNER_FIELD_SETS:
         owner_metadata(dependency)
     elif fields == EXTERNAL_INPUT_OWNER_FIELDS:
         try:
@@ -172,25 +198,28 @@ class SourceGraph:
         if root:
             self.roots.add(own)
 
-    def snapshot(self, snapshot, *, root=True):
+    def snapshot(self, snapshot, *, root=True, namespace=None):
         scope = snapshot['scope']
         for source in snapshot['nodes']:
             node = {key: value for key, value in source.items() if key != 'research_style_sources'}
             node.update(kind='material', scope=scope)
+            if namespace is not None:
+                node['namespace'] = namespace
             dependency = source.get('dependency_revisions')
             if dependency and 'current_source_graph' in dependency:
                 node['dependency_revisions'] = {k: v for k, v in dependency.items() if k != 'current_source_graph'}
                 for parent in dependency['current_source_graph']['nodes']:
-                    self.add(parent)
+                    self.add({**parent, 'namespace': namespace}
+                        if namespace is not None and parent['kind'] == 'material' and 'namespace' not in parent else parent)
             elif dependency and 'source_snapshot' in dependency:
                 node['dependency_revisions'] = {k: v for k, v in dependency.items() if k != 'source_snapshot'}
-                self.snapshot(dependency['source_snapshot'], root=False)
+                self.snapshot(dependency['source_snapshot'], root=False, namespace=namespace)
             self.add(node)
             for style in source.get('research_style_sources', []):
-                self.snapshot(style, root=False)
+                self.snapshot(style, root=False, namespace=namespace)
         if root:
-            self.roots.update(('material', scope['user_id'], scope['project_id'], ref['type'], ref['id'])
-                for ref in snapshot['roots'])
+            self.roots.update(key({'kind': 'material', 'scope': scope, 'type': ref['type'], 'id': ref['id'],
+                **({'namespace': namespace} if namespace is not None else {})}) for ref in snapshot['roots'])
 
     def result(self):
         ordered = sorted(self.nodes)

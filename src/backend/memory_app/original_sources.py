@@ -8,11 +8,48 @@ import re
 from types import SimpleNamespace
 from backend.recognition import RecognitionConflict, WorkScope
 from backend.recognition.external_turn_facts import source_store
+from core.storage_provider.record_lineage import verify_first_created
 
 ORIGINAL_TYPES = ('original_item', 'original_source')
+CONVERSATION_ARCHIVES = 'v2_conversation_share_archives'
 
 
-def original_content_identity(reader, scope, identity, span, *, input_binding=None):
+class TurnMaterialRevisionConflict(RecognitionConflict):
+    pass
+
+
+def conversation_archive_item(reader, receipt, *, project, namespace=None):
+    value = receipt.payload
+    stored_namespace = value.get('namespace')
+    if (receipt.revision != 1 or type(value.get('schema_version')) is not int or value['schema_version'] != 1
+            or not isinstance(stored_namespace, str) or not stored_namespace
+            or namespace is not None and stored_namespace != namespace
+            or value.get('project_id') != project or value.get('share_id') != receipt.object_id):
+        raise RecognitionConflict('conversation_archive_binding_changed')
+    identity = value['item_id']
+    row = reader.read('workspace_items', identity)
+    if row is None:
+        return None
+    if (row.payload.get('id') != identity or row.payload.get('project_id') != project
+            or row.payload.get('input_kind') != 'conversation'):
+        raise RecognitionConflict('conversation_archive_binding_changed')
+    verify_first_created(reader, value['birth'], collection='workspace_items', object_id=identity)
+    return row
+
+
+def is_conversation_archive(reader, project, identity, *, revision):
+    copies = [copy for copy in reader.list(CONVERSATION_ARCHIVES) if copy.payload.get('item_id') == identity]
+    if not copies:
+        return False
+    if len(copies) != 1:
+        raise RecognitionConflict('conversation_archive_binding_changed')
+    item = conversation_archive_item(reader, copies[0], project=project)
+    if item is None or item.revision != revision:
+        raise RecognitionConflict('conversation_archive_binding_changed')
+    return True
+
+
+def original_content_identity(reader, scope, identity, span=None, *, input_binding=None, windows=None):
     """Identity of an admitted original, separate from its processing state.
 
     SQLite items have no incarnation. An out-of-band identical delete/reinsert
@@ -22,9 +59,26 @@ def original_content_identity(reader, scope, identity, span, *, input_binding=No
     row = original(reader, scope, 'original_item', identity)
     payload = row.payload
     text = payload.get('source_text')
-    if not isinstance(text, str) or not isinstance(span, str) or not span:
+    if windows is not None or span is None:
+        if (input_binding is not None or not isinstance(text, str) or not text
+                or payload.get('status') not in {'ready', 'confirming', 'confirmed'}):
+            raise RecognitionConflict('original body is unavailable')
+        windows = [{'start': 0, 'end': len(text), 'text': text}] if windows is None else windows
+        previous = 0
+        if not isinstance(windows, (list, tuple)) or not windows:
+            raise RecognitionConflict('original body windows are unavailable')
+        for window in windows:
+            if (not isinstance(window, Mapping) or set(window) != {'start', 'end', 'text'}
+                    or type(window['start']) is not int or type(window['end']) is not int
+                    or not previous <= window['start'] < window['end'] <= len(text)
+                    or text[window['start']:window['end']] != window['text']):
+                raise RecognitionConflict('original body coordinates changed')
+            previous = window['end']
+        coordinates = {'coordinate_space': 'workspace_source_windows_v1',
+                       'windows': [dict(window) for window in windows]}
+    elif not isinstance(text, str) or not isinstance(span, str) or not span:
         raise RecognitionConflict('original input span is unavailable')
-    if input_binding is None:
+    elif input_binding is None:
         if span not in text:
             raise RecognitionConflict('original input span is unavailable')
         start = text.index(span)
@@ -125,6 +179,28 @@ def document_roots(reader, scope, refs, *, optional=False):
         if not isinstance(ref,Mapping) or not isinstance(ref.get('source_id'),str):
             raise RecognitionConflict('original references are invalid')
         identity, locator = ref['source_id'],ref.get('locator','')
+        if isinstance(locator, str) and locator.startswith(('outcome://', 'conversation://')):
+            from backend.recognition.product_draft_dependencies import (
+                RESTORATIONS, ANSWER_OUTCOMES, product_draft_source, read_product_draft_dependencies, ProductDraftDependencyError,
+            )
+            conversation = locator.startswith('conversation://')
+            marker = reader.read(ANSWER_OUTCOMES if conversation else RESTORATIONS, identity)
+            if (marker is None or locator != ('conversation://' if conversation else 'outcome://') + identity
+                    or marker.payload.get('project_id') != scope.project_id):
+                raise RecognitionConflict('restored document source is unavailable')
+            document_id = marker.payload.get('document_id')
+            experience_id = f'experience-legacy-{document_id}-r1'
+            experience = reader.read('recognition_experiences', experience_id)
+            try:
+                bound = product_draft_source(reader, scope, document_id, 1)
+                retained = read_product_draft_dependencies(reader, scope, experience.payload) if experience else None
+            except ProductDraftDependencyError as error:
+                raise RecognitionConflict(str(error)) from error
+            if (bound is None or retained != bound or experience is None or experience.payload.get('state') != 'active'
+                    or experience.payload.get('scope') != {'user_id': scope.user_id, 'project_id': scope.project_id}):
+                raise RecognitionConflict('restored document experience is unavailable')
+            result[('experience', experience_id)] = experience.revision
+            continue
         segment_of_workspace = (identity in workspace_ids and isinstance(locator,str)
                                 and re.fullmatch(r'text:[0-9]+:[0-9]+',locator) is not None)
         kind = 'workspace' if locator == 'workspace://' + identity or segment_of_workspace else 'source'
@@ -196,6 +272,6 @@ def resolve_turn_material(records, scope, item):
     else:
         raise RecognitionConflict("turn material type is invalid")
     if row.revision != item["revision"]:
-        raise RecognitionConflict("turn material revision conflicted")
+        raise TurnMaterialRevisionConflict("turn material revision conflicted")
     return {**deepcopy(item), "payload": deepcopy(dict(row.payload)),
             "ref": {"kind": ref_kind, "object_id": identity, "uri": f"crp://default/{collection}/{identity}"}}, roots

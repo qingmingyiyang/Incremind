@@ -25,9 +25,11 @@ def _division_authority(composition, request):
     permit = matches[0]
     plan = composition.dispatch_store.get_plan(permit.plan_id, project_id=project)
     assignment = composition.dispatch_store.get_assignment(permit.assignment_id, project_id=project)
+    effective = composition.dispatch_store.effective_snapshot(permit.plan_id,project_id=project)
+    amended = bool(effective.steer_input_refs)
     if (plan is None or assignment is None or plan.main_run_id != run.parent_run_id
-            or plan.status not in {'dispatching', 'dispatched'}
-            or assignment.assignment_id not in plan.assignment_ids
+            or not amended and plan.status not in {'dispatching', 'dispatched'}
+            or assignment.assignment_id not in (effective.assignment_ids if amended else plan.assignment_ids)
             or set(assignment.capability_ids) != set(run.capability_ids)):
         return None
     return frozen, run, permit, plan, assignment
@@ -71,12 +73,21 @@ def frozen_division_binding(composition, request, payloads):
             or payload['assignment_id'] != assignment.assignment_id):
         return None
     division = payload['division']
+    admitted = composition.dispatch_store.binding_snapshot(permit.permit_id,project_id=run.project_id)
+    dependency_scope = plan.assignment_ids
+    if admitted is not None:
+        if admitted.get('child_run_id') != run.run_id or admitted.get('task_payload_ref') != assignment.task_payload_ref:
+            return None
+        dependency_scope = admitted['assignment_ids']
+    elif assignment.assignment_id not in plan.assignment_ids:
+        return None
     if (not isinstance(division, dict) or set(division) != {'goal', 'deliverable', 'depends_on'}
             or any(not isinstance(division[key], str) or not division[key].strip()
                    or len(division[key]) > 2000 for key in ('goal', 'deliverable'))
             or not isinstance(division['depends_on'], list)
             or any(not isinstance(value, str) for value in division['depends_on'])
-            or not set(division['depends_on']).issubset(plan.assignment_ids)):
+            or not set(division['depends_on']).issubset(dependency_scope)
+            or admitted is not None and division['depends_on'] != admitted.get('depends_on')):
         return None
     task = payload['task']
     text = frozen.get('input', {}).get('text')

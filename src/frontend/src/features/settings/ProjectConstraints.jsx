@@ -3,9 +3,23 @@ import { DraftConflictView, Row, Switch } from '../../shared/ui';
 import { recognitionApi } from '../../shared/api/recognitionApi';
 import { userStorageKey } from '../../shared/api/deviceTransport';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
+import { constraintDateComparison, constraintDateError, constraintDateFields, constraintDatePayload, constraintTimeSummary, rebaseConstraintDraft } from './constraintDates';
+import './SettingsSupport.css';
+import './constraintDates.css';
+
+const suggestions = ['用中文回答', '不确定就直说', '引用要能点回原文', '列表不超过五条'];
 
 function createDraft(content = '') {
-  return { base: { id: `constraint-${crypto.randomUUID()}`, revision: 0, enabled: true }, content };
+  return { base: { id: `constraint-${crypto.randomUUID()}`, revision: 0, enabled: true }, content, ...constraintDateFields() };
+}
+
+function DateFields({ draft, onChange, disabled = false }) {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return <fieldset className="settings-constraint-dates" disabled={disabled}>
+    <legend title={`按浏览器时区 ${zone} 保存；开始包含该时刻，结束不包含该时刻`}>有效时间 · 本地</legend>
+    <label>开始时间<input type="datetime-local" step="0.001" aria-label="开始时间" value={draft.valid_from} onChange={event => onChange({ valid_from: event.target.value })}/></label>
+    <label>结束时间<input type="datetime-local" step="0.001" aria-label="结束时间" value={draft.valid_until} onChange={event => onChange({ valid_until: event.target.value })}/></label>
+  </fieldset>;
 }
 
 export function ProjectConstraints({ projectId, onChanged = () => {}, api = recognitionApi }) {
@@ -67,11 +81,11 @@ export function ProjectConstraints({ projectId, onChanged = () => {}, api = reco
     gate.invalidate('read'); updateEditor(null); setConflict(null); setReading(false); setReadError(null); setError('');
   }
   function openEditor(row) {
-    closeEditor(); updateEditor({ base: row, content: row.content, session: {} });
+    closeEditor(); updateEditor({ base: row, content: row.content, ...constraintDateFields(row), session: {} });
   }
-  function changeEditor(content, session) {
+  function changeEditor(changes, session) {
     const latest = currentEditor.current;
-    if (latest?.session === session) updateEditor({ ...latest, content });
+    if (latest?.session === session) updateEditor({ ...latest, ...changes });
   }
   async function save(row, enabled, text = row.content, editing = null, creating = null) {
     if (busy || reading) return;
@@ -79,53 +93,62 @@ export function ProjectConstraints({ projectId, onChanged = () => {}, api = reco
     if (!request) return;
     setBusy(true); setError('');
     try {
+      const dates = constraintDatePayload(editing || creating || { base: row, ...constraintDateFields(row) });
       const result = await api.saveConstraint({ projectId, constraintId: row.id, expectedRevision: row.revision,
-        content: text, enabled, validFrom: row.valid_from || null, validUntil: row.valid_until || null });
+        content: text, enabled, ...dates });
       if (!current(request)) return;
       setList(old => ({ scope, items: [...old.items.filter(item => item.id !== result.id), result] }));
       const latest = currentEditor.current;
       // 只结算本次提交的编辑会话，等待期间的新输入继续使用新修订。
       if (editing && latest?.session === editing.session)
-        updateEditor(latest === editing ? null : { ...latest, base: result });
-      else if (latest?.base.id === row.id) updateEditor({ ...latest, base: result });
+        updateEditor(latest === editing ? null : rebaseConstraintDraft(latest, result));
+      else if (latest?.base.id === row.id) updateEditor(rebaseConstraintDraft(latest, result));
       if (creating && currentNewDraft.current.base.id === creating.base.id)
-        updateNewDraft(createDraft(currentNewDraft.current === creating ? '' : currentNewDraft.current.content));
+        updateNewDraft(currentNewDraft.current === creating ? createDraft() : { ...currentNewDraft.current, base: createDraft().base });
       onChanged();
     } catch (failure) {
       if (!current(request) || editing && !matches(editing) || creating && !matches({ creating })) return;
       if (failure.status === 409) load({ base: row, session: editing?.session, creating });
-      else setError('操作未完成 · 重试');
+      else setError(constraintDateError(editing || creating || { base: row, ...constraintDateFields(row) }) || '操作未完成 · 重试');
     } finally { if (current(request)) setBusy(false); }
   }
   function choose(useServer) {
     if (!conflict?.server || !matches(conflict)) return;
-    if (conflict.creating) updateNewDraft(useServer ? createDraft() : { ...currentNewDraft.current, base: conflict.server });
+    if (conflict.creating) updateNewDraft(useServer ? createDraft() : rebaseConstraintDraft(currentNewDraft.current, conflict.server));
     else {
       const latest = currentEditor.current;
-      updateEditor({ ...latest, base: conflict.server, content: useServer ? conflict.server.content : latest.content });
+      updateEditor(rebaseConstraintDraft(latest, conflict.server, useServer));
     }
     setConflict(null); setError('');
   }
-  const conflictView = conflict?.server ? <DraftConflictView compact baseDraft={conflict.base} editor={editor || newDraft} server={conflict.server}
-    fields={[["content", "约束正文"]]} onChoose={choose} disabled={busy || reading}/>
+  const visibleDraft = editor || newDraft;
+  const dateError = constraintDateError(visibleDraft);
+  const localComparison = dateError ? { ...visibleDraft, valid_from: visibleDraft.valid_from || '不限', valid_until: visibleDraft.valid_until || '不限' } : constraintDateComparison(visibleDraft, true);
+  const conflictView = conflict?.server ? <DraftConflictView compact baseDraft={constraintDateComparison(conflict.base)} editor={localComparison} server={constraintDateComparison(conflict.server)}
+    fields={[["content", "约束正文"], ["valid_from", "开始时间"], ["valid_until", "结束时间"]]} onChoose={choose} disabled={busy || reading}/>
     : conflict && <p role={reading ? 'status' : 'alert'}>{reading ? '读取中' : conflict.error}
       {conflict.error && <button type="button" disabled={busy || reading} onClick={() => load(conflict)}>重试</button>}</p>;
   if (list.scope !== scope) return null;
-  return <section className="library-tools">
+  return <section className="library-tools settings-project-constraints">
     {readError && <p role="alert">读取未完成 · <button type="button" disabled={busy || reading}
       onClick={() => load(readError === true ? null : readError)}>重试</button></p>}
     {error && <p role="alert">{error}</p>}
-    <div className="settings-constraints-head">约束 <span>{items.filter(row => row.enabled).length}/{items.length}</span></div>
+    {dateError && <p role="alert">{dateError}</p>}
+    <div className="settings-constraints-head">约束 <span>{items.filter(row => row.enabled).length} / {items.length}</span></div>
     {editor && <form className="library-edit" onSubmit={event => { event.preventDefault(); if (!conflict) save(editor.base, editor.base.enabled, editor.content, editor); }}>
       {conflictView}
-      <label>约束正文<textarea aria-label="约束正文" value={editor.content} onChange={event => changeEditor(event.target.value, editor.session)}/></label>
-      <button type="submit" disabled={busy || reading || Boolean(conflict) || !editor.content.trim()}>保存</button><button type="button" onClick={closeEditor}>取消</button>
+      <label>约束正文<textarea aria-label="约束正文" value={editor.content} onChange={event => changeEditor({ content: event.target.value }, editor.session)}/></label>
+      <DateFields draft={editor} onChange={changes => changeEditor(changes, editor.session)}/>
+      <div className="settings-support-actions"><button type="button" onClick={closeEditor}>取消</button><button type="submit" disabled={busy || reading || Boolean(conflict) || Boolean(dateError) || !editor.content.trim()}>保存</button></div>
     </form>}
-    {items.map(row => <Row key={row.id} title={row.content} meta={row.valid_until ? String(row.valid_until).slice(0, 10) : '—'}
+    <div className="settings-constraints-list">{items.map(row => <Row key={row.id} title={row.content} meta={constraintTimeSummary(row)}
       onOpen={() => openEditor(row)}
-      trailing={<Switch label={row.content} checked={row.enabled} disabled={busy || reading || conflict?.base.id === row.id} onChange={enabled => save(row, enabled)}/>}/>)}
-    <form onSubmit={event => { event.preventDefault(); if (newDraft.content.trim() && !editor && !conflict) save(newDraft.base, newDraft.base.enabled, newDraft.content, null, newDraft); }}>
-      {!editor && <>{conflictView}<label>新约束<input aria-label="新约束" value={newDraft.content} onChange={event => updateNewDraft({ ...newDraft, content: event.target.value })} onKeyDown={event => { if (event.key === 'Enter' && (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) event.preventDefault(); }}/></label></>}
+      trailing={<Switch label={row.content} checked={row.enabled} disabled={busy || reading || conflict?.base.id === row.id} onChange={enabled => save(row, enabled)}/>}/>)}</div>
+    <form className="settings-constraint-create" onSubmit={event => { event.preventDefault(); if (newDraft.content.trim() && !editor && !conflict) save(newDraft.base, newDraft.base.enabled, newDraft.content, null, newDraft); }}>
+      {!editor && <>{conflictView}<label>新约束<input aria-label="新约束" placeholder="写一条约束" disabled={busy || reading || Boolean(conflict)} value={newDraft.content} onChange={event => updateNewDraft({ ...newDraft, content: event.target.value })} onKeyDown={event => { if (event.key === 'Enter' && (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) event.preventDefault(); }}/></label>
+        <button type="submit" className="settings-support-button" disabled={busy || reading || Boolean(conflict) || Boolean(dateError) || !newDraft.content.trim()}>添加</button>
+        <DateFields draft={newDraft} disabled={busy || reading || Boolean(conflict)} onChange={changes => updateNewDraft({ ...currentNewDraft.current, ...changes })}/></>}
     </form>
+    {!editor && <div className="settings-constraint-suggestions" aria-label="约束建议">{suggestions.filter(text => !items.some(row => row.content === text)).map(text => <button type="button" key={text} disabled={busy || reading || Boolean(conflict)} onClick={() => updateNewDraft({ ...newDraft, content: text })}>＋ {text}</button>)}</div>}
   </section>;
 }

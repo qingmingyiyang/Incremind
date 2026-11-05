@@ -11,12 +11,14 @@ import threading
 import time
 import weakref
 from types import MappingProxyType
+from urllib.parse import urlsplit, unquote
+import base64
 
 from backend.shared.deployment import DeploymentLayout
 from backend.shared.secret_detection import REDACTED_SECRET, contains_secret, redact_secrets
 from core.ai_kernel import validate_turn_request
 
-from .external_adapters import LaunchPlan, build_launch_plan
+from .external_adapters import CODEX_NETWORK_ENV, LaunchPlan, build_launch_plan, validate_codex_api
 from .external_process import ProcessCleanupError, _Owner, run_process
 from .external_workspace import task_path_identity, validate_task_path
 from .external_permissions import HostPermissions, PERMISSIONS
@@ -25,6 +27,7 @@ from .external_permissions import HostPermissions, PERMISSIONS
 _IDENTITY = re.compile(r'[A-Za-z0-9][A-Za-z0-9._~-]{0,127}\Z')
 _ENV_NAME = re.compile(r'[A-Z][A-Z0-9_]{0,127}\Z')
 _BASE_ENV = frozenset({'SystemRoot','WINDIR','TEMP','TMP'})
+_NETWORK_ENV = frozenset(CODEX_NETWORK_ENV)
 _CREDENTIAL_ENV = frozenset({'OPENAI_API_KEY','CODEX_API_KEY','ANTHROPIC_API_KEY','CHRIPTMAS_DEVICE_KEY',
     'DEVICE_KEY','APPROVED_DEVICE_KEY'})
 _RESERVED_ENV = frozenset({'PATH','HOME','USERPROFILE','APPDATA','LOCALAPPDATA',
@@ -37,6 +40,11 @@ _PROJECT_CONFIG = ('.codex','.claude','.mcp.json','CLAUDE.md','CLAUDE.local.md')
 
 class ExternalHostError(ValueError):
     """仅返回固定错误码，不含路径、环境、认证或进程输出。"""
+
+
+class _PrivateEnvironment(dict):
+    def __repr__(self):
+        return 'PrivateEnvironment()'
 
 
 def _safe(method):
@@ -174,14 +182,21 @@ class HostLease:
         self.isolation = 'linux-bwrap@1' if host.deployment.mode == 'server' else 'desktop-cli-permissions'
         self.linux_launch = host.linux_isolation.launch(plan.cwd) if host.deployment.mode == 'server' else None
         self.harness_model = None
+        self._shared_gateway = None
+        access = getattr(host.models, 'server_model_access', None)
+        self._server_model_binding = (access.selection('generation')['server_model_binding']
+            if access is not None else None)
         if host.deployment.mode == 'server':
-            model = host.models.records.read('recognition_model_config', 'generation').payload.get('model')
+            from .external_harness_profile import shared_harness_selection
+            shared = shared_harness_selection(host.models)
+            model = (shared['configuration']['model'] if shared is not None else
+                host.models.records.read('recognition_model_config', 'generation').payload.get('model'))
             if (not isinstance(model, str) or contains_secret(model)
                     or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}', model)):
                 _reject('credentials_unavailable')
             self.harness_model = model
         self.commands = plan.requested_commands
-        self._environment = environment
+        self._environment = _PrivateEnvironment(environment)
         self._secrets = secrets
         self._validate = validate
         self._validate_current = validate if validate_current is None else validate_current
@@ -294,10 +309,15 @@ class HostLease:
             self._executing = False
             snapshot = self._host._issued_leases.get(self)
             if (snapshot is not None and self._closed and snapshot[6] is None
-                    and snapshot[5] is not None and snapshot[5].closed):
+                    and snapshot[5] is not None and snapshot[5].closed
+                    and (self._shared_gateway is None or self._shared_gateway.cleanup_complete)):
                 self._host._issued_leases.pop(self, None)
 
     def close(self):
+        gateway = (self._shared_gateway if isinstance(self._host, HostAdmission)
+            and self._host._issued_leases.get(self) is not None else None)
+        if gateway is not None:
+            gateway.revoke()
         deadline = time.monotonic() + 1
         if not self._lifecycle_lock.acquire(timeout=1):
             _reject('cleanup_incomplete')
@@ -307,6 +327,11 @@ class HostLease:
             self._lifecycle_lock.release()
         if owner is not None:
             owner.close(deadline=deadline)
+        if gateway is not None:
+            try:
+                gateway.close()
+            except Exception:
+                _reject('cleanup_incomplete')
         with self._lifecycle_lock:
             snapshot = self._host._issued_leases.get(self) if isinstance(self._host, HostAdmission) else None
             # 原 caller 未结束时保同 map，物理关闭不能抢在原完成回调登记之前。
@@ -347,6 +372,37 @@ class HostLease:
         self.validate()
         return self
 
+    def enable_shared_gateway(self, validate):
+        from .external_harness_profile import shared_harness_selection
+        selection = shared_harness_selection(self._host.models)
+        if selection is None:
+            return
+        if self._shared_gateway is not None or self.plan.executor != 'deepseek-harness':
+            _reject('lease_invalid')
+        from .external_shared_gateway import SharedExternalGateway
+        identity = self._host._server_binding(self._accepted_turn['turn_id'])
+        balances = getattr(identity.context, 'model_balances', None)
+        if balances is None:
+            _reject('shared_balance_unavailable')
+
+        def current():
+            from backend.security.user_context import user_context
+            with user_context(identity.access):
+                self.validate()
+                identity.validate()
+                if (not self._executing or self._process_owner is None
+                        or self._process_owner.closed or self._process_owner.finished.is_set()):
+                    _reject('lease_invalid')
+                validate()
+
+        gateway = SharedExternalGateway(access=self._host.models.server_model_access,
+            balances=balances, actor=identity.identity, user_root=identity.root,
+            selection=selection, validate=current, task_id=self._accepted_turn['turn_id'])
+        self._shared_gateway = gateway
+        gateway.start()
+        self._environment.update(DEEPSEEK_API_KEY=gateway._token, DEEPSEEK_BASE_URL=gateway.base_url)
+        self._secrets = (*self._secrets, gateway._token)
+
     def __exit__(self, *args):
         self.close()
 
@@ -355,7 +411,7 @@ class HostAdmission:
     """应用固定的宿主机械准入；材料与真实 Turn 身份仍由原运行器核验。"""
     def __init__(self, *, deployment: DeploymentLayout, owner_id, registrations,
             records, environment=None, secret_environment=None, memory_endpoint=None, concurrency_limit=1, models=None,
-            linux_isolation=None, server_state=None):
+            linux_isolation=None, server_state=None, codex_api=None, network_environment=None):
         if type(concurrency_limit) is not int or concurrency_limit < 1:
             _reject('concurrency_invalid')
         self.deployment, self.owner_id = deployment, owner_id
@@ -368,6 +424,23 @@ class HostAdmission:
         self._secret_environment = dict(secret_environment or {})
         self.memory_endpoint = memory_endpoint
         self.models = models
+        self._codex_api_binding = None
+        if (codex_api is None and models is not None
+                and any(item.executor == 'codex' and item.controlled_api for item in self.registrations.values())
+                and callable(getattr(models, 'public_for_purpose', None))):
+            public = models.public_for_purpose('generation')
+            if (public.get('provider') == 'openai' and public.get('model') == 'gpt-6.1-terra'
+                    and public.get('base_url', '').rstrip('/') == 'https://api.openai.com/v1'
+                    and public.get('configured') and public.get('mode', 'api') == 'api'):
+                codex_api = {'model': public['model'], 'base_url': public['base_url']}
+                self._codex_api_binding = deepcopy(public)
+        self._codex_api = MappingProxyType(validate_codex_api(codex_api)) if codex_api is not None else None
+        network = {} if network_environment is None else dict(network_environment)
+        if any(name not in _NETWORK_ENV or not isinstance(value, str) or len(value) > 32768
+                or any(char in value for char in ('\x00', '\r', '\n')) for name, value in network.items()):
+            _reject('environment_invalid')
+        # 网络配置仅存宿主内存，不进入 LaunchPlan、归档或公开状态。
+        self._network_environment = MappingProxyType(_PrivateEnvironment(network))
         self.linux_isolation, self.server_state = linux_isolation, server_state
         self._server_memory = {}
         self._server_memory_lock = threading.RLock()
@@ -454,7 +527,32 @@ class HostAdmission:
         with self._server_memory_lock:
             device_keys = tuple(binding.environment()['CHRIPTMAS_DEVICE_KEY'] for binding in self._server_memory.values())
         return all(isinstance(value, str) and bool(value) and value not in text
-            for value in (*self._secret_environment.values(), *device_keys))
+            for value in (*self._secret_environment.values(), *device_keys,
+                *self._network_secret_values()))
+
+    def _network_secret_values(self):
+        values = [value for value in self._network_environment.values() if value]
+        for name, value in self._network_environment.items():
+            if name.lower() in {'http_proxy', 'https_proxy', 'all_proxy'} and value:
+                try:
+                    url = urlsplit(value)
+                    values.extend(unquote(part) for part in (url.username, url.password) if part)
+                    if url.username is not None and url.password is not None:
+                        basic = unquote(url.username) + ':' + unquote(url.password)
+                        values.append(base64.b64encode(basic.encode('utf-8')).decode('ascii'))
+                except ValueError:
+                    _reject('environment_invalid')
+        return tuple(dict.fromkeys(values))
+
+    def codex_api_configuration(self, executor):
+        registration = self.registrations.get(executor)
+        if (executor != 'codex' or registration is None or not registration.controlled_api
+                or self._codex_api is None):
+            return None
+        if self._codex_api_binding is not None:
+            if self.models is None or self.models.public_for_purpose('generation') != self._codex_api_binding:
+                _reject('model_changed')
+        return dict(self._codex_api)
 
     def _approved_credentials(self):
         for key, value in self._secret_environment.items():
@@ -528,8 +626,9 @@ class HostAdmission:
                     _reject('environment_invalid')
                 result[key] = buffer.value
         if plan.executor == 'deepseek-harness':
-            from .external_harness_profile import acquire_harness_credential
-            key, _ = acquire_harness_credential(self.models)
+            from .external_harness_profile import acquire_harness_credential, shared_harness_selection
+            shared = shared_harness_selection(self.models)
+            key = 'pending-controlled-gateway' if shared is not None else acquire_harness_credential(self.models)[0]
             home = plan.cwd / 'harness-home'
             result.update({'HOME':str(home), 'USERPROFILE':str(home), 'DSH_HOME':str(home),
                 'DEEPSEEK_API_KEY':key, **dict(plan.public_environment)})
@@ -549,6 +648,10 @@ class HostAdmission:
         from .external_memory_admission import _CREDENTIALS
         result.update({name: value for name, value in approved.items()
             if not registration.controlled_api or name == key or name in _CREDENTIALS})
+        network_secrets = ()
+        if registration.controlled_api and plan.executor == 'codex':
+            result.update(self._network_environment)
+            network_secrets = self._network_secret_values()
         if plan.executor == 'claude-code':
             # 官方>=2.1.251对子进程移除模型秘密；当前适配器最低2.1.257。
             result['CLAUDE_CODE_SUBPROCESS_ENV_SCRUB'] = '1'
@@ -559,7 +662,8 @@ class HostAdmission:
                     or (target in result and result[target] != result[source])):
                 _reject('environment_invalid')
             result[target] = result[source]
-        return result, tuple(dict.fromkeys(value for name, value in result.items() if name in _CREDENTIAL_ENV))
+        return result, tuple(dict.fromkeys([*(value for name, value in result.items() if name in _CREDENTIAL_ENV),
+            *network_secrets]))
 
     def _permission_check(self, turn, plan, refs, reader):
         needed = {'folder':plan.preset == 'folder', 'commands':plan.requested_commands == 'explicit'}
@@ -639,7 +743,8 @@ class HostAdmission:
         canonical = build_launch_plan(plan.executor, cli_version=plan.cli_version,
             executable=registration.executable, cwd=cwd, task=turn['input']['text'],
             mcp_config=mcp_config, preset=plan.preset, commands=plan.requested_commands,
-            memory_endpoint=self.memory_endpoint, material_directory=plan.material_directory)
+            memory_endpoint=self.memory_endpoint, material_directory=plan.material_directory,
+            codex_api=self.codex_api_configuration(plan.executor))
         if plan != canonical:
             _reject('request_invalid')
         if plan.material_directory is not None:
@@ -647,8 +752,13 @@ class HostAdmission:
             if plan.material_directory != cwd / 'agent_workspaces' / _identity(turn['turn_id']):
                 _reject('request_invalid')
         if plan.executor == 'deepseek-harness':
-            from .external_harness_profile import acquire_harness_credential, validate_profile
-            _, credential_current = acquire_harness_credential(self.models)
+            from .external_harness_profile import acquire_harness_credential, shared_harness_selection, validate_profile
+            shared = shared_harness_selection(self.models)
+            if shared is None:
+                _, credential_current = acquire_harness_credential(self.models)
+            else:
+                def credential_current():
+                    self.models.server_model_access.validate_binding(shared['server_model_binding'])
             validate_profile(cwd, mcp_config, server=self.deployment.mode == 'server')
         elif registration.controlled_api:
             key = 'CODEX_API_KEY' if plan.executor == 'codex' else 'ANTHROPIC_API_KEY'
@@ -661,6 +771,8 @@ class HostAdmission:
         server_binding = self._server_binding(turn['turn_id'])
         environment, secrets = self._environment_for(registration, plan,
             **({'server_binding': server_binding} if server_binding is not None else {}))
+        codex_configuration = self.codex_api_configuration(plan.executor)
+        network_configuration = dict(self._network_environment)
         # 进程 Job 不限制文件权限；本仓尚无可委托的隔离域，不能由 preset 或平台名代替。
         if (self.deployment.mode == 'server' and not self.server_available(plan.executor) or plan.preset == 'research'
                 or plan.requested_commands == 'sandboxed'):
@@ -676,6 +788,9 @@ class HostAdmission:
             stamps[plan.material_directory] = _stamp(plan.material_directory)
 
         def validate_current():
+            if (self.codex_api_configuration(plan.executor) != codex_configuration
+                    or dict(self._network_environment) != network_configuration):
+                _reject('model_changed')
             if self.deployment.mode == 'server':
                 if self._server_binding(turn['turn_id']) is not server_binding:
                     _reject('identity_unavailable')
@@ -683,6 +798,9 @@ class HostAdmission:
                 credential_current()
 
         def validate(reader=None):
+            if (self.codex_api_configuration(plan.executor) != codex_configuration
+                    or dict(self._network_environment) != network_configuration):
+                _reject('model_changed')
             if self._validated_limit() != limit:
                 _reject('concurrency_changed')
             self._discovered_paths_are_local(registration)

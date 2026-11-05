@@ -21,6 +21,16 @@ def contents(root):
     return ''.join(p.read_text(encoding='utf8') for p in sorted((root / 'logs').glob('app-*.log')))
 
 
+def test_startup_records_only_actual_sqlite_version(tmp_path):
+    import sqlite3
+
+    app = install(FastAPI(), tmp_path)
+    with TestClient(app):
+        text = contents(tmp_path)
+        assert text.count('sqlite_version=' + sqlite3.sqlite_version) == 1
+        assert 'sqlite_version=' + sqlite3.sqlite_version + '\n' in text
+
+
 def control_app(root, name):
     app = FastAPI()
     @app.post('/control')
@@ -244,7 +254,10 @@ def test_multiline_and_oversized_unicode_records_keep_request_prefix_on_each_lin
     files=list((tmp_path/'logs').glob('app-*.log'))
     assert len(files)>=2 and all(path.stat().st_size<=10*1024*1024 for path in files)
     lines=[line for path in files for line in path.read_text(encoding='utf8').splitlines() if line]
-    assert all(f'request_id={request_id} turn_id=-' in line for line in lines)
+    import sqlite3
+    assert all(f'request_id={request_id} turn_id=-' in line
+               or f'request_id=- turn_id=- INFO ' in line
+               and line.endswith('sqlite_version=' + sqlite3.sqlite_version) for line in lines)
     assert sum(line.count('界') for line in lines)==4*1024*1024
 
 

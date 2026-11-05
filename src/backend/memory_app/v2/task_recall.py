@@ -49,10 +49,14 @@ class TaskRecall:
         # 工具条数只收紧产品选择，旧 layer/trust 参数不扩大资格。
         limit = max(0, min(12, int(arguments.get('limit', 12))))
         records = self.query.records
+        shared = self.query.origin_admission
         # 翻书可能带关联摘要，选择前冻结文档与遗忘旁路修订。
         document_versions = {row.object_id:row.revision for row in records.list('documents')}
         preference_versions = {collection:{row.object_id:row.revision for row in records.list(collection)}
                                for collection in ('recognition_recall_preferences', 'v2_document_recall')}
+        profile_versions = ({row.object_id: row.revision for row in
+            self.query.profile_owner.records.list('recognition_recall_preferences')}
+            if shared is not None else preference_versions['recognition_recall_preferences'])
         collected = self.query.collect_candidates(scope.project_id, question)
         qualified, excluded = [], list(collected['excluded_sources'])
         for candidate in collected['candidates']:
@@ -81,6 +85,8 @@ class TaskRecall:
                         'project_id':own.project_id, 'snapshot':snapshot,
                         'bookshelf':bool(candidate.get('bookshelf')),
                         'item_id':entry.get('item_id'), 'item_revision':entry.get('item_revision')}
+            if shared is not None:
+                material['namespace'] = candidate.get('namespace', self.query.source_namespace)
             materials.append(material)
             ids = set(candidate.get('document_ids', []))
             if candidate['kind'] == 'document':
@@ -90,28 +96,57 @@ class TaskRecall:
                     raise RecognitionConflict('product recall document changed during selection')
                 documents[identity] = {'id':identity, 'revision':document_versions[identity],
                                        'project_id':own.project_id}
-                preferences[('v2_document_recall', identity)] = preference_versions['v2_document_recall'].get(identity, 0)
+                if shared is not None:
+                    documents[identity]['namespace'] = material['namespace']
+                preferences[('v2_document_recall', identity, material.get('namespace'))] = preference_versions['v2_document_recall'].get(identity, 0)
             if candidate['kind'] == 'recognition':
-                preferences[('recognition_recall_preferences', entry['id'])] = preference_versions['recognition_recall_preferences'].get(entry['id'], 0)
+                preferences[('recognition_recall_preferences', entry['id'], material.get('namespace'))] = preference_versions['recognition_recall_preferences'].get(entry['id'], 0)
             collection = {'recognition':'recognitions', 'document':'documents', 'source':'sources'}[candidate['kind']]
             ref = f"crp://default/{collection}/{entry['id']}"
+            if shared is not None:
+                from ..source_evidence_refs import qualified_material_ref
+                ref = qualified_material_ref({'type': {'source': 'original_source'}.get(candidate['kind'], candidate['kind']),
+                    'id': entry['id'], 'revision': entry['revision'], 'project_id': own.project_id,
+                    'namespace': material['namespace']})
             results.append({'object_id':entry['id'], 'layer':candidate['layer'],
                             'title':candidate['title'], 'content':candidate['excerpt'],
                             'source_refs':[ref], 'trust_status':'published', 'score':candidate['score'],
                             'bookshelf':material['bookshelf']})
         # 画像沿自己的项目来源继承，仅冻结实际入选事实。
         for item in profile['items']:
-            materials.append({'kind':'recognition', 'id':item['id'], 'revision':item['revision'],
+            material = {'kind':'recognition', 'id':item['id'], 'revision':item['revision'],
                               'project_id':'me', 'snapshot':deepcopy(item['snapshot']), 'bookshelf':False,
-                              'item_id':None, 'item_revision':None})
-            preferences[('recognition_recall_preferences', item['id'])] = preference_versions['recognition_recall_preferences'].get(item['id'], 0)
+                              'item_id':None, 'item_revision':None}
+            if shared is not None:
+                material['namespace'] = shared.personal['namespace']
+            materials.append(material)
+            preferences[('recognition_recall_preferences', item['id'], material.get('namespace'))] = profile_versions.get(item['id'], 0)
+            reference = f"crp://default/recognitions/{item['id']}"
+            if shared is not None:
+                from ..source_evidence_refs import qualified_material_ref
+                reference = qualified_material_ref({'type': 'recognition', 'id': item['id'],
+                    'revision': item['revision'], 'project_id': 'me', 'namespace': material['namespace']})
             results.append({'object_id':item['id'], 'layer':'persona', 'title':'已确认画像',
-                            'content':item['content'], 'source_refs':[f"crp://default/recognitions/{item['id']}"],
+                            'content':item['content'], 'source_refs':[reference],
                             'trust_status':'published', 'score':1, 'bookshelf':False})
         binding = {'version':1, 'materials':materials,
                    'documents':list(documents.values()),
-                   'preferences':[{'collection':collection, 'id':identity, 'revision':revision}
-                                  for (collection, identity), revision in sorted(preferences.items())]}
+                   'preferences':[{'collection':collection, 'id':identity, 'revision':revision,
+                       **({'namespace': namespace} if shared is not None else {})}
+                       for (collection, identity, namespace), revision in sorted(preferences.items())]}
+        if shared is not None:
+            from ..kernel.answer_continuations import encode
+            guards = {}
+            for name in ('overview_guard', 'bookshelf_guard', 'search_guard'):
+                guard = plan.get(name)
+                if guard is not None:
+                    value = getattr(guard, 'frozen_binding' if name == 'search_guard' else 'continuation', None)
+                    if value is None:
+                        raise RecognitionConflict('shared_task_recall_guard_unavailable')
+                    guards[name] = value
+            facts = {key: value for key, value in plan.items() if key not in
+                ('overview_guard', 'bookshelf_guard', 'search_guard', 'history_guard', 'expires_monotonic', 'state', 'result')}
+            binding['shared_selection'] = encode({'plan': facts, 'guards': guards, 'limit': limit})
         output = {'summary':f'recalled {len(results)} evidence items', 'payload_ref':None, 'receipt_ref':None,
                   'evidence_refs':[ref for item in results for ref in item['source_refs']], 'result':results}
         return output, binding

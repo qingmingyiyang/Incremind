@@ -221,3 +221,123 @@ v8.demand_based = v7.demand_based
 v8.agentic = v7.agentic
 v8.empty_layer_drilldown = True
 register('retrieve', '@8')(v8)
+
+
+def v9(entrypoint, /, *args, **kwargs):
+    """调查观察与最终交付显式区分，模型只选择确实需要的已读材料。"""
+    operation = kwargs.get('operation')
+    if operation == 'agentic_decision':
+        value, = args
+        if isinstance(value, dict) and value.get('action') == 'answer':
+            # 先沿原协议校验所有字段，仅新版本允许answer使用既有ids表达最终交付集合。
+            identities = value.get('ids')
+            if (not isinstance(identities, list) or len(identities) > 8
+                    or any(not isinstance(item, str) or not item.strip() or len(item) > 500 for item in identities)
+                    or len(set(identities)) != len(identities)):
+                raise ValueError('invalid_rag_decision')
+            v8(entrypoint, {**value, 'ids': []}, **kwargs)
+            return value
+    if operation == 'agentic_messages':
+        import json
+        context, = args
+        result = v6(entrypoint, *args, **kwargs)
+        instruction = (
+            '\n材料的final_evidence及final_evidence_ids标记当前真正会交给最终回答的证据。'
+            '其他materials只是调查观察，catalog只是目录；看见它们不表示最终回答能看见。'
+            '同一身份的观察可能比当前交付窗口更完整，只有final_evidence=true才表示这里展示的全部文本已交付。'
+            'answer的ids可以显式列出最终回答所需的全部已观察materials身份，最多8个，'
+            '可保留当前集合中的必要项、加入新找到的必要项、去掉无关项；不能填仅在目录中的id或技能id。'
+            'ids=[]表示原样沿用当前已选窗口，不会自动补齐同身份的其他观察；需要完整已观察窗口时应明确选择该id。'
+            '选择answer前，对照原问题逐项核实所需人物、不同对象、同源后续行动及限定条件已在最终集合中。'
+            '必要证据尚未读到应read或search；不要为了交接把全部观察一律选入，也不要重复检索已有事实。'
+            'search的query非空、ids=[]、questions=[]；read的ids非空、query=""、questions=[]；'
+            'answer的query=""、questions=[]；clarify的questions非空、query=""、ids=[]。'
+            '缺少会改变答案的必要条件时应clarify，不代用户选择条件。'
+        )
+        return [{**result[0], 'content': result[0]['content'] + instruction},
+                {'role': 'user', 'content': json.dumps(context, ensure_ascii=False, separators=(',', ':'))}]
+    return v8(entrypoint, *args, **kwargs)
+
+
+v9.drilldown = v8.drilldown
+v9.demand_based = v8.demand_based
+v9.agentic = v8.agentic
+v9.empty_layer_drilldown = v8.empty_layer_drilldown
+v9.explicit_answer_evidence = True
+register('retrieve', '@9')(v9)
+
+
+def v10(entrypoint, /, *args, **kwargs):
+    """显式候选先探查既有记忆层，其余调查与证据交接沿用9。"""
+    if kwargs.get('operation') == 'initial_layers':
+        return ('L3', 'L2', 'L1')
+    return v9(entrypoint, *args, **kwargs)
+
+
+v10.drilldown = v9.drilldown
+v10.demand_based = v9.demand_based
+v10.agentic = v9.agentic
+v10.empty_layer_drilldown = v9.empty_layer_drilldown
+v10.explicit_answer_evidence = v9.explicit_answer_evidence
+v10.initial_memory_probe = True
+register('retrieve', '@10')(v10)
+
+
+def v11(entrypoint, /, *args, **kwargs):
+    """显式原文候选沿完整阶梯初检，为单轮尝试保留一个额外模型句柄。"""
+    operation = kwargs.get('operation')
+    if operation == 'initial_layers':
+        return ('L3', 'L2', 'L1', 'L0')
+    if operation == 'agentic_limits':
+        return {**v9(entrypoint, *args, **kwargs), 'nested_model_handle_budget': 10}
+    return v9(entrypoint, *args, **kwargs)
+
+
+v11.drilldown = v9.drilldown
+v11.demand_based = v9.demand_based
+v11.agentic = v9.agentic
+v11.empty_layer_drilldown = v9.empty_layer_drilldown
+v11.explicit_answer_evidence = v9.explicit_answer_evidence
+v11.initial_memory_probe = True
+v11.raw_evidence_probe = True
+register('retrieve', '@11')(v11)
+
+
+def v12(entrypoint, /, *args, **kwargs):
+    """一次分层初检和有据生成；语义覆盖由模型判断，硬边界由原服务核验。"""
+    operation = kwargs.get('operation')
+    if operation == 'initial_layers':
+        return ('L3', 'L2', 'L1', 'L0')
+    if operation == 'agentic_limits':
+        return {**v9(entrypoint, *args, **kwargs), 'nested_model_handle_budget': 10}
+    result = v9(entrypoint, *args, **kwargs)
+    if operation == 'agentic_messages':
+        return [{**result[0], 'content': result[0]['content'] +
+                 '\nfast_path_diagnostics只记录先前单轮尝试的缺失或风险码，不是事实证据。'
+                 '不得据此生成事实；继续从materials中的真实窗口调查并核实原问题。'}, *result[1:]]
+    return result
+
+
+v12.drilldown = v9.drilldown
+v12.demand_based = v9.demand_based
+v12.agentic = v9.agentic
+v12.empty_layer_drilldown = v9.empty_layer_drilldown
+v12.explicit_answer_evidence = v9.explicit_answer_evidence
+v12.initial_memory_probe = True
+v12.evidence_answer_probe = True
+register('retrieve', '@12')(v12)
+
+
+def v13(entrypoint, /, *args, **kwargs):
+    """独立候选把完整回答Schema送入JSON模式，保留12的冻结消息。"""
+    return v12(entrypoint, *args, **kwargs)
+
+
+v13.drilldown = v12.drilldown
+v13.demand_based = v12.demand_based
+v13.agentic = v12.agentic
+v13.empty_layer_drilldown = v12.empty_layer_drilldown
+v13.explicit_answer_evidence = v12.explicit_answer_evidence
+v13.initial_memory_probe = v12.initial_memory_probe
+v13.evidence_answer_probe = v12.evidence_answer_probe
+register('retrieve', '@13')(v13)

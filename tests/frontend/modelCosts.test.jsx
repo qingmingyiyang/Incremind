@@ -30,7 +30,7 @@ it('saves nullable unknown model prices with their own CAS and explicit CNY unit
   expect(screen.getByText('¥ / 百万 token')).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('生成输入单价'), { target: { value: '2' } });
   fireEvent.change(screen.getByLabelText('生成输出单价'), { target: { value: '8' } });
-  fireEvent.click(screen.getByRole('button', { name: '保存单价' })); await settle();
+  fireEvent.click(screen.getByRole('button', { name: '保存', exact: true })); await settle();
   expect(injected.savePrices).toHaveBeenCalledWith({ purpose: 'generation',
     rates: { ...rates, cache_read_per_million: null }, expectedRevision: 0, expectedConfigurationRevision: 3 });
   expect(injected.saveModel).not.toHaveBeenCalled();
@@ -74,7 +74,7 @@ it.each([null, {currency:'USD',amount:'1'}, {currency:'CNY',amount:null}, {curre
 
 it('shows known and historical unknown expenses after usage in egress records', async () => {
   render(<SettingsPage api={api()} initialSection="privacy"/>); await settle();
-  fireEvent.click(screen.getByRole('button', { name: '外发记录' })); await settle();
+  expect(screen.queryByRole('button', { name: '外发记录' })).not.toBeInTheDocument();
   const table = screen.getByRole('table');
   expect(within(table).getByRole('columnheader', { name: '花费' })).toBeInTheDocument();
   expect(within(table).getByText('¥0.0123')).toBeInTheDocument();

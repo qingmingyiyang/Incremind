@@ -1,0 +1,29 @@
+.shared-projects-panel { display: grid; gap: 16px; min-width: 0; color: var(--ink); }
+.shared-projects-panel header, .shared-projects-panel form, .shared-projects-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.shared-projects-panel header { justify-content: space-between; }
+.shared-projects-panel h2, .shared-projects-panel h3 { margin: 0; }
+.shared-projects-panel label, .shared-projects-dialog label { display: grid; gap: 6px; min-width: 0; }
+.shared-projects-panel input, .shared-projects-panel select, .shared-projects-dialog input { max-width: 100%; min-width: 0; border: 1px solid var(--line2); background: var(--paper); color: var(--ink); padding: 8px; }
+.shared-projects-panel button, .shared-projects-dialog button { border: 1px solid var(--line2); border-radius: var(--r-control); background: var(--panel); color: var(--ink); padding: 8px 12px; cursor: pointer; min-height: 36px; }
+.shared-projects-panel button:disabled, .shared-projects-dialog button:disabled { opacity: .5; }
+.shared-projects-error { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; color: var(--red); }
+.shared-projects-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; box-sizing: border-box; border: 1px solid var(--line2); border-radius: var(--r-panel); background: var(--panel); color: var(--ink); padding: 24px; box-shadow: 0 12px 32px var(--shadow); }
+.shared-projects-dialog .shared-projects-actions { margin-top: 20px; }
+.shared-projects-dialog label { margin-block: 12px; }
+.shared-projects-dialog input[type="checkbox"] { justify-self: start; }
+.shared-projects-panel :is(button,input,select):focus-visible,.shared-projects-dialog :is(button,input):focus-visible { outline: 2px solid var(--cr-focus-color); outline-offset: 2px; }
+.shared-projects-panel .ui-row { min-width: 0; }
+.shared-projects-panel .ui-row-open { min-width: 0; }
+.shared-extraction-focus{position:fixed;inset:0 0 0 auto;width:min(600px,100%);height:100dvh;z-index:120}
+.shared-extraction-focus .shared-extraction-targets{display:grid;gap:12px;margin-block:16px}
+.shared-extraction-focus label{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
+.shared-extraction-focus select{box-sizing:border-box;min-width:0;max-width:100%;color:var(--ink);background:var(--panel);border:1px solid var(--line2);padding:8px}
+.shared-extraction-focus progress{width:100%;accent-color:var(--red)}
+.shared-backup-form{display:grid;gap:16px;margin-block:16px;min-width:0}
+.shared-backup-focus input:not([type=checkbox]){box-sizing:border-box;flex:1;min-width:0;max-width:100%;border:1px solid var(--line2);background:var(--panel);color:var(--ink);padding:8px}
+.shared-backup-focus code,.shared-backup-focus a{overflow-wrap:anywhere}
+.shared-extraction-focus .ui-count{min-width:0;overflow-wrap:anywhere}
+.shared-extraction-insight,.shared-extraction-material{margin-block:12px;overflow-wrap:anywhere}
+.shared-extraction-insight input{flex:none}.shared-extraction-material summary{cursor:pointer}
+.shared-projects-panel .ui-row-sub,.shared-projects-dialog p { overflow-wrap: anywhere; white-space: normal; }
+@media(max-width:759px){.shared-projects-panel .ui-row { grid-template-columns: minmax(0,1fr); }.shared-projects-panel .shared-projects-actions { gap: 8px; }.shared-projects-panel form { align-items: stretch; }.shared-projects-panel form>label { flex: 1 1 160px; }}

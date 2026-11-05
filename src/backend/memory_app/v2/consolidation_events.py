@@ -21,7 +21,8 @@ from .outcome_corrections import COLLECTION as OUTCOMES, _changed, _time
 from .task_divisions import validate_items
 
 
-def corrections(records, project):
+def corrections(records, project, *, authority=None):
+    authority = SourceEgressService(records) if authority is None else authority
     consumed = {identity for row in records.list('v2_consolidation_inputs')
                 if row.payload.get('project_id') == project for identity in row.payload.get('event_ids', [])}
     result = []
@@ -45,9 +46,9 @@ def corrections(records, project):
         if collection == 'recognitions':
             refs.append({'type': 'recognition', 'id': owner.object_id, 'revision': owner.revision, 'project_id': project})
         try:
-            snapshot = SourceEgressService(records).snapshot(WorkScope('local-user', project),
+            snapshot = authority.snapshot(WorkScope('local-user', project),
                 [{key: ref[key] for key in ('type', 'id', 'revision')} for ref in refs])
-            SourceEgressService(records).require(snapshot, 'generation')
+            authority.require(snapshot, 'generation')
             docs = source_documents(records, WorkScope('local-user', project),
                 [ref['id'] for ref in refs if ref['type'] == 'experience'],
                 [ref['id'] for ref in refs if ref['type'] == 'recognition'])
@@ -68,21 +69,22 @@ def corrections(records, project):
     return get('consolidate')(None, operation='events', events=result)
 
 
-def validate(records, events):
+def validate(records, events, *, authority=None):
+    authority = SourceEgressService(records) if authority is None else authority
     for event in events:
         if (records.read('v2_correction_events', event['event_id']) != event['_row'] or
                 records.read(event['_collection'], event['_owner'].object_id) != event['_owner']):
             raise RecognitionConflict('consolidation_correction_changed')
         project = event['_row'].payload['project_id']
-        SourceEgressService(records).validate_snapshot(WorkScope('local-user', project), event['_snapshot'])
-        SourceEgressService(records).require(event['_snapshot'], 'generation')
+        authority.validate_snapshot(WorkScope('local-user', project), event['_snapshot'])
+        authority.require(event['_snapshot'], 'generation')
         # Re-check scope, privacy, source owners and manual forgetting at dispatch.
-        current = {row['event_id']: row for row in corrections(records, project)}
+        current = {row['event_id']: row for row in corrections(records, project, authority=authority)}
         if event['event_id'] not in current:
             raise RecognitionConflict('consolidation_correction_unavailable')
 
 
-def freeze_adapter(events, *, verified_events=(), review_events=(), project=None, now=None):
+def freeze_adapter(events, *, verified_events=(), review_events=(), project=None, now=None, owner_records=None):
     def freeze(kind, **kwargs):
         rendered = set()
         def load(item):
@@ -98,21 +100,26 @@ def freeze_adapter(events, *, verified_events=(), review_events=(), project=None
         if verified_events or review_events:
             def feedback():
                 parts = []
+                current = kwargs['records']
+                if isinstance(current, TransactionRecords) and owner_records is None:
+                    raise RecognitionConflict('consolidation_actual_owner_unavailable')
+                authority = (SourceEgressService(owner_records, reader=current)
+                    if isinstance(current, TransactionRecords) else SourceEgressService(current))
                 if verified_events:
-                    validate_consumer_outcomes(kwargs['records'], verified_events, project=project, now=now)
+                    validate_consumer_outcomes(current, verified_events, project=project, now=now, authority=authority)
                     original = [{key: value for key, value in event.items()
                         if key not in {'_roots', '_root_owners'}} for event in verified_events]
-                    parts.append(verified_feedback(kwargs['records'], original, project=project, now=now))
+                    parts.append(verified_feedback(current, original, project=project, now=now, authority=authority))
                 if review_events:
                     from .signal_review_feedback import review_feedback
-                    parts.append(review_feedback(kwargs['records'], review_events, project=project, now=now))
+                    parts.append(review_feedback(current, review_events, project=project, now=now, authority=authority))
                 return '\n'.join(parts)
             options['load_verified_feedback'] = feedback
         return freeze_product_turn(kind, **options)
     return freeze
 
 
-def original_count(records, snapshot):
+def original_identities(records, snapshot):
     from ..source_graph import SourceGraph
     from ..original_sources import original
     graph = SourceGraph()
@@ -130,7 +137,11 @@ def original_count(records, snapshot):
                 # The existing original owner validates a confirmation alias.
                 kind, identity = parents[0]['type'], parents[0]['id']
         identities.add((scope.project_id, kind, identity))
-    return len(identities)
+    return identities
+
+
+def original_count(records, snapshot):
+    return len(original_identities(records, snapshot))
 
 
 def selected_source_count(records, project, events):
@@ -252,11 +263,11 @@ def _division_request(records, owners, project, payload):
     return request
 
 
-def _outcome_sources(records, owners, project, requests, local_only):
-    authority, graph, refs, snapshots = SourceEgressService(records), SourceGraph(), {}, []
+def _outcome_sources(records, owners, project, requests, local_only, *, authority):
+    graph, refs, snapshots = SourceGraph(), {}, []
     turns, agents = authority_stores(records)
     for request in requests:
-        proofs, read_snapshots = product_read_sources(records, turns, agents, request, project)
+        proofs, read_snapshots = product_read_sources(records, turns, agents, request, project, authority=authority)
         for proof in proofs:
             graph.add(proof, root=True)
         privacy = request['privacy']
@@ -305,12 +316,13 @@ def _outcome_sources(records, owners, project, requests, local_only):
     return [refs[key] for key in sorted(refs)], snapshots, current
 
 
-def outcomes(records, project, *, now=None, local_only=False):
+def outcomes(records, project, *, now=None, local_only=False, authority=None):
     """Read verified user feedback; local qualification grants no model route."""
     if type(local_only) is not bool:
         raise RecognitionConflict('consolidation_outcome_mode_invalid')
     with records.begin() as tx:
         reader = TransactionRecords(tx)
+        current_authority = SourceEgressService(records, reader=tx) if authority is None else authority
         if not local_only and is_private_project(reader, project):
             return []
         epoch, instant = privacy_revision(reader), _time(_now() if now is None else now)
@@ -353,7 +365,8 @@ def outcomes(records, project, *, now=None, local_only=False):
                             payload['birth_revision'], payload['before_title'])
                         _outcome_title(reader, owners, payload['new_document_id'], payload['to_revision'],
                             payload['new_birth_revision'], payload['after_title'])
-                refs, snapshots, graph = _outcome_sources(reader, owners, project, requests, local_only)
+                refs, snapshots, graph = _outcome_sources(reader, owners, project, requests, local_only,
+                    authority=current_authority)
             except (RecognitionError, ProductDraftDependencyError, KeyError, TypeError, ValueError):
                 continue
             result.append({'event_id': identity, 'type': payload['kind'], 'turn_id': payload['turn_id'],
@@ -367,7 +380,7 @@ def outcomes(records, project, *, now=None, local_only=False):
         return get('consolidate')(None, operation='events', events=result)
 
 
-def validate_outcomes(records, events, *, project, now=None):
+def validate_outcomes(records, events, *, project, now=None, authority=None):
     """Rebuild bodies and every owner binding before freezing, dispatch or commit."""
     WorkScope('local-user', project)
     events = tuple(events)
@@ -376,28 +389,29 @@ def validate_outcomes(records, events, *, project, now=None):
             or len({event['event_id'] for event in events}) != len(events)):
         raise RecognitionConflict('consolidation_outcome_scope_changed')
     current = {row['event_id']: row for row in outcomes(records, project,
-        now=now, local_only=events[0]['_local_only'])} if events else {}
+        now=now, local_only=events[0]['_local_only'], authority=authority)} if events else {}
     for event in events:
         if current.get(event['event_id']) != event:
             raise RecognitionConflict('consolidation_outcome_changed')
 
 
-def verified_feedback(records, events, *, project, now=None):
+def verified_feedback(records, events, *, project, now=None, authority=None):
     """Render genuine domain facts only, never stage an original or experience."""
     events = tuple(events)
-    validate_outcomes(records, events, project=project, now=now)
+    validate_outcomes(records, events, project=project, now=now, authority=authority)
     return json.dumps({'outcomes': [{key: event[key] for key in (
         'event_id', 'type', 'turn_id', 'before', 'after', 'before_title', 'after_title', 'new_turn_id')
         if key in event} for event in events]}, ensure_ascii=False)
 
 
-def consumer_outcomes(records, project, *, now=None, local_only=False):
+def consumer_outcomes(records, project, *, now=None, local_only=False, authority=None):
     """Bind feedback to real birth artifacts without staging user actions as sources."""
     from .outcome_corrections import _root
     result = []
     with records.begin() as tx:
         reader, scope = TransactionRecords(tx), WorkScope('local-user', project)
-        for event in outcomes(reader, project, now=now, local_only=local_only):
+        current_authority = SourceEgressService(records, reader=tx) if authority is None else authority
+        for event in outcomes(reader, project, now=now, local_only=local_only, authority=current_authority):
             payload, roots, owners = event['_row'].payload, [], {}
             try:
                 if payload['kind'] == 'division_adjust':
@@ -432,13 +446,13 @@ def consumer_outcomes(records, project, *, now=None, local_only=False):
     return result
 
 
-def validate_consumer_outcomes(records, events, *, project, now=None):
+def validate_consumer_outcomes(records, events, *, project, now=None, authority=None):
     events = tuple(events)
     original = [{key: value for key, value in event.items() if key not in {'_roots', '_root_owners'}}
                 for event in events]
-    validate_outcomes(records, original, project=project, now=now)
+    validate_outcomes(records, original, project=project, now=now, authority=authority)
     current = {event['event_id']: event for event in consumer_outcomes(records, project,
-        now=now, local_only=events[0]['_local_only'])} if events else {}
+        now=now, local_only=events[0]['_local_only'], authority=authority)} if events else {}
     if any(current.get(event['event_id']) != event for event in events):
         raise RecognitionConflict('consolidation_outcome_birth_changed')
 
@@ -450,3 +464,7 @@ def outcome_key(events):
             in sorted({**event['_owners'], **event['_root_owners']}.items())],
         event['_roots'], event['_source_graph'], event['_privacy_revision'], event['_local_only']]
         for event in events]
+
+
+def steers(learning, project, *, reader=None, local_only=False):
+    return learning.consumer_events(project, reader=reader, local_only=local_only)

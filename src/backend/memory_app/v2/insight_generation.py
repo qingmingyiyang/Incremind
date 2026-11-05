@@ -29,7 +29,7 @@ class _MaterialBudgetError(ValueError):
 
 def _material_capacity(models, records, turn):
     from ..kernel.aux_routing import CHOICE_KIND, CHOICES
-    from ..turn_routing import CONFIGURATION_FIELDS
+    from ..model_binding import public_model_configuration
     # generate前内核Turn尚未建立，直接读取其已暂存选择，不能提前写内核payload。
     saved = turn.store.get_immutable_payload(turn.turn_id, CHOICE_KIND)
     staged = records.read(CHOICES, turn.turn_id)
@@ -46,8 +46,8 @@ def _material_capacity(models, records, turn):
             or type(limits.get('reserve')) is not int or not 0 < limits['reserve'] < limits['window']):
         raise _MaterialBudgetError('insight_budget_unavailable')
     return {'binding': deepcopy(binding),
-        'configuration': {key: deepcopy(configuration.get(key)) for key in (
-            *CONFIGURATION_FIELDS, 'subscription_binding')},
+        'configuration': {**public_model_configuration(configuration),
+            'subscription_binding': deepcopy(configuration.get('subscription_binding'))},
         'limits': {'window': limits['window'], 'reserve': limits['reserve']}}
 
 
@@ -60,7 +60,7 @@ def _prepare_material_input(models, records, turn, policy, request, response_mod
     prepared = None
     for _ in range(3):
         current = replace(request, output_budget=output_budget)
-        messages = policy.prepare(current)
+        messages = turn.input_messages(policy.prepare(current))
         cost = max(_estimate_input_tokens(value) for value in (
             messages, _build_json_mode_messages(messages=messages, validation_error=None),
             _build_prompt_fallback_messages(messages=messages, response_model=response_model, validation_error=None)))
@@ -277,6 +277,8 @@ def generate_insights(models, service, documents, project_id, document_id, *, on
         with override(**bindings):
             turn = MemoryTurn(records, models, kind="memory.propose_insights", project=project_id,
                 key=prefix, materials=materials, validate=validate,
+                automatic={'producer': 'document-insights', 'mode': 'object', 'scene': None,
+                    'anchors': [{'type': 'document', 'id': document_id}]},
                 retry_token=retry_token).select_insight_attempt(retry_token)
         if comments:
             comment_inputs = freeze_comment_inputs(records, documents, project_id, turn.turn_id, comment_inputs)
@@ -402,16 +404,15 @@ def generate_insights(models, service, documents, project_id, document_id, *, on
             def write_candidate():
                 options = dict(scope=scope, content=text, conditions=conditions,
                     source_experience_ids=[experience_id], candidate_id=candidate_id, generation=generation)
-                if attempt is None:
-                    if not comparative:
-                        return service.propose(**options)
                 with records.begin() as tx:
                     validate_attempt(tx)
+                    turn.validate_commit(tx)
                     if comments:
                         from ..transaction_records import TransactionRecords
                         validate_comment_inputs(records, documents, project_id, comment_inputs, reader=tx)
                         validate_analysis(tx)
-                        turn.validate_request(TransactionRecords(tx), models, turn.request, purpose='generation')
+                        turn.validate_request(TransactionRecords(tx), models, turn.request, purpose='generation',
+                            source_owner=records)
                     candidate = service.propose_in_uow(tx, **options)
                     if comparative:
                         hint = decoded.hints[n-1]
@@ -454,11 +455,18 @@ def generate_insights(models, service, documents, project_id, document_id, *, on
         for index, support in enumerate(decoded.supports, 1):
             validate()
             identity = 'support-' + turn.turn_id + '-' + str(index)
+            def write_support(identity=identity, support=support):
+                from ..transaction_records import TransactionRecords
+                with records.begin() as tx:
+                    turn.validate_commit(tx)
+                    result = InsightLinks(TransactionRecords(tx), service, source_owner=records).propose_extraction_support(
+                        project_id, experience, {'id': document_id, 'revision': revision},
+                        support['target_id'], support['evidence'], identity)
+                    tx.commit()
+                return result
             turn.propose(key='support-' + str(index),
                 existing=lambda identity=identity: records.read('v2_insight_evidence_support', identity),
-                write=lambda identity=identity, support=support: InsightLinks(records, service).propose_extraction_support(
-                    project_id, experience, {'id': document_id, 'revision': revision},
-                    support['target_id'], support['evidence'], identity))
+                write=write_support)
     if turn.store.get_immutable_payload(turn.turn_id, "memory-insights-applied-v1") is None:
         marker = {"candidate_ids": manifest['candidate_ids'] if dynamic else [row["id"] for row in result]}
         if dynamic or attempt is not None:

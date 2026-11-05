@@ -167,7 +167,7 @@ def test_precise_diagnostics_fit_short_unknown_remote_budget_and_select_current_
     assert 'actual final fields' in messages[0]['content']
     assert review_input_tokens(messages, final_response_model('@29', 'What?')) <= 4500
     assert {name: ACTIVE[name] for name in ('compose', 'ladder', 'retrieve', 'rerank')} == {
-        'compose': '@30', 'ladder': '@15', 'retrieve': '@5', 'rerank': '@2'}
+        'compose': '@37', 'ladder': '@15', 'retrieve': '@9', 'rerank': '@2'}
     payload = json.loads(messages[-1]['content'].split('资料：\n', 1)[1].rsplit('\n\n问题：', 1)[0])
     assert list(payload) == ['untrusted_first_fact_plan', 'first_fact_positions', 'first_fact_diagnostics', 'date_provenance', 'evidence_catalog']
     assert messages == build_partition_messages(chosen, 'What did Maya paint?', first_output=deepcopy(first), compose_version='@29')

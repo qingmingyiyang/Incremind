@@ -75,17 +75,21 @@ class TaskDivisions:
                 record_division_adjust(tx, row, saved)
             tx.commit()
 
-    def similar(self, project, text, *, rows=None):
+    def similar(self, project, text, *, rows=None, validate_current=None, private_project=None,
+                embedding_wire=None, embedding_allowed=None):
+        private = private_project or (lambda own: is_private_project(self.records, own))
         ranked = []
         candidates = [row for row in (self.records.list(COLLECTION) if rows is None else rows)
             if not row.payload.get('deleted') and row.payload['outcome'] != 'failed'
-            and not is_private_project(self.records, row.payload['project_id'])]
+            and not private(row.payload['project_id'])]
         if not candidates:
             return []
         def validate():
+            if validate_current is not None:
+                validate_current()
             for row in candidates:
                 current = self.records.read(COLLECTION, row.object_id)
-                if current is None or current.revision != row.revision or is_private_project(self.records, row.payload['project_id']):
+                if current is None or current.revision != row.revision or private(row.payload['project_id']):
                     raise RecognitionConflict('task_division_reference_changed')
         # Namespaced identities share the existing revision-bound cache without
         # colliding with recognition vectors. No new vector store or transport.
@@ -96,7 +100,8 @@ class TaskDivisions:
                                  payload={'project_id':project, 'content':text})
         scores, threshold = InsightLinks(self.records, None, self.models)._rank(
             project, anchor, entries, source_refs=lambda row: [], validate_current=validate,
-            limit=len(entries), keyword_threshold=.2)
+            limit=len(entries), keyword_threshold=.2, embedding_wire=embedding_wire,
+            embedding_allowed=embedding_allowed)
         validate()
         scores = {row.object_id:score for row, score in scores}
         for row in candidates:

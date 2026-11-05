@@ -1,6 +1,7 @@
 """Daily, source-bound consolidation. Every semantic output remains reviewable."""
 
 import json
+from functools import partial
 import logging
 import re
 import time
@@ -62,15 +63,17 @@ def compatible(a, b):
     return numbers(a) == numbers(b) and polarity(a) == polarity(b)
 
 
-def evidence_guard(reader, scope, snapshot):
-    SourceEgressService(TransactionRecords(reader)).validate_snapshot(scope, snapshot)
+def evidence_guard(records, reader, scope, snapshot):
+    SourceEgressService(records, reader=reader).validate_snapshot(scope, snapshot)
 
 
 class Consolidation:
-    def __init__(self, records, service, documents, models=None, *, now=utc_now, recent_days=7, completion_clock=None):
+    def __init__(self, records, service, documents, models=None, *, now=utc_now, recent_days=7, completion_clock=None,
+                 steer_learning=None):
         self.records, self.service, self.documents, self.models = records, service, documents, models
         self.now, self.recent_days = now, recent_days
         self.completion_clock = completion_clock
+        self.steer_learning = steer_learning
         self.links = InsightLinks(records, service, models, maintenance_guard=self._owns_run)
         self._execution_lock = RLock()
 
@@ -484,7 +487,9 @@ class Consolidation:
             key = [key, signal_review_feedback.review_key(review_events)]
         turn = MemoryTurn(self.records, self.models, kind="memory.consolidate", project=project,
             key=key, materials=[{**ref, "project_id": project} for ref in refs], validate=validate,
-            **({'freeze_request': consolidation_events.freeze_adapter(legacy_events,
+            automatic={'producer': 'consolidation', 'mode': 'project', 'scene': None,
+                'anchors': [{'type': 'document', 'id': identity} for identity in docs]},
+            **({'freeze_request': consolidation_events.freeze_adapter(legacy_events, owner_records=self.records,
                 **({'verified_events': outcome_events, 'review_events': review_events,
                     'project': project, 'now': self.now().isoformat()}
                    if outcome_events or review_events else {}))} if use_corrections else {}))
@@ -529,16 +534,18 @@ class Consolidation:
         def commit():
             with self.records.begin() as tx:
                 self._owns_run(tx)
+                turn.validate_commit(tx)
+                authority = SourceEgressService(self.records, reader=tx)
                 if egress_snapshot:
-                    SourceEgressService(TransactionRecords(tx)).validate_snapshot(scope, egress_snapshot)
+                    authority.validate_snapshot(scope, egress_snapshot)
                 if use_corrections:
-                    consolidation_events.validate(TransactionRecords(tx), legacy_events)
+                    consolidation_events.validate(TransactionRecords(tx), legacy_events, authority=authority)
                 if outcome_events:
                     consolidation_events.validate_consumer_outcomes(TransactionRecords(tx), outcome_events,
-                        project=project, now=self.now().isoformat())
+                        project=project, now=self.now().isoformat(), authority=authority)
                 if review_events:
                     signal_review_feedback.validate_review_corrections(TransactionRecords(tx), review_events,
-                        project=project, now=self.now().isoformat())
+                        project=project, now=self.now().isoformat(), authority=authority)
                 for row in group:
                     if self._manually_forgotten_sources(row, tx):
                         raise RecognitionConflict("consolidation_manually_forgotten_source")
@@ -561,7 +568,7 @@ class Consolidation:
                     if tx.read("recognitions", target.object_id) != target:
                         raise RecognitionConflict("consolidation_target_changed")
                     RelationProposalService(
-                        TransactionRecords(tx), allow_persona=True, evidence_guard=evidence_guard
+                        TransactionRecords(tx), allow_persona=True, evidence_guard=partial(evidence_guard, self.records)
                     ).propose_evidence(
                         scope,
                         target.object_id,
@@ -573,7 +580,7 @@ class Consolidation:
                             {"project_id": project, "snapshot": egress_snapshot},
                             {
                                 "project_id": target.payload["project_id"],
-                                "snapshot": SourceEgressService(TransactionRecords(tx)).snapshot(
+                                "snapshot": SourceEgressService(self.records, reader=tx).snapshot(
                                     WorkScope("local-user", target.payload["project_id"]),
                                     [{"type": "recognition", "id": target.object_id, "revision": target.revision}],
                                 ),
@@ -659,7 +666,7 @@ class Consolidation:
             tx.commit()
         self._reservation = date, reservation
         try:
-            qualified, reviewed = {}, {}
+            qualified, reviewed, steered = {}, {}, {}
             if use_corrections:
                 from .consolidation_events import consumer_outcomes, OUTCOMES
                 config = self.models.public().get('generation', {}) if self.models else {}
@@ -676,12 +683,23 @@ class Consolidation:
                 reviewed = {project: review_corrections(self.records, project,
                     now=self.now().isoformat(), local_only=local) for project in review_projects
                     if project and (project_id is None or project == project_id)}
+                if self.steer_learning is not None:
+                    from .consolidation_events import steers
+                    from .steer_learning import COLLECTION as STEERS
+                    steer_projects = {row.payload['project_id'] for row in self.records.list(STEERS)
+                        if project_id is None or row.payload.get('project_id') == project_id}
+                    for project in steer_projects:
+                        self.steer_learning.observe_events(project, local_only=local)
+                        steered[project] = steers(self.steer_learning, project, local_only=local)
             outcome_documents = {root['id'] for events in qualified.values() for event in events for root in event['_roots']}
             rows = self._collect(project_id, outcome_documents=outcome_documents)
             new, failed = 0, 0
             event_projects = {row.payload.get('project_id') for row in self.records.list('v2_correction_events')
                               if row.payload.get('project_id') and (project_id is None or row.payload['project_id'] == project_id)} | {
-                                  project for project, events in (*qualified.items(), *reviewed.items()) if events} if use_corrections else set()
+                                  project for project, events in (*qualified.items(), *reviewed.items(), *steered.items()) if events} if use_corrections else set()
+            if use_corrections and self.steer_learning is not None:
+                event_projects.update(project for project in self.steer_learning.pending_projects()
+                    if project_id is None or project_id == project)
             for project in sorted({r.payload["project_id"] for r in rows} | event_projects):
                 own = [r for r in rows if r.payload["project_id"] == project]
                 for group in self._groups(own):
@@ -698,6 +716,13 @@ class Consolidation:
                     events = corrections(self.records, project)
                     outcome_events = qualified.get(project, ())
                     review_events = reviewed.get(project, ())
+                    if self.steer_learning is not None:
+                        self._renew()
+                        try:
+                            new += self.steer_learning.recover_pending(self, project)
+                        except Exception as error:
+                            failed += 1
+                            _LOGGER.warning('consolidation_steer_recovery_failed exception_type=%s', type(error).__name__)
                     if events or outcome_events or review_events:
                         self._renew()
                         relevant = [row for row in own if set(row.documents) &
@@ -708,6 +733,13 @@ class Consolidation:
                         except Exception as error:
                             failed += 1
                             _LOGGER.warning('consolidation_correction_failed exception_type=%s', type(error).__name__)
+                    if steered.get(project):
+                        self._renew()
+                        try:
+                            new += self.steer_learning.consolidate(self, project, steered[project])
+                        except Exception as error:
+                            failed += 1
+                            _LOGGER.warning('consolidation_steer_failed exception_type=%s', type(error).__name__)
                 for row in own:
                     self._owns_run(self.records)
                     if row.kind == "recognition":
@@ -782,14 +814,14 @@ class Consolidation:
                 from .learning_events import complete_in_transaction
                 clock_sample = self.completion_clock() if self.completion_clock is not None else None
                 for project in sorted({row.payload['project_id'] for row in rows} | event_projects | ({project_id} if project_id else set())):
-                    complete_in_transaction(tx, project, clock_sample=clock_sample)
+                    complete_in_transaction(tx, project, clock_sample=clock_sample, steer_learning=self.steer_learning)
             tx.commit()
         return payload
 
 
 def install_consolidation_routes(application, *, records, consolidation=None):
     router = APIRouter(prefix="/api/v2/library")
-    service = RelationProposalService(records, allow_persona=True, evidence_guard=evidence_guard)
+    service = RelationProposalService(records, allow_persona=True, evidence_guard=partial(evidence_guard, records))
 
     @router.get('/consolidate')
     def status(project_id: str):
@@ -804,7 +836,15 @@ def install_consolidation_routes(application, *, records, consolidation=None):
 
     @router.get("/insights/{identity}/evidence-support")
     async def supports(identity: str, project_id: str):
-        return {"items": service.list_evidence(WorkScope("local-user", _project(project_id)), identity)}
+        items = []
+        for row in service.list_evidence(WorkScope("local-user", _project(project_id)), identity):
+            sources = []
+            for ref in row['documents']:
+                document = consolidation.documents.read(ref['id'])
+                title = document['title'] if document and document.get('project_id') == row['project_id'] else None
+                sources.append({**ref, 'title': title})
+            items.append({**row, 'documents': sources})
+        return {"items": items}
 
     @router.post("/evidence-support/{identity}/{action}")
     async def review(identity: str, action: str, request: Request):

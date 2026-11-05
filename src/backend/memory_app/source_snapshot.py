@@ -1,6 +1,6 @@
 """Compare source material identity separately from mutable privacy."""
 from collections.abc import Mapping
-from backend.recognition.product_draft_dependencies import PRODUCT_DRAFT_FIELDS
+from backend.recognition.product_draft_dependencies import DRAFT_DEPENDENCY_FIELDS
 from backend.recognition.document_filings import FILED_EDIT_FIELDS
 from backend.recognition.external_input_dependencies import FIELDS as EXTERNAL_INPUT_FIELDS
 from .source_graph import graph_identity
@@ -14,7 +14,7 @@ def _closure_identity(node: Mapping[str, object]) -> tuple[object, ...]:
         frozen_dependencies = (dependencies['origin_marker_revision'], dependencies['source_project_id'],
             dependencies['source_experience_id'], dependencies['source_revision'], tuple(sorted(snapshot['scope'].items())),
             tuple(_closure_identity(parent) for parent in snapshot['nodes']))
-    elif dependencies is not None and set(dependencies) in (PRODUCT_DRAFT_FIELDS, EXTERNAL_INPUT_FIELDS):
+    elif dependencies is not None and set(dependencies) in DRAFT_DEPENDENCY_FIELDS + (EXTERNAL_INPUT_FIELDS,):
         identities = tuple(sorted((key, value) for key, value in dependencies.items()
             if key != 'current_source_graph'))
         frozen_dependencies = identities, graph_identity(dependencies['current_source_graph'])

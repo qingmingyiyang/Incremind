@@ -14,7 +14,6 @@ import pytest
 
 from backend.memory_app.original_sources import source_store
 from backend.memory_app.source_egress import SourceEgressService
-from backend.memory_app.transaction_records import TransactionRecords
 from backend.memory_app.v2.external_agent_settings import (
     external_agent_settings, replace_external_agent_settings,
 )
@@ -58,9 +57,9 @@ def env(tmp_path):
                            clock=clock, root=tmp_path)
 
 
-def guard(env, *, owner=OWNER, records=None):
+def guard(env, *, owner=OWNER, records=None, reader=None):
     module = importlib.import_module('backend.memory_app.v2.external_agent_guard')
-    return module.ExternalAgentGuard(records or env.records, owner_id=owner, now=lambda: env.clock.value)
+    return module.ExternalAgentGuard(records or env.records, owner_id=owner, now=lambda: env.clock.value, reader=reader)
 
 
 def allowed(env, **changes):
@@ -397,7 +396,7 @@ def test_borrowed_outer_transaction_preserves_qualified_reads_and_whole_rollback
     before = env.records.read('workspace_items', env.item['id'])
     with pytest.raises(RuntimeError, match='synthetic outer abort'):
         with env.records.begin() as tx:
-            enlisted = guard(env, records=TransactionRecords(tx))
+            enlisted = guard(env, reader=tx)
             saved = enlisted.freeze('turn-outer', request(), [env.material])
             assert saved['source_snapshots'][0]['nodes'][0]['source_revision'] == before.revision
             assert enlisted.validate('turn-outer', request())[0]['payload']['source_text'] == before.payload['source_text']
@@ -451,7 +450,7 @@ def test_borrowed_json_closure_uses_actual_namespace_and_incarnation(env, databa
     incarnation = store.incarnation('sources', body['id'])
     with pytest.raises(RuntimeError, match='synthetic outer abort'):
         with records.begin() as tx:
-            api = guard(env, records=TransactionRecords(tx))
+            api = guard(env, records=records, reader=tx)
             frozen = api.freeze('turn-outer-json', request(), [descriptor])
             assert frozen['source_snapshots'][0]['nodes'][0]['incarnation'] == incarnation
             assert api.validate('turn-outer-json', request())[0]['payload']['metadata'] == body['metadata']

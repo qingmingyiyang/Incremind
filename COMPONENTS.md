@@ -1,5 +1,211 @@
 # 统一组件与公共能力索引
 
+- 对话分享到共享项目（2026-11-05，T15.15）：`SharedProjectConversationShare` 复用正式服务器快照和原引用选择，按当前写入资格读取目标权限修订及资料位置。原请求和回执指针按账号、目标空间、设备及原轮保存，恢复只核对同目标、同资料位置及同编号。已受理原件由共享资料库读取，项目操作记录显示原记住动作。
+
+- 共享认识人工取代（2026-11-05，G09）：`SharedInsightMaintenance` 以候选和原认识的当前修订，在共享资料的同一写事务发布认识、审核取代关系并关闭旧有效期。复用 `InsightLinks` 原召回降权，旧正文和历史仍可读。提交结果未知时按原候选和目标修订读回实际发布、关系及有效期。
+  `SharedSupersession` 从详情或逐条确认打开原 `FocusPanel`，让成员核对新旧正文后明确提交。未知结果保留原选择，同一设备、目标空间与共享资料范围内可以核对和重试。
+
+- 共享认识人工合并（2026-11-05，T15.13）：`SharedInsightMerges` 复用 `RecognitionService.merge` 和 `RestructureProposalService`，由实际共享资料事务、成员和原修订决定写入。生效合并保留父认识历史与来源并集，待确认合并经人审核后产生新的待确认认识。原件与认识的私密资格参与合并，连续合并和备份沿同一私密上限。共享资料库复用原合并表单及审核预览，通过原操作编号核对未知结果。备份恢复保留已合并旧候选的正文和停止状态。
+
+- 同服务器对话分享界面（2026-11-05，T15.15）：`ConversationSharePreview` 共用本机复制、图片导出与正式成员预览，保留首次快照引用序号。`RemoteConversationShare` 按实际轮次范围读取快照、目录、已发送与撤回资格。`useConversationShareCommand` 沿账号、目标空间及设备保存原命令元数据，未知只读原编号，恢复沿原动作与修订。
+
+- 对话分享收件与归档（2026-11-05，T15.15）：`ConversationShareInbox` 复用个人资料库的原侧栏、`Row`、`FocusPanel` 及导航保护。只读快照、归档保留进度和本人原件按正式服务器证明展示。共享依据仅根据原分享及当前引用资格读取，合格时按正式共享项目与资料层级下钻。
+
+- 共享任务个人成果读取（2026-11-05，G09）：`shared_task_outcome_read` 由原工作台路由读取当前设备已授权目标空间的任务。以真实共享逻辑归属、原生任务终态、交付操作和同出生文稿确认原交付正文，覆盖已保存文稿的完成和部分完成任务。成员资格变化后仍保留本人正文读取，来源链接、重做和用量各走原独立权限。
+
+- 共享任务重做继承（2026-11-05，G09）：`shared_task_redo` 从原任务执行、完整原生声明、真实模型派发输入及来源证明读取重做依据，沿当前共享查询复验原件出生、正文、修订、成员资格和历史私密限制。新任务一次准入同时冻结 `shared-task-redo-v1`、原材料及当前约束；准备、发送和成果来源图读取同一声明。继承材料只保留来源及私密关系，不记为本轮新引用。原分工样例删除后沿真实执行输入恢复，个人任务保持原重做流程。原轮缺少完成或派发证明时拒绝受理，真实模型执行验收范围见任务记录。
+
+- 共享文字干活（2026-11-05，G09）：正式范围提供 `can_do`，当前成员及只看成员可在个人执行空间运行内置文字任务。工作台复用原 `route@5` 分类、`TaskDo.with_source_query` 和一次材料准入，附件及外部执行者保持原拒绝。`shared_task_workbench` 在保存事务复验完整材料、约束及部分依赖；续写候选沿真实材料逻辑归属选择，任务完成样例从原任务 Root 取得来源事务。通用路由样例只外发当前已有完整消费证明的类型。无模型配置时保留真实分类失败，不创建完成成果。
+
+- 共享干活界面（2026-11-05，G09）：`Workbench` 按正式 `can_do` 发送内置文字任务，沿原流式恢复、线程和回执。`useSharedTaskSubmission` 在发送前按调用账号、目标空间、设备与共享项目保存原请求与编号。未知结果读取 `task-commands`，服务端明确未受理时才可继续原请求，确认终止且没有生成任务时释放编号。正式受理固定原对话及轮次，已受理后仅按原身份回读，核对完成清除本机请求正文。`SharedHistoryReceipt` 复用只读 `TaskDivision` 和 `FocusPanel`，交付正文只读原轮次 `outcome` 入口。重做在原回执按编号、原轮和冻结修订读取 `task-commands`，核实未受理后才可继续原请求，已受理的新轮只加入实际原对话。个人成果编辑、样例维护及控制入口继续独立。
+- 共享停止（2026-11-05，G09）：共享问答和内置干活使用现有 `ProductStops` 与停止回执。停止及真实关闭状态只核对本人已受理的原执行，成员退出后可回读关闭结果。原共享资料读写及新执行继续分别核对当前权限。
+- 共享问答历史交付（2026-11-05，G09）：`SharedReceiptDelivery` 以实际原生归属和当前物理资料根决定历史、原编号回放和 SSE 终态的引用及上下文交付。失去资料访问资格后保留本人已提交正文、状态和用量，回执标记 `sources_available: false`。人到人分享预览和新发送按中央事务核对同一资料资格，仍可分享本人正文，已发送的静态快照保持原有语义。
+
+- 共享记住界面（2026-11-05，G09）：`useSharedRemember` 复用固定命令记录和原工作台发送，按当前账号、目标空间、设备及共享项目隔离稳定键。未知提交沿正式 `remember-commands` 读取。服务端确认可恢复且原请求完全一致，或明确返回原命令未受理时，可以续接原正文。已接受回执沿原工作台线程、轮询及重试；`SharedHistoryReceipt` 使用实际进度和错误，只有正式 `sources_available` 与当前读取资格共同成立时打开共享资料。待确认认识沿原人工审核。模块检查用 `tools/check_shared_remember_ui.mjs`，实际页面由组合验收执行。
+
+- 共享分工样例向量来源（2026-11-05，G09）：`shared_task_division_vectors.DivisionVectorProducer` 将真实样例整行、原生 TaskRoot 与 ORIGIN、当前完整来源和精确 embedding 批次绑定为 `task-division-text-v1`，复用 `SharedAuxiliaryTurn` 原 schema3 准入、模型归属和回执。准备对象沿原线程及发行生命周期；发送前后重新验证旧轮、样例和当前权限私密范围。`TaskDivisions.similar` 保留原向量缓存及评分，个人路径保持；共享路径按实际共享来源检查外发，不读取同编号个人项目的私密范围。真实服务器/Core/SQLite 检查 `test_shared_task_division_vectors.py` 覆盖原生 claim/reopen、完整 capsule 及权限私密拒绝，模型事件为零；实际 embedding 发送及 DO 完成仍由后续集成验收。
+
+- 共享任务材料准入（2026-11-05，G09）：`shared_task_materials` 在原一次 `ProductAdmissionBundle` 中绑定 `shared-task-materials-v1`，逐材料保存实际 namespace、修订、完整 payload、文稿历史正文、原引用及 SQL 出生身份。发送和提交复用原 central→source→actor 资格事务，借入的 actor reader 必须属于实际 owner 和原 token；当前事务内的私密变更直接拒绝。`tests/memory_app/v2/test_shared_task_materials.py` 核对实际服务器工厂、原生 claim、材料正文和空间、私密修订及成员失权，保持零模型事件。共享任务编排与工具消费按各自实际集成结果验收。
+
+- 来源图的材料空间（2026-11-05，G09）：`SourceGraph.snapshot(..., namespace=...)` 为已核验来源添加实际 namespace，材料身份同时包含空间、项目、种类和编号；既有个人节点保持原格式。严格图解析保留该空间，派生稿的来源闭包保留全部逐空间父节点；该字段只区分身份，资料 owner 和当前权限仍由原来源服务核验。
+
+- 共享执行的个人材料 owner（2026-11-05，G09）：`BoundMaterialOrigins.actor` 以真实 `PersonalDestination` 的 namespace、数据库及资料入口表示当前共享任务在操作人空间的材料，逻辑项目取原共享 lease。`owner(project_id,namespace)` 精确选择共享资料、个人画像或个人任务材料；`_QualifiedCommitScope.reader_for` 只为该实际 owner 对象复用原 actor UOW。原 ORIGIN 载荷及旧个人材料合同保持，任务材料生产与发送消费者另按实际装配进度验收。
+
+- 共享认识维护（2026-11-05，G09）：`SharedInsightMaintenance` 在正式共享资料路径提供正文与条件编辑、手动遗忘及恢复，复用 `RecognitionService.edit_candidate/revise` 和原 `set_preference`。请求逐次核验 namespace、当前写权限、authority、正文修订及独立偏好修订；只看成员拒绝写入。原 `SharedWriteRecords` 在同一事务记录实际操作人、认识历史及共享活动，存储容量沿共享项目所有者核算。`SharedLibrary` DTO 附加 `recall_preference_revision`，维护返回原正式认识 DTO；候选恢复只移除淡忘旁路，保持待确认状态。核验入口为 `tests/memory_app/v2/test_shared_insight_maintenance.py`。
+- 共享资料读取快照（2026-11-05，G09）：`shared_library_projection.library_projection` 让四层列表、详情及全文在同一来源 SQLite 只读事务中复用原文稿与认识服务。借用绑定本线程和实际项目租约，SQLite 仅授权读取。返回前关闭借用与事务，独立重查成员、设备、项目修订和物理资料库及身份记录。文件与图片交付继续使用原逐次路径及句柄检查。
+- 共享认识维护界面（2026-11-05，G09）：`sharedLibraryApi.edit/forget` 消费正式认识维护 PATCH/POST，提交当前 namespace、authority、认识修订与独立偏好修订。`sharedInsightMutation/sharedInsightEditorApi` 核对实际卡片和返回权限，直接采用已提交的写入结果，依据通过独立只读入口更新；适配器按原设备、目标空间及 namespace 拒绝失效后的请求续接。原 `LibraryInsightEditor` 继续处理正文、条件、409比较和导航保护。`SharedLibraryView` 按当前 `can_write/can_edit_insight` 显示动作，待确认候选恢复保留 pending，合并与移动能力保持原资格。实际编辑、刷新及遗忘恢复由组合浏览器验收，模块检查沿 `tools/check_shared_library_ui.mjs`。
+
+- 认识编辑与导航保护（2026-11-05，G09）：`LibraryInsightEditor.InsightEditor` 提取原认识详情编辑器，默认调用个人 `libraryApi`，可注入读取与编辑接口及实际 namespace。原正文、条件与409版本比较保持；`DraftNavigation.useDraftNavigation/DraftNavigationDialog` 共用于详情编辑与原 `InsightReviewQueue`，以真实身份、活动范围和原请求保护待切换动作。个人资料库的场景、层级、搜索、筛选、下钻、面板关闭及外部导航消费同一守卫。真实浏览器检查取消保留正文和条件、明确放弃后单次切换；模块检查使用 `tools/check_shared_library_ui.mjs`。
+
+- 共享备份管理界面（2026-11-05，G09）：`SharedBackupPanel` 沿原共享项目管理区提供当前项目备份、当前用户空间保留列表、ZIP 下载与恢复为新个人项目。`sharedBackupApi/Views` 核对原 `shared_backup_routes` 的固定备份和恢复 DTO；列表只读取保存时的名称与时间。管理员代办使用原授权传输目标，保留真实调用人和目标空间的分别归属。`sharedBackupCommands` 复用原逐编号 `sharedProjectCommands`，发送前保存完整请求，未知结果与批次继续保持原编号；`useRequestScope` 和设备身份共同拒绝迟到响应。下载沿 `downloadProductFile` 的身份及字节数核验。`tools/check_shared_backup_ui.mjs` 接收真实后端 DTO 文件，检查原命令存储与本次模块的 Vite OXC/PostCSS；页面实际验收由集中流程执行。
+
+- 材料逻辑归属（2026-11-05，G09）：`v2.material_logical_scope.bind_material_scope_in_uow` 在原 SQLite 创建事务绑定实际 native ORIGIN、目标 owner、项目和出生 lineage，文稿及操作回执保持原 payload。`recognition.material_logical_scope.read_material_logical_scope/require_material_logical_scope` 从实际原生请求和不可变 admission 复验归属，支持任务稿、搜索原件及已提交确认产生的原件和整理稿。`bind_confirmed_materials_in_uow` 在原确认 SQL 提交中绑定已写入 JSON 的实际 incarnation、父原件出生及原文稿 INSERT lineage，保留 JSON 先写、SQL 后提交的顺序。恢复稿沿原父稿继承。中央文稿可见性、个人资料库及召回原件读取使用同一范围分类，相同编号的共享产出与个人项目分开。该证明只表示材料归属，当前成员许可和外发资格仍由原来源服务复验。核验入口 `tests/memory_app/v2/test_material_logical_scope.py`。
+- 共享灵感输入（2026-11-05，G09）：`useSharedInspirations/sharedInspirationCommands/sharedIntakeApi` 复用原命令记录，按调用者、实际目标和设备的共享项目键保存固定请求，未知结果沿正式 command GET 核对，精确未受理后才允许原键重试。`SharedInspirationReceipts` 显示真实 DTO，并将人工审核链接送到共享资料库；不伪造工作台任务或流式事件。`Composer.allowedIntents` 可选限定当前范围的实际动作，个人默认模式保持，写权限与模型提问权限分别消费。`sharedInspirationCommands.test.jsx` 覆盖真实浏览器 Storage、能力和资格负控，页面操作及持久回读由组合验收执行。
+
+- 共享资料库界面（2026-11-05，G09）：`Library` 按正式 `projectScopeKind` 挂载 `SharedLibraryView` 或原个人界面，共享读取不挂个人后台请求。`sharedLibraryApi` 使用正式共享路径，核对实际 namespace、对象归属和人审 authority；`InsightReviewQueue` 可注入 API 与编辑、移动、合并能力，个人默认保持。`LibraryOriginals` 共用原文、图片组及鉴权文件控件，共享音频只提供实际原音下载。`sharedLibraryAccess.test.jsx` 验证资格负控与范围隔离，`tools/check_shared_library_ui.mjs` 做改动模块 OXC 检查；实际页面和必要完整构建由组合流程执行。
+
+
+- 自动内容约束快照合同（2026-11-05，G15）：`automatic_constraints.AutomaticConstraintAdmission` 绑定已安装的实际 `ProjectConstraintInput` 或 `SharedProjectConstraintInput`，`collect` 仅返回未 seal 的 `ProductAdmissionItem`，`stage` 在原出生事务保存旁路准备证明。`ProjectConstraintScopes.prepare_automatic_bundle` 固定空用户文本，沿 `constraint_scope@1` 冻结完整命中及空集合，场景继承保留实际旁路、缺行和修订证明。`automatic_constraint_input.automatic_bundle/frozen_messages` 供历史输入纯校验和投影，`validate_current/validate_commit` 分别复验当前规则及原写事务；旧精确请求无证明时保留不可核验资格。当前仅提供快照合同，自动生成装配、最终消息预算与各内容消费者继续按任务记录接入。
+
+- 共享原件全文（2026-11-05，G09）：`SharedLibrary.full_source` 复用原 `LibraryRead.full_source`，通过正式共享路径 `GET /api/v2/server/shared-projects/{project_id}/library/sources/{identity}/text` 返回真实原件正文、坐标类型、整理稿关联、当前 namespace 与权限。共享下载地址由服务返回，页面不复用个人原件路径。只看成员可以读取私密原件全文，非成员拒绝访问。`tools/check_shared_library.py` 检查实际服务器 HTTP、原文逐字一致、来源坐标和下载地址，以及原人审流程。
+
+- 共享图片原件（2026-11-05，G09）：`SharedLibrary.images/image` 复用 `uploaded_images`、`group_entries` 与原识图结果读取器，正式路径为共享资料 `/sources/{identity}/images` 及 `/images/{ordinal}`。目录按真实组记录返回序号、文件名和下载地址，文件响应逐次复验当前来源资格；图片模型推断只取现有已确认文稿的原有证明。图片读取保持共享内容不变，只看成员可读，非成员拒绝。
+
+- 共享文件出口（2026-11-05，G09）：`shared_library_files.SourceFile` 核验真实共享根、workspace、各级父目录和目标文件，拒绝链接、reparse 与越界；使用既有 NT 相对句柄或 POSIX nofollow 读取实际文件，目录及打开的文件身份在发送阶段继续复验。原件下载与图片文件共用 `SharedSourceResponse`，范围解析和 multipart 编排复用 Starlette，权限变化、文件替换及取消均保留关闭处理。`tools/check_shared_library.py` 使用真实 NTFS junction 检查目录、文件及已准备响应均拒绝根外内容，并保留真实原件和 Range 读取。
+
+- 共享使用记录（2026-11-05，G09）：`SharedUsage` 经真实发行的共享查询核验来源对象和当前角色，使用原 `UsageService` 与 `SharedWriteRecords` 写入计数、传播、淡忘恢复及成员可见活动。公开 `POST /api/v2/usage/open` 接受显式 `scope_kind`，个人和共享同编号保持分离；只看成员读取真实私密资料时不修改共享计数。完成回答的引用统计核对原生完成事实，画像统计留在操作人空间，共享记录不包含个人问题及对话编号。`tools/check_shared_usage.py` 检查真实服务器 HTTP、SQLite 来源写入、只看成员不写入与非成员拒绝，检查模型尝试数量为零。
+
+- 共享问答续接（2026-11-05，G09）：工作台 `continue` 从原生请求经原 dispatcher 恢复共享查询，原租约的调用人、设备、成员与来源资格用于继续执行和幂等恢复。两个原问答续接分支使用同一真实来源查询；完成写入先取得来源事务，再进入操作人的事务，最终核验共享约束与实际 actor reader。计数使用共享来源，个人历史读取和停止本人调用沿原执行空间。真实 HTTP 检查证明其他设备不能借个人 dispatcher 继续旧共享轮，且原生事件保持不变。
+
+- 对话逻辑范围（2026-11-05，G09）：`TurnLogicalScope` 从原生声明、实际工作台身份及尚未接纳任务的准备清单辨认每轮 `personal` 或 `shared`，保留个人旧记录读取。工作台新 ASK 使用显式 `scope_kind`，缺省保留个人语义；线程列表和详情接受该逻辑字段筛选，详情逐轮返回实际 `scope_kind`。相同编号的个人与共享项目分别读取，历史正文与澄清控制共用经原生身份核验的同范围记录。流式 `started`、`done` 和 GET 读取提供实际逻辑范围；投影使用实际操作人数据库的只读事务，不初始化原生库。尚未安装的共享意图、附件和跨项目标签在保存前明确拒绝。物理空间标识由后端证明，不由页面推断。`tools/check_shared_public_ask.py` 包含同编号、同线程两种真实原生问答、流式重新连接、旧个人正文和澄清标记完整性检查。
+
+- 共享工作台范围（2026-11-05，G09）：`useSharedScopes/sharedScopeViews` 读取原服务器范围发现，完整保留当前成员资格、读写能力和本人历史线程。`ProjectSwitcher` 通过 `shared/lib/projectScope` 区分 `(scope_kind,id)`，原 AppRouter 将逻辑身份带入路由和输入草稿。`SharedWorkbenchHistory` 从正式范围内读取原个人线程，复用工作台只读回执与外部进度展示；`shared/lib/threadHistory` 将正式逻辑范围带入原线程查询，并核对详情及逐轮原生范围。共享发送和资料下钻按实际公开消费者接通情况启用。个人工作台的显式线程沿原 ID 直接读取，不替换为其他线程。
+
+- 共享提问发送（2026-11-05，G09）：`Workbench` 按正式 `can_ask` 进入原 `PersonalWorkbench.send`，`workbenchScope.sharedAskRequest` 固定共享逻辑范围、ASK 和内置执行方式；原提交编号、SSE 与 GET 恢复继续使用，`threadHistory.readScopedTurn` 核对 started/done 的实际范围。`Composer` 的可选 `fixedIntent/allowFiles` 仅收紧共享 ASK 控件，两个生产调用方为 `Workbench` 和只读 `SharedWorkbenchHistory`，个人默认输入、附件、录音和动作选择保持。共享 stop/continue/steer 与资料下钻按实际公共合同分别启用。
+
+- 逐部分纠正与原件来源（2026-11-05，G10）：`RouteCorrections` 安装到原工作台，`RouteExamples` 经 `route@5` 将最多三份有实际来源资格的样例送入冻结输入。`RouteCorrectionPanel`、`routeCorrectionApi/Journal` 复用原 `FocusPanel`、`Row` 与用户空间存储；`GroupedRememberReceipt` 使用原原件回执和重试。`RouteOriginalBinding` 在原件出生事务保存实际父轮、子轮、输入与lineage，`product_snapshot` 只读原生来源，复用结果保留原执行身份。`SourceEgressService(actual_records, reader=...)` 和 `recognition_service(..., source_owner=actual_records)` 保留实际owner及同库活动读事务，供缓存失效、召回、目录、归档、提炼、MCP提议与人工确认共用。个人来源与普通服务器Audited owner已验证；共享来源、动态审批及实际提供方范围按任务记录登记。
+
+- 共享读取事务（2026-11-05，G09）：`shared_auxiliary._QualifiedCommitScope` 保持真实中央写事务、共享根租约和来源读事务，按操作人的实际数据库绑定画像读取。`material_read_context` 仅传递同线程活动对象，普通读取保持原资格路径；借读前后仍执行完整权限与物理文件身份核验。`qualified_record_read` 复用原只读 SQLite 连接配置，使用新鲜只读句柄，不初始化数据库。正文、坐标、摘要及 SQL lineage 在这些原事务中完整重取，原生 claim、重复 claim、发送前后继续完整复验。验收入口 `tools/check_shared_query_factory.py` 同时检查两种实际 owner、错误数据库、过期与跨线程拒绝，以及全部发送内容来源与竞态。
+
+- 共享向量与重排来源（2026-11-04，G09）：三个实际发送入口经 `shared_rendered_preparation` 按真实缓存缺失位置绑定认识正文、摘要、片段原坐标及共享来源身份；`material_origin_sql` 在原只读事务中复验完整正文与 SQL lineage，原生请求恢复继续使用同一证明。`SharedAuxiliaryTurn` 在操作人的个人空间保留原请求与回执。`WorkspaceQuery.local_reader` 保留实际 owner 和成员资格，并关闭三个发送入口。默认 `test_shared_query_factory.py` 在仓库 `work` 自建隔离目录检查真实 SQLite 缓存。完整服务器检查使用 `python tools/check_shared_query_factory.py --root <专属隔离父目录>`，保留全部来源、原生 claim 和失权断言；需要项目 `config/codex-hooks.toml` 指定的 Python 解释器及完整运行资产，当前 Windows 环境使用 `.venv/Scripts/python.exe`。`--profile` 只观察真实调用次数，`--profile-only` 只用于单份材料诊断，`--constraints-only` 仅检查共享规则消费与最终事务。完整提问、共享输入和其他共享消费者继续接入。
+
+- 共享项目约束输入（2026-11-05，G09）：`SharedProjectConstraintInput` 复用 `ProjectConstraintInput` 的原生接纳、消息、预算和不可变输入记录合同，从当前共享来源事务冻结实际活动规则及空集合。操作者同编号个人规则保持独立；最终个人写事务通过已发行的共享查询及同一中央资格、共享根租约和来源读取事务复验，约束修订、正文、有效期和成员变化拒绝继续。模型执行恢复仍使用原设备及物理来源资格。公开共享提问入口随完整来源消费接通。
+
+- 共享来源只读 owner（2026-11-05，G09）：`material_read_context.qualified_source_records` 将实际 `SharedMaterialOwner` 与原 `_QualifiedCommitScope` 的来源 UOW 绑定。`SourceEgressService` 和 `recognition_service` 的借读校验使用同一活动资格、线程和原连接，操作者连接及同数据库另开连接均拒绝。`material_origin_sql` 从同一来源事务复验正文和 lineage，个人画像使用实际个人资料 owner 与操作者读取事务。原生请求经 `WorkspaceQuery` 的来源 dispatcher 冻结共享材料，画像和回执分别归实际个人 owner；公开共享发送与历史消费者继续按同一来源合同接入。
+
+- 服务器共享查询工厂（2026-11-04，G09）：`server_runtime` 在现有共享项目 registry 和真实用户应用建立时安装 `SharedQueryFactory` 与 `SharedOriginTurnStore`。来源查询保留独立共享资料 owner，模型、画像、执行和回执归实际操作人的个人应用；本机只读查询继续携带同一来源资格。发行记录使用同工厂的私有弱引用集合，128项LRU负责强引用缓存，活动输入在淘汰后继续复验原发行对象，弱引用随对象释放。缓存查询和已借读 reader 每次读取复验成员与物理资料根。验证：`tools/check_shared_query_factory.py` 的真实服务器生命周期、公开 HTTP 权限、私密和失权检查，以及 `test_shared_query_issuance.py` 的真实缓存淘汰、生命周期、正文、私密和失权检查，完整提问及其他共享入口继续接入。
+
+- 共享范围与本人历史发现（2026-11-05，G09）：`v2.shared_scopes.SharedScopes` 通过当前成员资格与个人原生归属证明组合服务器共享范围。`GET /api/v2/server/shared-projects/scopes` 返回当前角色、读写许可及本人线程；退出成员仍可发现已有个人正文，来源读取与新轮模型许可独立复验。失权范围仅使用本人已保存的标识，不读取当前共享名称。读取复用 `frozen_public_turn_requests` 与 `native_source_snapshot`，不恢复旧执行许可、不修改原生记录。尚未接纳的真实任务按原保存请求、准备清单与身份辨认，保持当前范围及其他已验证历史可读，并不计入已接纳历史；多部分父行由实际问答和任务子行提供证明。真实检查为 `tools/check_shared_scopes.py`。
+- 共享回答输入证明（2026-11-05，G09）：`model_material_coverage` 从实际不可变计划恢复选定资料，`PreparedMaterialInput` 只在真实发行的当前线程与准备范围内提供正文。原 `generate_answer` 显式保留 `material_proof`，真实模型调用标识与不可变 `input_ref` 共同绑定全部消息、SQL 身份及来源证明；每次发送前后重核当前许可。续接记录写入操作者空间。`shared_history` 读取完整 `NativeAnswerSnapshot`，本人旧正文与当前共享来源权限分别核验；旧执行请求仍核原设备。`tools/check_shared_query_factory.py --root <专属隔离父目录> --primary-only` 检查原生准备、真实成员撤销后的生产方法拒绝和跨设备历史读取，全部 HTTP 模型发送前终止。公开共享入口、辅助生成、搜索及部分输入消费者继续接入。
+
+- 共享消息独立投影（2026-11-05，G09）：`PrimaryWireProjection` 使用冻结计划、实际完成的首模型输出及原生控制记录重建普通、提取和审核消息。规则系统块读取冻结声明；继承、续接和插话按实际不可变引用及接纳事件投影，完整消息逐值比较。替换材料正文及追加未覆盖消息在实际准备、生成入口均拒绝；真实 Core 插话采用与零发送拒绝已验证，公共插话装配及提供方成功流程按整合验收执行。
+
+- 共享资料读取与人工审核（2026-11-05，G09）：`SharedLibrary` 复用 `LibraryRead`、`WorkspaceDomains`、`WorkspaceItems` 和 `WorkspaceReview`，在实际共享根读取四层资料与原件；人的读取保留私密资料，当前成员权限逐次核验。`shared_library_routes` 提供带空间标识的列表、下钻及原件地址。人工确认与丢弃复用 `RecognitionService` 和原 `SharedWriteRecords`，在同一来源事务记录真实审核人、CAS 和活动；只看成员不能写入。验证入口 `tools/check_shared_library.py` 执行真实领域服务及原件响应，服务器完整生命周期与公开HTTP随当前组合继续验收。
+- 共享文字原件（2026-11-05，G09）：`SharedIntake.text` 复用原 `WorkspaceIntake.add_text`、`WorkspaceItems` 及 `SharedWriteRecords`，将原件、文本检索投影、出生记录、作者和命令结果在实际来源事务中提交。`POST /api/v2/server/shared-projects/{project_id}/intake/text` 使用 `Idempotency-Key`；本人通过 `GET .../intake/commands/{key}` 核对原结果，成员通过 `GET .../intake/items/{id}` 读取尚在处理的原件。容量使用原 `ServerJobScheduler.intake_many` 与有限持久化预算，来源归当前所有者、执行空间归实际操作人或已授权目标。验证入口 `tools/check_shared_intake.py` 覆盖真实服务器文字出生、恢复、只看权限和容量拒绝。
+- 共享项目对话原件（2026-11-05，T15.15）：`ConversationShares.share_project` 按原对话修订和选中的引用生成快照。共享来源核对当前成员及原物理资料根，目标先从 `GET /api/v2/server/conversation-shares/projects/{id}` 取得实际范围和写入资格。`SharedIntake.conversation` 复用 `WorkspaceItems`、共享写事务及当前所有者容量，将对话原件、首个出生记录、原命令和操作者活动一起提交。命令回读使用原目标范围及设备，资料库从同一资料根展示和读取原件，整理复用现有权限与模型流程。验收入口为 `tools/check_conversation_shares.py --shared-project-only`。
+- 共享工作台记住（2026-11-05，G09）：`SharedWorkbenchRemember` 把 `POST /api/v2/workbench/turns` 的共享文字记住绑定到原受理设备、实际目标空间、线程和共享原件命令，沿用原工作台回执。`GET /api/v2/workbench/remember-commands/{key}` 回读原提交；`POST /api/v2/workbench/turns/{id}/retry` 经当前成员写入资格恢复原件处理。整理成功后复用领域服务自动入库未核对稿并提出待审认识。对话只存于实际操作人或已授权目标空间，当前共享资格失效后保留历史并停止显示来源详情。真实隔离 HTTP 检查了原件提交、模型未配置时失败保存、原键回放、实际重试、权限拒绝和冷启动读取，模型外发为零；整理完成与入库后的待审流程等待有模型配置的实际验证。
+- 共享文字认识提议（2026-11-05，G09）：`SharedIntake.inspiration` 复用 `RecognitionService.stage_experience/propose`，在同一来源事务记录实际成员的文字依据、待确认认识和命令出生。`POST .../intake/inspiration` 只接受文字，沿原命令恢复及有限容量合同；确认复用 `SharedLibrary.review`，保留实际审核人。`tools/check_shared_intake.py` 使用真实公开请求证明提议保持待确认、重复提交恢复、成员明确确认以及只看成员两种写入均拒绝。
+- 共享输入命令归属（2026-11-05，G09）：文字原件和文字认识只写实际来源，容量由当前来源所有者预留；操作人的空间容量保留给实际写入个人空间的流程。命令身份绑定已授权的执行目标空间，保留原提交人归属；管理员代理写入后，目标本人通过同一命令读取原结果。已有命令按真实目标、来源空间和唯一原命令恢复，歧义拒绝。验证入口 `tools/check_shared_intake.py` 使用真实管理员代理、本人回读、普通跨目标拒绝及个人容量已满但来源有容量的请求。
+- 共享文字整理（2026-11-05，G09）：`SharedOrganizeSource` 与 `SharedOrganizeFactory` 在原 `WorkspaceIntake.process` 接入实际来源读取及执行账号写入，保留原处理租约、G15 自动规则、来源 SQL 身份和唯一原生接纳。`POST .../intake/items/{id}/process` 接受 `expected_revision`，原件与整理稿写共享资料根，模型、原生事件和私有检查点保留在实际执行空间。模型输出绑定原生不可变结果及完成事件后，原领域服务提交共享整理稿。`tools/check_shared_organize.py` 已检查真实服务器接纳、当前未配置模型预算拒绝、只看权限、私密拒绝和刷新，真实模型尝试为零；输出与入库正向流程待实际模型验证。
+- 共享整理稿人工核对（2026-11-05，G09）：`shared_intake_review` 在实际共享写入事务中复用 `WorkspaceReview`、`SQLiteDocumentRepository` 和 `RecognitionService`。整理结果先核来源出生、正文及已发布的真实模型结果标识，再沿原 `expected_revision` 保存整理稿、确认文稿或提待确认认识；提议和原件指针在同一事务提交。`PUT .../intake/items/{id}/draft` 与 `POST .../confirm`、`POST .../recognition` 保留当前成员权限、实际审核人和来源所有者容量；人的读取不依赖另一账号的私有回执。`tools/check_shared_intake_review.py` 已验证真实服务器只看成员拒绝、缺少整理结果拒绝、来源不变和刷新，模型尝试为零；输出、确认和提议正向流程待实际整理结果验证。
+- 共享搜索原生事实读取（2026-11-05，G09）：`v2.search` 从实际 `query.receipt_records` 选择操作人原生数据库，经原 `native_source_connection` 和完整 `NativeAnswerSnapshot` 读取原请求、不可变输入、结果和事件；来源根不建立搜索执行数据库。原问题按真实父轮清单关联，派生查询按已完成的原生决策输入、结果及回执关联；未知声明字段拒绝。既有归属检查入口为 `tools/check_shared_search_owners.py`。
+- 共享搜索来源消费（2026-11-05，G09）：`SharedSearchTurn` 沿原 `SharedAuxiliaryTurn` 在执行账号准备请求、调用搜索和保留回执，`search_input` 在原唯一来源声明中封装。实际来源及执行账号的 SQL 身份、私密、原生父轮和冻结规则在申领及发送前重核；`WorkspaceQuery.gap_materials` 沿真实活动父轮转交已发行的来源查询。首答的 `selection.search_fragments` 绑定原搜索输入、网址、完整片段和实际窗口，历史携带使用原完成事实及当前资料资格。原 `persist_cited` 只将实际引用片段写入执行账号，并在同一创建事务登记逻辑归属，后续确认复用原件出生旁路。当前证据限于登记 compose@1 的零模型准备、请求申领、领域出生及历史 SQL 修订拒绝；默认模型预算、真实网页结果、首答和存档正向流程仍待验证。
+- 共享容量统计（2026-11-05，G09）：`SharedStorage` 把当前所有者的共享资料根交给原 `ServerJobScheduler.storage_bytes`，在中央读取事务和逐项目根租约内核对实际路径、空间绑定与目录链接，每个根只统计一次。`intake_many` 与同步转让共用按用户编号取得的容量锁；项目转让在原中央事务内检查接收方已有资料及转入根，容量不足保留原记录。当前项目所有者承担共享物理容量的规则待用户复核；执行和模型仍沿操作空间。真实 SQL、文件、目录链接、取消与公开接口检查分别见 `test_shared_storage.py` 和 `tools/check_shared_storage.py`。共同投喂接入时复用这组容量锁与有限预算。
+- 管理员代理共享操作（2026-11-05，G09）：`PersonalDestination.validate_application` 在原目标应用中核对真实用户、空间、资料、模型连接与余额管理器。`SharedOriginAdmission` 和原生接纳保留真实管理员及设备，执行、画像、对话、回执和模型配置沿已授权目标空间；普通用户继续受原个人空间授权限制。个人历史按原完成事实的执行归属读取，旧管理员设备和共享成员权限分别影响恢复执行及当前来源读取。验证入口 `tools/check_shared_admin.py` 使用正常服务器、真实配对、原生空项目问答、公开历史与范围接口，检查错应用、错读取事务、错模型与计费绑定，以及失权后本人正文保留和旧执行拒绝；外部模型成功流程单独验收。
+- 公开共享问答来源接入（2026-11-05，G09）：原工作台 ASK 根据实际共享登记与当前授权取得 `incoming_query`，原生接纳冻结共享来源及外发限制，个人保存事务与分工样例完成分别在原来源事务中复验。`RouteExampleOrigins.shared_origins_for` 读取实际原生来源，样例、模型选择和回执保持在实际执行空间。`tools/check_shared_public_ask.py` 验证原公开请求、空项目原生完成、共享来源声明、个人历史、样例来源、相同命令恢复和正常关闭，模型调用为零。非空模型、成员使用记录、自动路由与其他共享消费者完成集成后统一放行。
+
+- OpenAI API SDK（2026-11-04）：`shared.llm.openai_sdk.OpenAIResponsesCompletion` 在原同步运输和异步加载器内，仅为精确官方 Terra 配置选择 Responses SDK。复用原请求格式、终态与用量校验，单次 POST、外发和回执保持；同步独占尝试与异步总期限负责关闭，API 默认沿原环境代理和证书配置。非对象根结构沿原 prompt 格式校验，SDK 提前抛出的流式错误保留实际输出阶段和安全分类。验证：`test_openai_sdk_terra.py`；实际上游验证由调度者记录。
+
+- 资料库人工合并（2026-11-03，G15）：`LibraryMerges` 沿原 `RestructureProposalService.capture/save/review` 保存合并预览，采用后输出仍为pending；`InsightMergeReview` 供逐条审核和详情共用，真实目标下钻、逐编号回读与未受理取消沿原owner。`recognition_service(..., source_owner=actualrecords)` 在同一实际事务借读源资格，默认调用保持；完整来源、CAS与人工批准的整合范围见任务记录。
+
+- 备份表单同步（2026-11-03，G15）：`QuickSettings.onBackupScheduleChange` 沿 `SettingsPage` 与 `SettingsData` 通知原 `BackupScheduleSettings` 回读，保持组件身份及逐编号命令。`reconcileBackupSchedule` 供真实回读、已编辑草稿、待核编号和人工重新核对共用，冲突持续保留至明确核对；桌面数据区沿现有token保留72px滚动安全余量。
+
+- 恢复维护租约（2026-11-03，G01）：`RuntimeRestorePreviews` 与 `DailyJobs.maintenance_lease` 共用真实维护准入，180秒预览和10秒收口条件来自 `restore_preview@1`。原完整资料指纹与CAS保留，重复确认互斥，取消、到期及迟到清理按持久操作事实结算，受理后由原恢复宿主接管。`Receipt.reminder` 消费同一事务的实际提醒DTO，历史读取当前状态并保留原Turn修订。
+
+- 快捷约束与每周备份（2026-11-03，G15）：`parseQuickAddition` 解析明确项目名约束及有限每周计划；`QuickSettings` 使用原约束API和备份命令owner。约束提交前复用per-ID用户命令存储，恢复先读原ID，匹配才结算；备份保留完整时区、星期和月份日期。`sharedProjectCommands` 泛用存储合同保持，领域校验位于各自适配层。
+
+- 访问记录业务凭据（2026-11-03，G15）：`AdminAudit.request_scope` 在原服务器分发器绑定真实intent、设备、操作人和目标空间，`v2.audit_objects` 沿原文稿、项目及明确遗忘事务保存body-free凭据。`SettingsUsers` 单列HTTP状态和实际业务结果，展开对象才读取当前名称、权限及出生连续性；旧记录和未覆盖动作保留未知。`recall_preferences.set_preference` 的可选内部回调仅供明确领域入口使用，原调用默认保持。
+
+- 资料库资格与计数（2026-11-03，G15）：`LibraryRead` 提供认识实际归属、namespace、can_write和can_edit_insight；`reviewInsightAccess` 对详情与409回读作相同校验，`libraryNeighbors` 按实际来源处理同名对象。`reviewShortcuts` 保留输入、组合输入、修饰键、对话框及忙碌限制；`read_usage_count` 从原计数与事件读取可核使用次数，不将初始化或传播显示为使用。`compareDateValues` 按实际时间排序，供备份时间线使用。
+
+- 用途诊断与凭据草稿（2026-11-03，G15）：`v2.purpose_samples/purpose_tests` 使用固定公共样本和逐编号命令，经原识图、搜索、TokenHub-ASR网关与原金额owner执行。注册样本逐次核对真实catalogue内容，临时资产引用和文件分别清理，失败可仅恢复同编号清理。`PurposeTest` 复用设置状态与持久命令存储。`credentialDraft` 供用途密钥和网站Cookie表单保持内存输入、明确核对版本，并阻止迟到成功清除后续编辑；身份或会话切换清除秘密。
+
+- 资料库读取恢复（2026-11-03，G15）：`LibraryTools.MemoPanel` 与 `VersionHistory` 直接重读原API，按实际请求生命周期保留等待和失败状态；`libraryNeighbors` 保留未过滤列表的实际项目，`InsightLinks.onOpen` 向父层传递归属。跨根来源、编辑资格与真实使用次数沿实际owner读模型接入，页面验证范围见任务记录。
+
+- 网页转写凭据与逐词编辑（2026-11-03，G15）：`memory_app.asr_credentials` 复用实际container.secret_store和原转写配置修订；`v2.asr_credentials` 以逐编号命令保存、回读及取消未受理操作，密钥代次变化保持真实未知状态。`AsrCredentialSettings` 的密钥仅留页面内存。`LexiconTermEditor/lexiconDraft` 复用原词表预览与人工确认，身份变化清除表单，全局修订变化保留编辑并作废旧预览，同词冲突明确选择版本。真实整合检查见任务记录。
+
+- 完整用量与回执详情（2026-11-03，G15）：`v2.receipt_history.ReceiptHistory` 按真实调用完成时间和指定IANA时区统计完整月份，稳定分页区分模型调用、外部交付及未完整证明。`kernel.receipt_projection` 的可选attempt投影保留真实逐次用量和费用，部分计数逐层保持。`ReceiptInspection` 复用原外发资格读取当前可核对材料，缺少共享来源owner时明确拒绝。旧五十条回执读模型保持原形状，实际整合检查见任务记录。
+
+- 原生记忆接入（2026-11-03，G14）：`native_mcp` 复用官方MCP SDK的Streamable HTTP和原七项记忆工具，以独立受限设备凭据或OAuth PKCE绑定真实用户空间；`native_mcp_human` 的单次人审凭证绑定设备、对象出生身份与修订，在原确认事务内消费。`ExternalMemoryAccess` 复用设置行、原连接和人审入口，桌面形态显示服务器条件。默认前端构建同时生成官方Apps SDK卡片。个人领域、OAuth及非法输入检查已完成，完整共享与真实远程客户端验收见任务记录。
+
+- 共享原生记忆接入（2026-11-05，G14）：`SharedMcpContext` 固定装配在实际操作人应用，原七工具以 `scope_kind=shared` 选定共享资料，编号下钻与使用从真实交付恢复范围。`SharedExternalCatalog` 逐来源保留目录证明；单项目召回沿原 ORIGIN，材料引用带 namespace、修订与出生证明。原件和待确认认识沿共享来源写事务，显式幂等键关联操作人配额及回执；认识的外部依据在共享端只保留实际来源证明，人工审核打开已有共享资料库。只看成员可以读取和登记个人回执；来源使用由有写权限的成员写回。核验入口 `tools/check_shared_native_mcp.py`，远程 HTTPS 与真实客户端联通另验。
+
+- 共享事务来源读取（2026-11-03，G09）：`shared_read_capability` 从实际共享事务发行短期只读能力，固定中央权限、用户、项目、数据库和线程，事务结束立即失效；`SharedOriginStore` 在原生首次claim内复验来源与当前成员资格。实际用户应用须在建立runtime前安装来源工厂，完整Query装配按任务记录继续。
+
+- 服务商管理与主快试用（2026-11-03，G13）：`ProviderRegistry` 由实际 `ModelConfiguration` 装配，`provider_connection_config` 将用途选择、连接修订及凭据引用纳入原事务。`ProviderTrialConfiguration` 为原主、快用途提供只读试用视图，`v2.model_trials` 沿原 `MemoryTurn`、模型发送、回执与金额服务执行；服务器逐次通过 `server_model_wire_owner_for` 取得原活动请求或任务租约。`ProviderConnectionManager/ModelTrialPanel/ProviderOperationRecovery` 复用原设置组件，`providerOperationJournal` 复用逐编号命令存储，刷新只回读操作或明确取消未受理编号。本轮真实权限拒绝、低余额、中断恢复与跨进程存储检查见任务记录，真实上游成功仍待验。
+
+- 上下文反馈恢复（2026-11-03，G15）：`ContextPanel` 沿原 `contextFeedbackApi` 显示读取及划掉失败，未知结果先读取同一轮次、条目和修订的操作记录，再决定是否重新提交。条目资格变化时关闭原面板，设备或用户变化使旧响应失效。`ProjectConstraintScopes.preview_activation/activation_limits` 复用同一 `constraint_scope@1` 规则规范化关键词，作用范围控件及消费装配状态见任务记录。
+
+- 完整运行根恢复（2026-11-03，G01）：`memory_app.runtime_recovery.prepare_runtime_recovery/adopt_prepared_runtime` 复用原备份自检、源资料修订核对和恢复操作租约，在固定管理目录保存准备目录、操作记录与旧资料副本，按持久 intent 逐项采用。`RuntimeRestoreHost` 管理网页请求准入、实际在途请求、每日任务、原生执行、登录线程、应用生命周期及日志资源，关闭原应用后采用并由真实工厂重新读库。`ServerRuntimeRestoreCoordinator` 将已授权执行与当前设备、账号修订一并持久化，只关闭目标空间准入，通过原控制及删除租约等待已受理任务结束，再退役、采用及重建真实 child；中央进度独立鉴权并留访问记录，其他空间继续运行。启动先核对原进程租约及固定管理路径，准备状态保留人工确认，已授权操作按记录续接，矛盾空间保持关闭。`SettingsData` 与 `localMemoryVaultApi` 共用稳定操作编号、独立状态读取和同操作恢复，仅在采用及运行就绪均确认后显示完成。
+
+- 认识审核导航保护（2026-11-03，G02）：`InsightReviewQueue.requestNavigation` 通过 `onNavigationGuard`、`Library` 与 `AppRouter` 连接项目、场景、主入口及浏览器历史。未保存正文由原编辑器保留，复用 `DraftConflictView` 和原保存 CAS；保存成功或放弃后执行待导航动作，取消保留原页面并恢复历史位置。历史恢复按实际条目 key 区分同一 index 的不同地址；身份变化作废待执行动作及旧响应。
+
+- 客户端服务器代理（2026-11-03，G03）：`v2.external_proxy_identity.ProxyDeviceHeaders/proxy_identity` 在原设备认证前分离 `X-Chriptmas-Device-Key` 与模型凭据，再沿原用户分发、`ServerMemoryLease` 和真实 child 资格处理。Claude 配置基地址为 `/api/v2/external-agent/proxy/claude`，Codex 为 `/api/v2/external-agent/proxy/codex/v1`；原 `external_proxy` 接收 `messages`、`responses` 与 `chat/completions`，保留私密、外发、项目修订、上下文交付及记录接点。设备密钥、空间目标和 Cookie 不进入上游白名单头，实际服务器请求要求 HTTPS；客户端指南由原连接元数据提供。
+
+- 远程订阅回调（2026-11-04，G04）：`ChatGPTSubscriptions.complete` 与原 loopback listener 共用 `_claim_callback`、PKCE、nonce 及真实凭据保存流程。`v2.subscriptions` 的 `POST /api/v2/settings/subscriptions/login/{attempt_id}/complete` 只解析当前尝试的完整回调地址，校验一次性领取、有效期、设备与目标账号资格，以及分配和方式修订；不请求粘贴地址，不回显授权码。`status` 只为原 owner 返回未过期且未领取的原授权地址，地址只留内存，领取、取消、过期及关闭时清理，HTTP响应为no-store。`ChatGPTSubscriptionSettings` 以内存输入和真实进度回读完成交互，领取后隐藏旧授权链接，取消、身份变化或提交后清理输入。真实账号授权兑换仍需对应运行条件。
+
+- 共享消费计量（2026-11-04，G05）：`shared_metering` 的真实observation由 `server_model_balance` 同事务保存，`ServerModelSettings.AttemptRow` 经原消费接口读取。转写的 `usage_total_token`、`duration_ms` 和 `sentence_end_ms` 分别标注提供商token、音频毫秒数和末句结束毫秒数；缺失值显示未报告，明确零值保留。计价、结算和权限沿原owner。
+
+- 外部执行步骤与用量（2026-11-03，G06 A）：`v2.external_progress.ExternalProgress` 将真实已脱敏事件绑定本次请求、交付记录、公共轮次及原生执行 owner，有界保存顺序与截断信息；`workbench_stream` 的 `task_progress` 沿原 SSE 绑定和游标回读。`ExternalTaskProgress` 与 `externalProgress` 校验并展示实际步骤，未知总数保持为空，用量区分执行者报告、部分已知和未知，原生零值保留，金额保持未知。专用步骤存储错误使投影停用并标记未完整保存，执行终态仍由原 owner 与回执决定。真实无认证 Claude 失败、步骤及游标回读已核验，真实账号成功任务仍待对应条件。
+
+- 桌面执行者文件范围（2026-11-03，G06 B）：`v2.external_executor_plugins` 从真实 Host 提供只读 `execution_isolation`；`ExternalExecutorPicker.desktopFileAccessNotice` 在 Claude Code 或 Codex 实际可派发且使用 `desktop-cli-permissions` 时，供设置连接卡与执行者选择器显示文件访问告知。服务端隔离事实沿 `linux-bwrap@1`，权限行为沿原 Host。
+
+- 成果重做及失败检查（2026-11-03，G07）：`v2.task_do.TaskDo.redo_source/validate_redo_source/retry_available/retry_check_required` 从原任务冻结执行或当前有效分工读取重做资格，沿原工作台 division 与 redo 接口新建任务。成果重做保留已执行分工；已删除学习样例中未执行的编辑保持停用。`TaskRetryAction` 对冷启动历史失败先显式检查，再允许用户明确重试；普通读取不初始化执行 owner。来源、项目和修订在提交时复验，未知结果保留原提交身份并回读。
+
+- 统一提醒管理（2026-11-04，G08）：`v2.reminder_center.ReminderCenter` 编排原 `ReminderService` 与冻结的 `CompanionReminderService`，以 `/api/v2/reminder-center` 展示当前项目提醒和本用户旧全局提醒。`prepare/apply/read_operation/resume/abandon` 通过操作与逻辑提醒旁路记录固定请求、目标编号、原状态及实际效果；项目提醒沿原 CAS，旧计划改期通过取消及替代保留时区、提前量与计划次数，部分处理后显式确认当前修订再继续同一计划。`CompanionReminders` 复用这些入口，未知先回读，完整放弃与已有真实效果分别投影；列表读取错误独立保存，成功刷新只清理列表错误，输入及操作错误继续保留。
+
+- 手动提醒送达（2026-11-03，G08）：生产 `ReminderService` 明确选择 `remind@1`；`NudgeService.deliver_reminders` 在原每日调度器的 60 秒检查中沿 `nudge@1`、原预约、渲染与完成记录只消费用户定时提醒，私密项目继续过滤，提醒文本不调用模型。`useReminderNotices` 只读取真实已送达记录，`DeliveredReminders` 在伙伴各模式共用，原反馈接口记录打开；`Shell` 的提醒圆点与既有任务状态分别保留。自动日期、城市策略的当前选择保持。
+
+- 有效分工与插话策略（2026-11-03，G11 内部接点）：`SQLiteAgentDispatchStore.effective_snapshot/amend_unbound/transition_effective` 以同库事务和修订维护有效许可清单，仅替换尚未绑定项，保留已绑定子任务及其冻结依赖范围。Coordinator、Organization 和 MainPlanner 沿有效清单派发与汇总，原计划及旧汇总继续保留。`steer@1` 与 `stale@1` 已登记为显式版本策略，分别提供本地插话分类和基于真实来源的变化判断；公共插话身份、接纳、模型请求中断及界面接线仍需后续实现与独立验收。
+
+- 约束有效日期与实际输入（2026-11-04，G15 A）：`features/settings/constraintDates` 供 `ProjectConstraints` 编辑并保存原日期，复用 `recognitionApi` 与 `ProjectConstraintService`。`v2.project_constraint_input.ProjectConstraintInput` 在原单次admission中冻结完整活动集合，空集合也保留；普通问答和内置干活最终消息消费同一快照，token预算、每次发送及原事务保存前复验。`ReadControl` 同时保留原outcome/style验证。`v2_project_constraint_admission` 在原私有records事务只初始化一次逻辑空间生效边界，真正旧接纳及首次捕获的prepared原请求保留兼容；重建及整库副本不更新边界。日期开始包含、结束不包含，失效、修订变化及超限明确拒绝。场景和点名的未挂载控件继续按后续功能登记。
+
+- 有界流式交付与费用回读（2026-11-04）：`v2.workbench_transport.SSEDelivery` 将连续delta合并为独立批次，reset/status等控制事件分隔批次，保持实际游标顺序。四格队列过载后排完已接纳通知并关闭当前交付，原 `TurnExecutionService` 的受保护任务继续执行；客户端沿原GET游标恢复。`turn_frames._StreamRecords` 的只读范围包含原 `attempt_cost` 所需的共享费用记录，未知金额保持未知，任意集合拒绝。正常工厂终态和冷启动回放、纯传输及真实SQL生命周期分别验证。
+
+- 场景目录（2026-11-03，G15）：`features/settings/ProjectScenes` 供原项目表单添加及移除场景，沿 `settingsApi.saveProject` 的真实项目 CAS。组件保留等待期间的新输入，并按用户空间拒绝迟到响应；后端只修改场景目录，原件和归属记录保持。
+
+- 受控外部附件（2026-11-03，G06 C）：`v2.external_task_files.QualifiedTaskFiles` 读取真实任务的不可变安全文件内容和关闭证明；`WorkspaceIntake.prepare_generated_task_files` 沿原入库准入准备资料，`TaskDrafts.attach_generated_in_uow` 在原完成事务中创建真实文字体验、带父源的原件与附件旁路。`verify_task_material` 的可选身份及单链接校验使用同一实际文件描述符，旧默认保持。原生成功交付与平台验证边界见任务记录。
+
+- 原子接纳（2026-11-03，G11）：`core.ai_kernel.product_admission.ProductAdmissionItem/seal_admission` 合并内部材料引用；`SQLiteAITurnStore.admission_bundle/restore_admission` 在原接纳事务保存并精确恢复最终请求、材料及实际引用映射。原无绑定请求保持，公共身份与具体消费者沿后续接线登记。
+
+- 完整备份管理（2026-11-03，G12）：`memory_app.backup_archive.pack_backup_archive/unpack_backup_archive` 在独立目录处理真实备份及范围封装，复用原完整性验证和只读权威解析；输入快照与输出路径互斥。`v2.backup_transfers/backup_schedule/backup_routes` 沿实际空间、额度、接收锁及原每日维护任务完成传输与周期，`backup_archive@1/backup_schedule@1` 提供显式边界与日历计算。`BackupTransferControls/BackupScheduleSettings` 通过原数据接口及逐编号 `backupCommands` 恢复操作，更换文件须确认未受理取消，已接收流只回读真实状态。下载、导入、明确恢复及恢复后回读的整合factory验证通过，页面验收范围见任务记录。
+
+- 共享提取准入（2026-11-05，G09）：`v2.shared_extraction.SharedExtraction` 复用原资料与认识服务执行明确确认的提取；`shared_extraction_routes` 在真实服务器提供选择预览、完整确认、分批继续、活动恢复、进度及个人副本读取。预览的 `Idempotency-Key` 与实际预览同事务保存，原编号在跨进程锁内恢复；`GET /api/v2/server/shared-projects/extraction-commands/{key}` 核对已受理或未受理，当前准备中的真实锁返回冲突。目标空间取当前服务器授权，不接受客户端指定 owner；`shared_extraction_admission` 绑定真实目标应用和原 `ServerJobScheduler.intake`，有限阶段在中央事务前预留，底层存储回调计入实际记录、自动 lineage 及 JSON 元数据。退出共享项目后个人副本仍可读取，继续读取共享预览仍检查当前成员。前端 `features/shared-projects/SharedExtraction` 在原管理入口提供完整预览、个人项目选择、整份清单确认、原批次继续与操作记录同步；`sharedExtractionJournal` 冻结原请求与批准清单，通过原客户端编号恢复首次预览，`sharedExtractionViews` 分别核对正式预览、个人进度及本人副本 DTO。验证入口为 `tools/check_shared_extraction.py`，实际页面验收范围见任务记录。
+
+- 共享来源与辅助接纳（2026-11-03，G09）：`SharedAuxiliaryTurn` 将原个人辅助调用键及准备材料同事务保存，首次原生 claim 与来源 bundle 原子绑定，已接纳请求只从原生证明恢复。`material_origin_privacy` 分别使用实际共享来源及个人画像 owner，个人模型开关复用 `global_egress_allowed`，同名个人项目不代表共享私密范围。`ReadOnlyMaterialDocuments` 继承真实 SQLite 文稿仓储并保留逐次读取资格。完整 Query 与生成来源消费者按任务记录继续实施。
+
+- 外部客户端接入（2026-11-02）：`features/settings/ExternalAgentSettings` 复用 Row、Switch、StatusDot，常显客户端卡片与分步指南，分别投影记忆支持和应用执行器事实；刷新只回读启动登记与设置。`externalAgentConnection.readExternalConnection/clientConnectionText/harnessAuthenticationText` 校验原接入元数据，只在页面内替换完整路径参数并按所选终端引用，Harness 通过 JSON.parse 修改真实 command/args，固定 YAML 鉴权引用单独复制。项目、客户端、修订与用户代次使旧回包及复制结果失效；AppRouter 按 userEpoch 重建设置页。快照沿原 API，仅用于本机 Claude/Codex。原生 Claude `2.1.316` 发现七个工具；独立 Python MCP SDK 经真实 stdio、HTTP 和 SQLite 验证参数与未核对原件写入。12 组连接与 4 组模型提示 DOM、真实插件和代理开关、每日上限及修订冲突、两客户端快照生成与原生剪贴板写入通过，模型调用 0。完整构建、剪贴板字节回读、服务器跨用户、真实账号付费派活与远程 HTTPS 待验；用法和范围见 `docs/agents.md`。
+
+- 接入表单修订恢复（2026-11-02）：`ProviderConnections.ModelConnectionForm` 在父配置变化或真实 409 后保留地址、模型及密钥草稿；通过原 `api.load` 读取当前配置，用户重新核对后更新保存基线。设置页与首次使用首页共用，保存成功清空密钥，保持原生成启用及外发许可。设置页、首页和同页用途变化三条真实恢复路径通过，验收期间生成及外发始终关闭。
+
+- 生成接入地址与旧方式恢复（2026-11-02）：`features/settings/modelEndpoint` 的 `apiEndpointError/isLocalModelEndpoint/localBaseUrlForMode` 按既有后端地址约束处理。服务商接入拒绝本机及远程 HTTP 地址，显示提示并保留密钥草稿；仅在旧方式 `revision=0`、首次选择 API 且备用地址无效时复用原默认本机地址。真实界面完成旧方式恢复、四类地址禁止发送及官方 HTTPS 配置保存，生成与外发始终关闭；38 个地址样例与原后端校验一致，三项模式边界与三模块定向编译通过。以上验证配置存取与恢复，模型调用为 0。
+
+- 外部插件修订回读（2026-11-02）：`ExternalAgentSettings.savePlugin` 在成功或冲突后使插件与连接投影失效，再经真实 GET 回读独立插件修订及客户端配置修订；三客户端六次开关、真实并发 409 后再次保存与刷新均通过。每日上限保留编辑基线，设置变化和冲突先重新核对再保存。用户空间事件重新建立设置页面，清除旧草稿与复制状态；已验证前端事件和配置回读。
+
+- 界面功能核对（2026-11-02）：工作台、资料库、伙伴和六组设置已逐入口静态追到处理函数、真实 API 或领域服务；展开、选择、草稿及导航入口对应实际页面状态。模型接入与外部客户端的真实交互验收范围见上文及 `docs/agents.md`；最终只读核对 11/11 通过，模型尝试为 0，偏好与模型配置已恢复且不含真实密钥。
+
+- OXR 图片与 PDF 识别：`shared.llm.oxr_gateway.OxrImageGateway` 接入既有 `ModelConfiguration.complete_vision`。严格匹配 OXR-1.0 和官方免费域名或 loopback `/v1`；每张图片或每份完整 PDF 一个受管 POST 和调用回执，共用总期限，重用原外发复验及独占连接传输，未知用量保持。`shared.llm.pdf_input.pdf_content` 使用 pypdf 校验原始 PDF 并形成仅供 OXR 使用的内部内容；`v2.image_read` 沿受管 file/PDF 原件身份冻结并复验 OXR 目的地，复用原 image_ref 合同。`WorkspaceIntake` 接纳扫描 PDF 后沿既有处理租约读取，整篇 Markdown 成为 source_text 后进入原整理及证据流程；私密及外发关闭使用本机提取，空文字明确失败。普通模型继续使用原网关。
+
+- 自动灵感（2026-10-25）：`v2.automatic_inspirations.AutomaticInspirations.run_due` 复用原 `DailyJobs`、用户空间和 `extract@7`，默认北京时间 09:00 按同项目、同场景选择一组一至三篇合格文稿，可在设置关闭或修改时间，结果继续待人工确认。`inspiration_schedule@1` 保存日期、限额、选材与正文去重规则，日期 CAS 保留当日唯一任务；已进入提炼的输入及失败、未知结果保持，恢复只读真实 APPLIED 结果。`retry@3` 通过实际传输重试和结构化 wire 上限限制自动发送，默认重试策略保持。设置开关、来源资格及原日槽在实际发送与提交前复验。任务读模型通过原进度列表及小熊提示，使用真实项目导航、未读及 attention 字段，已读不确认认识；没有实际项目的空日槽保留内部状态。测试、构建和运行验收按用户要求跳过。
+
+- 灵感提炼（2026-10-25）：`v2.inspiration_extraction.extract_inspirations` 在用户选择一至三篇精确修订文稿后，复用 `MemoryTurn`、真实辅助模型预算和 `RecognitionService.propose_in_uow` 提出最多五条待确认观点。`extract@7` 仅由主动入口显式绑定，默认 `extract@5` 保持；引用逐字核验冻结 Markdown，解释、只读推荐问题和出处存于旁路。候选仅引用实际证据文稿，后续认识资格与外发继续回读真实生成结果及完整输入来源；人工编辑保留出生证明，隐藏不再匹配的解释。`InspirationExtraction` 与 `InspirationDetails` 复用 `FocusPanel`、`Row`、原确认动作及精确历史正文读取；隔离资料检查对缺失生成证明的认识显示不可核验条目。测试、构建和运行验收按用户要求跳过。
+
+- 音频原句（2026-10-25）：`v2.audio_positions.AudioPositions` 复用受管转写凭证和 `_segments_text`，逐字核验后将 Unicode 字符窗口映射为秒数；资料库片段接口复用受管原件、已有 WAV 派生及分段函数，在请求缓存目录生成最长 90 秒的本机 WAV 并清理。`AudioEvidenceClip` 复用 `libraryApi` 的认证请求与请求范围控制，按项目、原件和窗口回收播放器、请求及 blob URL。按用户要求只做静态审阅，测试、构建和运行验收均跳过。
+
+- 引用去向（2026-10-25）：`v2.citation_refs` 在回答使用事件及成果交付事务中追加冻结对象修订，成果只采用最终 `evidence_refs` 与真实输入、读取或草稿操作证明的交集；来源下钻汇总本项目仍存在的对话并显示修订变化。`UsageStorage.record_usage(on_recorded=...)` 提供提交前回调，成果派生记录沿原事务 savepoint 与管理员归因，引用失败保持原交付流程；前端 `CitationUsage` 复用 Row、Icon 和既有对话导航。本次按用户要求只做静态审查。
+
+- 认识依据（2026-10-25）：`LibraryRead.verified_document_facts` 共用于整理稿下钻和待确认认识依据，按当前稿唯一事实、冻结事实唯一性及原文坐标逐字核验；`insight_evidence` 汇集真实来源稿，以纯策略 `evidence_pick@1` 按词重合与文稿时间选取最多三条。读取保留本机私密范围，不调用模型；界面复用 `Row` 与 `OriginalText` 打开对应原件并高亮。测试按本轮用户要求跳过。
+
+- 服务器账号登录（2026-10-24）：`v2.server_accounts.ServerAccounts` 沿 `ServerUsers`、设备记录和原空间提供管理员直接创建账号、登录及重置密码，使用 Argon2id 验证值和有界验证并发。登录签发原设备凭据；重置密码撤销密码签发的设备，退出撤销当前设备。界面复用 `DeviceGate` 与设置用户区，管理员内容管理复用进入用户空间的原入口。
+- 服务器共享模型（2026-10-24）：`v2.server_models.ServerModels` 维护中央用途配置、加密密钥、模型许可与价格，按账号分配独立或共享模式。`ServerModelAccess` 将用户目录、分配修订、配置修订和密钥代次绑定到实际模型选择，发送前重新核验；共享模式保留用户自己的外发与私密设置，公开投影始终只返回密钥状态。
+- 账号金额账本（2026-10-24）：`v2.server_model_balance.ServerModelBalances` 复用服务器记录事务，按真实发送尝试预留 CNY 金额，再按冻结单价及观察到的用量结算。金额使用十进制字符串；未知用量保留待核算，管理员可调整余额和记录人工核算。`attempts` 按用户、状态与稳定游标分页，待核算记录可独立查询。
+- 原生模型金额接点（2026-10-24）：`model_costs` 在原 `Handle.invoke_wire` 的实际 handler 内预留金额，原调用回执先保存，随后按领域用量结算；缺回执在 handler 返回前收口。`ServerUserPool.job_lease` 与同一金额 owner 的 `job_scope` 绑定真实调度和资源租约，退出后复制的执行上下文失去资格。`v2.server_model_process.model_process_origin` 供进程中断恢复核对同一系统及目录、数据库物理身份；组合根启动和授权钱包读取共用，复制件保留预留。
+- 外部任务共享模型（2026-10-24）：`v2.external_shared_gateway` 为已接受的外部任务提供独立 loopback 网关及短期凭据，中央密钥保留在服务器。每次真实请求复验原任务、设备、外发材料和模型绑定，并调用同一金额 owner；保留原发送与清理结果，关闭或结算失败不会报告成功。
+- 模型额度错误（2026-10-24）：`memory_app.model_billing_errors` 将有限的公开原因映射到 HTTP 状态与安全参数，供原问答内核、工作台、失败持久化和 SSE 重接共用。`workbenchApi` 按同一原因显示短提示；重复幂等请求与流重接读取原失败结果。
+- 工作台输入草稿（2026-10-24）：`shared/lib/workbenchDraft.useWorkbenchDraft(projectId, userEpoch)` 由 `AppRouter` 调用，沿 `userStorageKey` 按用户空间和项目保存文字、明确意图与范围，附件保持当前页面内存。实际 `Composer` 接受发送后清除已提交内容；空间代次隔离旧回调，跨项目迟到接受仅结算仍与该页面最后保存内容一致的草稿，保留后来编辑。存储不可用时保留当前输入框内容。
+- S1 字节显示（2026-10-24）：`shared/lib/formatBytes.formatBytes` 将实际非负字节值以 1024 进位显示为 KB、MB、GB，最多两位小数；缺失及无效数值保持 —。设置备份、音频上限与账号空间用量共用，原接口与存储单位保持字节。验证 `settingsByteFormat.test.js`。
+- 打包依赖声明（2026-10-24）：`tools/scripts/verify-runtime-dependencies.py --compile-output` 在构建期复用 pip 的单文件解析器，按项目内普通本地文件展开包含图，保留版本、extras、条件标记及重复约束，拒绝链接、越界、循环、URL 和未支持选项。`stage-sidecar` 将三份实际声明、生成工具及 `runtime-requirements.txt` 纳入清单与缓存身份；`profile-sidecar` 的普通依赖核验仅使用平铺文件及 packaging，最终运行时无需 pip。构建解释器取 `CHRIPTMAS_BUILD_PYTHON` 或仓库 `.venv`。
+
+## 当前问答策略接续（2026-10-21）
+
+- 未核实回答（2026-10-24，默认 `compose@37`）：`v2.marked_answer.reviewed_marked_answer/render_marked_answer` 完整沿用34的首末模型输入、Schema、日期规则和两次主要调用，仅将有限语义原因按声明记录；来源身份、原话、坐标、日期引用、修订、冻结合同及预算继续拒绝。执行与 `answer_proof` 共用 `render_grounded_answer`，逐声明保留原文并给其全部自然句附【未核实】；没有合格正面声明时只输出没找到足够依据与真实已读引用。`unverified_claims` 计声明，`unverified_claim_spans` 按 Unicode 代码点绑定标记、声明序号与安全原因码，均从冻结输出重建并进入公开问答回执，外发回执另存计数。`CitedAnswer` 转换为 JavaScript 字符位置，沿 `--muted` 显示，仅格式化已绑定标记；复制与分享保留文字。旧版本保持；首稿处置完整性继续拒绝，安全诊断识别37及固定原因码。
+
+- 最终材料投影：`v2.ladder.publication_candidates` 供普通ladder与 `agentic_rag.answer_candidates` 共用，只移除三项请求内发现资格，不修改原候选、来源、修订、窗口、正文或证据资格。模型显式选中的观察材料沿同一投影进入冻结计划。
+
+默认组合为 `compose@37 / ladder@15 / retrieve@9 / rerank@2`；下文旧版本条目保留其实现背景。`retrieve@9` 沿 `agentic_rag.answer_candidates` 与 `WorkspaceQuery.select_rag_answer` 显式交接已观察的必要证据，复用真实窗口、来源校验及两轮容量，拒绝时不回退旧证据作答。`compose@37` 沿用34的两轮Schema、calendar_version3日期规则和完整目录冻结校验，并按上述规则发布未核实声明；模型消费的正文、连续链及日期选项保持，proof/gaps同formatter复算。`ModelConfiguration.public_for_purpose` 沿原带锁用途投影缩窄读取，query仅单次来源校验按项目复用外发判断，下一调用重读；辅助fast绑定及原私密/修订守卫保持。旧版本可显式回放，URL、模型Schema、原件与认识格式、启动方式保持，问答回执增加可重建的未核实计数与位置。
+
+已完成真实Source/SQLite资格和原生失败反例、原八份冻结失败输出的零模型重放、前端复制分享检查及独立审查。真实48题、质量变化和服务器总体耗时仍待唯一服务器owner复验，历史成绩保持。
+
 - 同源会话日期（2026-10-21，默认 `compose@33`）：`policies.date_grounding.validate_calendar_statements_v5` 复用原日期核验，从同一冻结来源标题及非引语日期头核对唯一日期。明确会话或记录标签只提供元数据上下文，limitation可使用同源context引文；相对距离须与同条原话一致，事件日、同日指代、精度及计算ref继续原核验。首稿诊断、末稿审核、工作台、回执证明、模型额度及缺口共用33接线；旧30–32保留。
 
 - 空层下钻（2026-10-21，默认 `retrieve@8`）：`v2.agentic_rag.investigate` 复用同一次 `collect_candidates` 查询和原来源资格，当前层没有合格候选时依次检查摘要、整理稿和原件，在首个非空层停止。`policies.retrieve.v8` 统一返回实际检查深度，旧版本保留；原范围、上层关联、六次决策、连续两次无进展及八条结果额度继续生效。只有原件的项目也能从原工具进入有据作答。
@@ -15,7 +221,7 @@
 
 - 过期澄清控制（2026-10-21）：`agentic_rag.pending_clarification` 供 workbench 自动路由与 followup 历史读取共用；原 `clarification` 先核完成事件、冻结请求及真实模型决策。仅已知资料冲突且实际同项目文稿修订增加、遗忘，或原文全部关联稿已遗忘时返回无待澄清；其余错误保持。新输入复用原路由、召回与资料证明，不改写旧回执或原生证明。
 
-- 已遗忘整理稿阅读（2026-10-21）：`Library.documentArchived` 仅为可编辑文稿按实际 targetProject 读取原 archive 列表，并随原详情请求身份接纳；已有 readonly 来源直接沿原资格阅读。归档时复用 MarkdownBody、restoreDocument 和 DocumentPlacement，只读期间保留 DocumentMarkdownEditor 原草稿键，恢复后复用原修订冲突与保存流程。
+- 已遗忘整理稿阅读（2026-10-24）：`LibraryRead` 的整理稿列表与下钻返回同范围的 `archived` 状态，列表同时返回状态计数；`Library.documentArchived` 消费真实下钻状态，归档列表仅在整理稿层已遗忘筛选读取。已有 readonly 来源直接沿原资格阅读；归档时复用 MarkdownBody、restoreDocument 和 DocumentPlacement，只读期间保留 DocumentMarkdownEditor 原草稿键，恢复后复用原修订冲突与保存流程。
 
 - 手写认识场景继承（2026-10-21）：`insights._scene_assignment` 供原 `insight_view` 共用，先读自身、候选别名及文档；均无归属时按同项目 `parent_ids` 读取退休父，全部父场景一致才继承。显式 null 终止回退，单次解析 memo 保存含 None 的已完成结果并保留环检测；资料库、本机查询、重排和翻书沿原投影消费，不写新字段。
 
@@ -29,7 +235,7 @@
 
 - 混合请求重试（2026-10-20）：`Workbench.replaceReceiptTurn` 递归替换实际子轮回执，并同步 remember/do 的真实状态，send、retry、continue 共用。子轮重试使用当前项目，父轮与其他部分保持；`busyReceipt` 与原线程轮询承接 processing，沿用既有 API 和请求范围控制。
 
-- 停止与继续（2026-10-20）：`ProductStops` 按真实项目、产品轮和内核成员保存停止代次、暂停证明及继续动作，复用原事务与修订，停止信号按真实代次幂等。`AnswerTurns` 和 `TaskContinuations` 核验当前租约、已完成调用、工具结果及真实关闭证明；无活动模型调用时保存独立边界证明。`ProductPolicyRuntime` 复用原取消和显式继续接口，同一问答动作的合法停止续接复用原逻辑工具额度，已完成步骤沿原身份保留；`AnswerContractRegistry` 按冻结的 `retry@2` 提供工具与 HTTP 等待合同，旧版本保持。`Workbench` 复用 Receipt、Icon 与原中断行，按权威回读恢复继续或停止入口，任务由服务器独立完成停止；真实终态失败沿既有错误区域显示并关闭无效操作，部分正文和费用记录保持。
+- 停止与继续（2026-10-24）：`ProductStops` 按真实项目、产品轮和内核成员保存停止代次、暂停证明及继续动作，复用原事务与修订，停止信号按真实代次幂等。`AnswerTurns` 和 `TaskContinuations` 核验当前租约、已完成调用、工具结果及真实关闭证明；无活动模型调用时保存独立边界证明。`ProductPolicyRuntime` 复用原取消和显式继续接口，同一问答动作的合法停止续接复用原逻辑工具额度，已完成步骤沿原身份保留；`AnswerContractRegistry` 按冻结的 `retry@2` 提供工具与 HTTP 等待合同，旧版本保持。外部执行者沿同一令牌关闭 owner 的全部进程，真实取消结果与不可变回执匹配后投影 `stopped`；启动前取消要求同代次的内核取消事件及 `confirmed_none` 工具结果。外部任务可以停止，继续仍返回 409。`Workbench` 复用 Receipt、Icon 与原中断行，按权威回读恢复继续或停止入口；真实终态失败沿既有错误区域显示并关闭无效操作，部分正文和费用记录保持。
 
 - 失败任务回读（2026-10-20）：`read_turn_stream` 在原绑定与游标校验后，为游标零的失败先提供真实 started 元信息，不建立持久游标。`workbenchApi.create` 仅为已接受 do 延后释放请求键；`Workbench` 按实际项目回读同一线程并核对原回合，确认后清除已提交输入，跨项目沿原导航切换；失败读取保留请求身份，ask/multi 沿原清理语义。
 
@@ -83,7 +289,7 @@
 
 - 配对地址恢复（2026-10-20）：`DeviceGate.takeCode` 仅在 `/pair` 的片段包含 `code` 时消费该参数，保留当前查询与其他片段；没有配对码时保留完整地址。原设备探测返回 401 时进入正常配对表单，其他读取错误沿原重试入口处理。
 
-- 设置主题选择（2026-10-20）：`SettingsPage` 直接复用 `readStoredTheme/applyTheme` 和原浏览器偏好，选择系统时继续使用原媒体查询监听。根主题属性变化仅触发选择框重读，observer 随组件卸载断开；原 `Shell` 按钮和启动恢复共用同一实现。
+- 设置主题选择（2026-10-24）：`SettingsPage` 的三档图标分段控件直接复用 `readStoredTheme/applyTheme` 和原浏览器偏好，选择系统时继续使用原媒体查询监听。根主题属性变化仅触发控件重读，observer 随组件卸载断开；原 `Shell` 按钮和启动恢复共用同一实现。
 
 - 整理稿历史（2026-10-20）：`DocumentRevisionHistory` 复用 `loadEditableDocumentRevisions`、设备传输与原修订接口，只读取元数据。统一编辑器让资料库、成果面板和工作台整理稿面板共用入口，读取范围按用户、项目及文稿隔离，刷新与失败重试保持当前正文和保存基线。
 
@@ -128,6 +334,16 @@
 - 转写热词表（2026-10-13）：`core.product_core.asr_lexicon_service.AsrLexiconService` 是设置、实时语音、上传录音/视频与内部 Agent 共用的词表服务；`aggregate_repository_factory.recognition_record_store_resolution` 统一数据库归属。读取和预览不迁移，显式导入按修订号原子合并，保留旧 JSON；支持 TXT/CSV/JSON、UTF-8 与数量/权重校验。`v2.asr_lexicon` 提供 HTTP 入口，前端 `AsrLexicon` 复用设置行、主题 token 和用户请求作用域。本机内置 faster-whisper 依据实际 tokenizer 容量按优先级选完整热词，转写缓存绑定词表修订，回执区分实际采用与截断。Qwen 实时语音使用原生词表；Hy-ASR 尚不支持热词，导入不自动安装模型或切换服务。
 
 - 内部 Agent 数据操作（2026-10-13）：`v2.agent_data_tools` 复用上述服务、原工具注册与 Kernel 批准机制，提供 `asr.lexicon.read/preview/import`，由 `config/application-skills/asr-lexicon/SKILL.md` 渐进说明用法。`project.task@3` 仅为内部干活增加三项能力，旧 @1/@2 和外部七工具保持；自定义 profile 不自动扩权。明确完整的更新指令才可形成一次性、绑定当前用户与预览的保存授权；保存及回执同事务，完成状态核真实操作和当前词表。模型消息可省略重复机器日志，原事件审计、调度与预算检查保留。操作格式与边界见 [Agent 数据操作](docs/agent-data-tools.md)。
+
+- 工作台词表维护（2026-10-25）：`agent_data@4` 与 `asr-lexicon-maintenance` 技能复用同三工具及 `project.task@3`，结构化维护提议覆盖添加、改名、权重、停用和恢复。`AsrLexiconService.change_terms` 在真实 SQLite 事务内核修订、保存及回读，`RealtimeAsrLexicon.rename` 保留词语 ID 与状态。`TaskDo.decide_lexicon` 把工作台点击确认或取消接入原 Kernel 用户动作，绑定用户、项目、轮次、预览和实际批准事件；旧精确批量导入及冻结策略保持。`LexiconChangeReceipt` 复用工作台回执与共享按钮，展示逐项变化、失效预览、实际保存修订与只读词表。已启用 `route@4`，当前词表操作进入干活、概念咨询进入提问。本机隔离数据中的四维护场景和只读查询通过真实模型、按钮及 20 组布局验收；批准处理中刷新、幂等回放和设置回读通过，正式词表保持。
+
+- 词表真实验收入口（2026-10-25）：`tools/workbench_lexicon_acceptance.py` 把真实 `ModelConfiguration` 注入 `create_app`，持有同进程 Uvicorn 与实际 HTTP 工作台流程。`tools/acceptance_transport.py` 复用 `rag_holdout.HttpObserver` 和 `_capture_response_stream`，逐次限制真实 HTTP 发送，保留原流式分片及生产关闭归属，采集提供方观察器确认的最终用量。累计计数保存在隔离数据根的 work 父目录，更换结果目录不重置；既有物理请求与原生未知分别承接。`ready.json`、`case-result.json`、`ui-complete.json` 连接实际预览、按钮与界面回读，重放检查使用真实捕获的动作。用法见 [Agent 数据操作](docs/agent-data-tools.md)。
+
+- 词表工具合同指引（2026-10-25）：`agent_data@3` 提供三个工具的精确 JSON 参数、维护 operations 和真实回执依据；主模型在工具调用前读取完整目录，真实 `agent.steward.plan` 在分工前读取 main 与子任务的权限边界。`TaskPlanner` 沿现有模型入口注入说明，子任务能力保持；`TaskDo` 从原版本选择器冻结 `agent_data`，支持原 `override` 与验收 `--policy` 离线对照。`@1/@2` 目录保持，服务接受历史版本；验收失败保存最后真实轮次，便于核对实际工具参数及原生失败状态。
+
+- 词表任务用途（2026-10-25）：已启用 `route@4 / agent_data@4`，经 `DataRouteOutput` 冻结内部读取或维护用途；`internal_route_dump` 在原私有缓存保留元数据，公开字段保持。自动和显式干活共用用途判断，显式文稿选择保留原语义。`TaskDo` 让应用数据使用真实领域回执结束，`AgentDataTools.completion_result` 核当前 terms、保存证明或无需变更证明；结果由 `LexiconChangeReceipt` 的原 Row 展示。分类失败沿原策略要求拒绝接纳为记忆，附件任务依赖真实入库；普通文稿保留原交付及 lineage 合同。
+
+- 干活目标只读投影（2026-10-25）：`v2.task_display.product_task_display` 复用 `kernel.receipt_projection.frozen_task_assignment`，核产品轮次、项目、冻结请求和原 immutable assignment 后，将 host 封装的 fallback goal 显示为原用户任务正文。当前 topology、`TaskDo.observe` 和历史 `read_task` 共用；不改 assignment、ref、原 payload 或存储回执，不过滤用户 JSON。缺少精确绑定时保留原内容，读取不构造运行时或初始化内核数据库。
 
 - 外部执行插件（2026-10-12）：`v2.external_executor_plugins` 固定登记 Claude Code、Codex、DeepSeek Harness，提供独立偏好 CAS、旧两客户端开关同事务同步及实际安装/凭据/可用状态；`effective_external_agent_settings` 供现有外发、配额、召回与写回统一使用。客户端身份保持独立，不加载请求提供的代码或命令。前端 `ExternalExecutorPicker` 复用 Composer 工具槽和 FocusPanel，提交前重验资格；原问、记住、附件及内置文档继续流程保持。用法见 [外部 agent](docs/agents.md)。
 
@@ -205,6 +421,8 @@
 - T15.2平台密钥：`security/secrets.build_model_secret_store/build_secret_store`保留Windows原DPAPI位置，非Windows选择`ServerFileSecretStore`，复用既有generation/tombstone、KeyedLockManager与interprocess_file_lock。`restrict_server_secret_file`以真实fd检查已知密钥文件并收紧权限，供读密钥和新目录恢复复用；不处理普通原件。缺主密钥/解密/锁/权限错误为固定安全码，应用沿既有detail响应返回503。验证test_server_secrets及原密钥/模型/设置/识图消费者，Linux实机Q44待验。
 
 - T13.2 多部分工作台：`v2.multipart` 复用 `TurnExecutionService` 与既有记住、问、干活路径，按依赖并发，旁路父子 Turn 聚合回执；每个逻辑幂等键为请求键加部分序号。`v2.part_context` 将已入库原件和已完成问题的首次外发来源闭包绑定到不可变 Turn refs，主执行者、管家、专家及恢复均复验。`SourceEgressService.snapshot_original_content/validate_original_content` 只为该依赖保存完整原件身份与内容坐标，允许整理状态修订，旧严格 snapshot 接口保持。非文本原件采用冻结父子输入坐标；附件绑定第一个记住部分。`WorkspaceIntake.add_text(preserve_text=True)` 仅保存已校验片段的首尾空白，默认行为保持。`overviews/bookshelf` 暴露既有守卫的冻结事实及恢复检查，完整来源权限经私有 multipart answer RESULT 继承。可选 situation 只进问和干活冻结请求。验证：test_workbench_multipart、test_multipart_sources、test_part_context 与现有工作台、来源和契约测试。
+
+- O1 附件依赖：`v2.attachments.OriginalReadiness` 复用 `auto_confirm` 与工作台后台任务的同进程通知，登记后读取权威状态并在原件就绪或真实失败时唤醒。`allocate_attachment_windows` 复用 `dynamic_contextual_windows`，先为每份附件保留完整非空候选，再按整组真实消息预算扩展，供 ASK 与 DO 共用。`v2.task_attachment_input.TaskAttachmentInput` 沿原 `ProductTaskPlanner` 注入最终消息、Schema 与既有包装的逐 attempt 容量校验，根授权与实际发送窗口分别保留；证明绑定原生 `model_request_id`、`attempt_id` 和冻结路由。`source_egress` 经原只读 authority owner 复验发送证明及原件、冻结 ASK、历史 multipart 的来源闭包，来源图保持无正文元数据。`attachment_context@1` 保存附件引用指令，旧 `item_id` 与旧坐标模式保持。零模型验证覆盖真实 SQLite、原生失败尝试、no-wire 问答、私密拒绝、冻结绑定和多份长附件的真实消息预算，见 `test_attachment_dependencies`、`test_attachment_windows`、`test_attachment_answer_proof`、`test_task_attachment_input`、`test_task_attachment_projection`。
 
 - M4 订阅接入：`memory_app.chatgpt_subscription.ChatGPTSubscriptions` 管理 OIDC/PKCE、本机回调、DPAPI 令牌、跨实例刷新租约与待验证轮换、退出及官方模型目录；`shared.llm.openai_responses.ResponsesCompletion` 将原网关请求交给原生 Responses，始终消费完整流并统计用量，无自动重发；`ModelConfiguration.select_subscription` 使用新旁路选择及账号修订，保留 API/local 配置并复用冻结外发守卫。`v2.subscriptions` 只提供交付适配，`shared/ui/ChatGPTSubscriptionSettings` 与 `subscriptionApi` 复用 Row/Switch、桌面后台 URL 与少字规范。验证：test_chatgpt_subscription.py、chatgptSubscription.test.jsx 及直接相关回归。
 - M4.1 订阅兼容：`ChatGPTSubscriptions.close` 与刷新共用生命周期锁，等待在途轮换落盘后关闭 HTTP；明确临时刷新失败保留授权，终态失效只保留 client_id，回复丢失不重发。`shared.llm.openai_responses.ResponsesError` 仅提供安全 `status_code/code/category/output_started/retryable`，适用于订阅 Responses 的 HTTP 与失败流，诊断正文有界读取且不保留。`model_config._model_request_failure` 为普通、流式与受管生成保留这些内部事实和原公开错误文案；它们供 Turn 重试判断，不执行重试。验证：`test_chatgpt_subscription.py`、`test_subscription_responses_errors.py`、`test_model_config.py`、`test_governed_generation.py`。
@@ -327,9 +545,18 @@
 
 - 认识来源说明：`RecognitionService._qualified_recognition`在既有只读递归资格核验中收集`source_evidence`，最多256条精确Experience修订、64KiB紧凑UTF8 JSON。只输出类型、ID、修订、provenance种类/核验状态、发生与记录时间、成果及业务结果状态，不复制来源正文或actor。上限与异常通过`source_evidence_complete/reason`表达，不改变`authorized`、持久化状态或历史导出。共享格式化入口拒绝不完整或畸形投影；旧手工适配输入完全缺字段时明确核验状态未知。
 - 问答证据预算：`WorkspaceQuery`私有`_recognition_evidence_basis`只比较当前项目中完全一致的正文、条件、直接来源、修订、资格、来源说明和冻结节点/许可；一次选择中相同证据只占一份预算。保留原记录，`excluded_sources`带`duplicate_recognition_evidence`及代表记录ID/修订；整体预算不足统一为`recognition_evidence_budget_insufficient`，来源说明不完整为`recognition_source_evidence_incomplete`。解释列表仍最多20项；前端`ExcludedSourcesNotice`供预览和回答复用，也识别旧条件预算原因。
+- 初检候选：仅显式冻结 `retrieve@10` 时，`WorkspaceQuery.collect_initial_candidates/collect_initial_remainder` 沿同一检索owner限制上层初检与同查询L0补查；默认 `@9` 不变。`v2.initial_answer` 只负责严格已确认L3单槽直述的准入证明、当前owner重验及最终值/引文核对，不是通用语义充分性服务。`workbench` 冻结路由原因，`agentic_rag` 复用真实初检窗口，满足门槛才在首次decision前早返；两轮回答与原生调用/用量计量保持。只含L0的事实、不支持语法或字段不完整继续调查，见 `docs/agentic-rag.md`。
+- 原文候选：显式 `retrieve@11` 同次收集四层；`v2.raw_answer` 只验收完整L0中的有限属格直述及逐槽抽取合同，`v2.raw_fast_path` 复用原生生成/来源guard并保留拒收成本，接受后沿正常计划保存与回执发布单轮冻结结果。`answer_proof` 与内核回执投影独立选择 `raw-answer-v1` 证明；失败复用实际检索进入旧调查与两轮回答，不借旧复审标记证明单轮输出。默认策略与 `@10` 不变，冲突范围仅本次检索记录，见 `docs/agentic-rag.md`。
+- 通用候选：显式 `retrieve@12 / compose@36` 复用四层初检，`v2.evidence_answer` 处理同轮需求/声明/风险合同与出处、日期验收；`v2.evidence_fast_path` 读取正常来源和确认owner、保留全部尝试归属，并发布独立冻结的 `evidence-answer-v1`。语义覆盖仍由模型判断，缺失或风险回原调查并复用真实窗口，候选文字不作证据。证明、回执和报告分别选择实际发布输入，默认 `@9/@34` 保持，详见 `docs/agentic-rag.md`。
+- 日期复核候选：显式 `compose@35` 沿用34的两轮模型合同和calendar3守卫，以共享纯投影纠正已有合法计算引用的分类错误；不能确定换算时保留有据原句并说明限制。`compose@36` 另核对同ref、原文日偏移与完整合法结果绑定的记录锚解释，仅给算术参照位置资格。原模型结果不变，执行与proof复算同一派生结果，固定诊断码不记录输入内容。默认仍为 `compose@34 / retrieve@9`。
 - 认识编辑会话：候选与Markdown修订冲突复用`DraftConflictView`，各调用方保存自己的服务器基线和本机稿，不把状态职责交给展示组件。认识工作台刷新复用`useRequestScope`，核心失败保留同项目编辑会话并阻止父级保存/执行；辅助失败独立提示。`recognitionMarkdownDraft.rebaseRecognitionMarkdown`只将已识别v2稿的可编辑正文和条件放入当前服务器导出外壳，用于明确保留本机及自己保存后的继续编辑；无法识别或被修改的身份外壳保留原文本供核对。保稿限定同组件、同项目、同一认识身份，切认识、项目或路由不会恢复上一身份的未保存稿。
 
 ## v2 与 shared/ui（重构新增，执行者按任务登记）
+- G11 插话认识来源：`shared/ui/InsightSource.jsx` 复用 `Row` 显示待确认认识的插话原话前十二个 Unicode 字符；`insightSourceReference` 只从后端 `source.project_id/turn` 生成原轮引用。来源缺失、标识无效或没有导航回调时保持静态文字，其他来源类型保留原展示；审核队列的跳转沿原草稿导航保护。
+- G11 成果依据状态：`shared/ui/OutcomeFreshness.jsx` 只展示调用方提供的 `stale/freshCount/verified`，由资料库整理稿行和工作台干活回执复用；缺失字段不造状态，明确未知数量与无法核对的依据保持未知。变化读取及更新动作由 `features/workbench/OutcomeSourceChanges.jsx` 与原公开创建入口承接，正文编辑差异仍使用 `OutcomeChanges`。
+
+- 2026-11-02 生成服务商接入：`features/settings/ProviderConnections.jsx` 导出的 `ModelConnectionForm` 由设置与 `WorkbenchHome` 共用，参数为真实 `row/mode/preset/api/run/busy/onSaved`。首次编辑绑定配置修订，换地址要求新密钥，保存沿原 `saveModel`，外发保留用户当前设置；独立 `ProviderConnections.css` 随组件加载。服务商预设只填表，不构成连通性证明。
+- 2026-11-02 输入快捷与试问：`shared/ui/Composer` 的 `projects/onExecutor/onAutomatic/onRemind/onPrefill` 沿原输入、草稿及外部执行者准入提供项目场景、动作和执行者菜单；方向键、Home、End、Enter、Escape 与输入法保护共用。`AppRouter` 承接一次性 `compose_text/compose_scene` 提议，已有草稿时显式保留或替换；`insight_id` 与伙伴 `tab` 沿真实页面定位。验证见 `work/ui-redesign-20261102/{composer,project,scope}-results.json` 与72组界面矩阵。
 
 - T15.3设备：`v2.devices.DeviceRegistry`是配对/设备/presence/初始管理员的单一事务owner；`security.device_identity`叶提供真实request身份及当前资格，`device_auth.DeviceAuthenticationMiddleware/ServerDeviceAuth`覆盖HTTP/SSE/WS、有限bootstrap、Origin和确切loopback模型POST临时身份，设备身份不充当DesktopSession。
 - T15.3已有owner接点：`ModelConfiguration.internal_local_key_provider`仅实际wire注入，快照和generation guard保持；`RealtimeAsrTicketAuthority.consume_subject/consume_server_ticket`复用原一次票据仅用于server ASR；`serve`server工厂绑定实际CLI端口，desktop原import-string合同保持。
@@ -348,6 +575,8 @@
 T13.1 路由：`backend.memory_app.v2.route.RouteService` 返回经过逐字跨度、覆盖与依赖校验的 `RoutePlan`。`route` 应用快速通道，`route_model` 复用相同受管模型链供完整模型评测；请求键标识一次提交，重放复验授权并复用冻结输入。`workbench.route` 为无工具的 aux Turn，单步、400 tokens 上限、4 秒剩余预算传给现有传输，迟到结果丢弃。`ModelConfiguration.complete_governed(response_model=...)` 复用原守卫与实际外发回执，结构化调用最多一次 wire，不重试。验证：`test_route.py`、`test_governed_generation.py`、`test_product_turn_kinds.py`；正式工作台接线留 T13.2。
 
 T13.2 调用约束：先由既有执行服务认领整个请求的幂等所有权，再调用 `RouteService`，并冻结首次接纳的完整路由计划，包括规则回退。并发重复路由在原 Turn 未结束时会返回 `prior_result_unavailable`，该回退不能抢先作为第二份可执行计划；内核末尾落盘超时后的缓存也不能改变已接纳计划。原请求终态由执行服务统一保存和重放。
+
+- 共享自动路由（2026-11-05，G09）：`v2.shared_route.SharedRouteSource` 为原 `RouteService` 提供实际来源资格、私密校验和路由键空间；模型配置、原生执行与回执归操作人的既有空间。路由准备保留同一次准入的全部声明，接纳时使用原生准入；原共享问答样例重新核验真实完成事实、精确模型输入及当前来源外发资格。工作台当前接通单段共享问答，其余共享意图沿公开功能装配逐项启用。验证入口 `tools/check_shared_public_ask.py` 包含真实自动问答、准备、同编号空间隔离及私密拒绝；模型路由发送留集中验收。
 
 | 能力 | 入口 | 调用方与约束 |
 | --- | --- | --- |
@@ -412,6 +641,7 @@ T13.2 调用约束：先由既有执行服务认领整个请求的幂等所有�
 - T4.6 修订：`features/library/LibraryTools.MemoPanel` 只读复用 mental_models，未知日期/依据数显示—，无模型写调用；`features/settings/ProjectConstraints` 提取原约束CAS编辑供T5.1复用，迟到写结果按项目/卸载隔离。`FilterBar`可选filters/label复用整理稿三档，默认认识筛选不变；`LibraryRead.docs(include_archived)`仅内部展示资格，notes/sources保留遗忘稿，summaries及召回仍排除。验证：library.test.jsx、libraryTools.test.jsx、test_library_read.py。
 
 - T5.1：`memory_app/v2/settings.py` 编排安全模型读模型、私密项目 CAS、有效私密资料及真实外发回执，复用 ModelConfiguration、SourceEgressService 和既有 ASR 安全读取；各段独立修订。`features/settings/SettingsPage` 与 `settingsApi` 复用 Row/Switch、订阅组件和原配置/授权接口；`ProjectConstraints` 支持注入既有 API、启用数/总数、回车创建及 IME 保护；`SettingsData` 仅复用真实快照列表/创建。验证：test_settings.py、settings.test.jsx、settingsApi.test.js、settingsData.test.jsx；尚缺的契约和浏览器验收见 task.md T5.1。
+- G15 本机生成资格：`local_generation_readiness.inspect_local_generation` 共用正规配置、分词器、safetensors 分片及 meta 参数形状检查，按实际目录和文件身份保存资格与加载状态。ModelConfiguration、原本机模型路由和 `localGenerationStatus` 消费同一状态；设置读取不加载完整权重。显式真实资产检查入口为 `tools/native_local_generation_check.py`，条件见 `tools/LOCAL_GENERATION_CHECK.md`。
 
 - T5.4：`LiteLLMCompletionGateway.input_budget_snapshot()` 只读复制最后成功预算检查的数值窗口、实际输出预留和输入估算；普通/流式 ModelConfiguration metadata 转交 WorkspaceQuery，问答七类 parts 之和匹配 schema 格式适配后的实际输入估算。`features/workbench/ContextPanel` 复用 FocusPanel/LadderTrace/Row，仅消费纯数值及既有引用/回执安全字段；Workbench 条目下钻复用 libraryApi.drill 和 MarkdownBody，按项目及请求代次隔离迟到结果。干活预算、私密排除数未知，完整送入条目列表待契约补齐。验证：contextPanel.test.jsx、workbenchAsk.test.jsx 和网关/模型/问答相关后端测试。
 
@@ -465,6 +695,8 @@ T13.2 调用约束：先由既有执行服务认领整个请求的幂等所有�
 - T11.9 干活分工：`backend.shared.task_division_graph.validate_divisions` 验证有向依赖，`AgentOrganizationRuntime` 按冻结许可并行派发并经父级扇入传递依赖成果；`task_division_authority.frozen_division_capabilities` 验证真实父子Run、已消费许可、冻结请求及能力交集，只有本项draft_create_only可免批准。旧能力适配仍保留legacy资源锁，普通写能力不得进入干活分工。
 - T11.9 成果与分工样例：`v2.task_drafts.TaskDrafts` 以事务和operation回执只新建整理稿；`v2.task_divisions.TaskDivisions` 保存/调整/删除样例，复用InsightLinks排序、既有向量缓存和内核embedding回执；`v2.task_do.TaskDo` 编排冻结Turn、进度、最终成果与样例，不调用旧任务创建。历史任务只读；交付稿可见性核验终态产品回执及创建回执。
 - T13.7 成果版本事实：`v2.outcomes.record_outcome/select_outcome/validate_selection/qualified_lineages` 沿公开完成轮、真实内核交付操作与保留的出生修订核验身份，在原公开终态事务 CAS 写入不可变成果链；重做冻结同根与原前驱，并发编号按已完成版本分配。`hidden_outcome_ids/versions` 共用于资料库列表、召回候选和版本读取，旧版下钻及历史正文保留，合法当前引用修订不丢出生资格。未知历史交付沿原行为且不赋新链身份；验证 `tests/memory_app/v2/test_outcome_lineage.py` 及原干活、资料库和重做调用方。
+- O6 文稿与成果恢复：`v2.library.read_document_revision` 核验可见性和历史正文身份，原文稿 PATCH 的 `restore_revision` 由服务器回读并沿 `save_user_edit` 保存下一修订；`RecognitionService.invalidate_document_dependents_in_uow` 在保存事务传播旧来源认识的 stale，保留历史经历。`v2.outcomes.restore_outcome_in_uow` 核验所选修订和预期最新版，在同一事务新建稿件、不可变 `v2_outcome_restorations` 出生事实与下一版本；`TaskDrafts.create_restored_in_uow` 只新建稿件，恢复来源沿原 do 出生及 O1 附件证明读取。`outcome://` 来源经历与固定来源图 metadata 共用于可见性、续写和召回，O4 引用沿真实原对话归属保留。`outcome_patches.compare_outlines` 复用原标题树计算新增、更新、删除，正文原样保存。历史面板及版本面板共享现有编辑保护和冲突刷新；本轮按用户要求仅实施与静态审阅，未运行验证。
+- O7 回答存为成果：`external_turn_facts.completed_answer_facts` 只读核验原请求、公开 ask、最终完成事件和不可变回答；`answer_proof.completed_answer_evidence` 按最终引用编号恢复真实对象及冻结修订，并保留原来源与历史闭包。`v2.outcomes.save_answer_outcome_in_uow` 以 `turn_id` 在 `v2_answer_outcomes` 幂等保存新文档、出生事实、版本链和来源经历，正文与未核实字段原样保留，原对话修订保持。`conversation://` 沿既有来源、可见性、O4 引用和 O6 恢复接点参与召回及续写；`DRAFT_DEPENDENCY_FIELDS` 统一原 do、恢复稿、回答稿和回答恢复稿的固定来源图格式。`v2.search.persist_answer_search` 由首答与继续共用原网页原件写入，真实出生修订只进入最终内部回答事实。工作台菜单复用原成果打开入口，读模型显示来自对话与精确来源引用；本轮按用户要求仅实施与静态审阅，未运行验证。
 - T13.7 续写与结构评测：`v2.outcomes.prepare_continuation/validate_continuation/candidates` 共用于冻结当前正文、来源及可信最新版选择；`v2.outcome_patches.apply_patch` 复用原标题解析和用户段落边界，返回新正文及改动路径，旧稿保持。`continuation@1/@2` 共用原相似度与提示词，`@2` 将同场景优先分纳入原阈值；仅登记候选，启用另行提交。`tools.outcome_eval` 读取真实管线观测，按固定样本与落点分母计分，`--policy` 核对保存版本；失败和缺失计零，不由标注生成交付。验证入口为 `test_outcome_continuation*`、`test_outcome_evaluation.py` 与 `test_outcome_pipeline_evaluation.py`；标注补丁的结构计分不代表真实模型生成质量。
 - T13.7 写法块：`v2.style_context.confirmed_style/style_input/freeze_task_style/frozen_task_style` 复用原认识、召回偏好、场景与 `SourceEgressService` 核验，沿保存的 `style` 版本挑选本场景、项目及我中已确认的写法。同一修订集合缓存首个强度排序与字节，权限依据每次复验；模型输入只含选中字节和计量，旁路保存完整依据。`TaskDo` 冻结去重后的原引用及快照，产品装配把写法与续写校验合入原外发事务，Main 首稿及续写注入，非空写法在原最终发布事务再次核验，空块保持原快捷路径。上下文按真实 Main wire 只投影写法和上一版的数量及 token；默认启用 `continuation@2` 与 `style@1`，启用使用独立提交；旧版及离线覆盖保留。验证入口为 `test_outcome_style_context.py`、`test_outcome_style_main.py`、`test_outcome_style_boundaries.py`，固定管线可用 `CHRIPTMAS_OUTCOME_EVAL_STYLE` 核对真实保存版本。
 - T13.7 成果方法来源：`RecognitionService` 按类型递归成果的出生经历和认识；`product_draft_validator` 由原 `memory_app.app` 显式装配，委托公共 `source_egress.validate_product_draft_source` 在当前事务内核验原 Root 完整闭包与原件身份。临时认识服务沿用该能力，归类写服务继承原能力及缓存失效回调。缺原件校验能力时拒绝使用该来源。完整性校验允许私密材料在本机提认识并人工确认，外发仍需原用途权限。`TaskDo` 显式接收同一原服务。`test_outcome_style_product_sources.py` 覆盖经历、投入原件和已有原件的公开及私密来源，公开确认的写法进入下一次真实 Main，私密来源不进入写法块；`test_outcome_style_filing_sources.py` 经真实接口验证归到我的来源与人工确认。
@@ -534,14 +766,15 @@ T13.2 调用约束：先由既有执行服务认领整个请求的幂等所有�
 - T12.21 待补事实与 API：`v2.gaps.Gaps` 从完成 ASK 的原冻结请求、不可变模型输入、最新终态和公开轮次推导本机清单；`gap@1` 经 registry 选择，复用本机文字原语按场景合并、90 天过期。最终覆盖率沿原阶梯公式，校验材料编号、身份和精确引文，排除问题、历史及画像；证明缺失或歧义时保留既有结论。投影只存编号、修订和时间，问题原话按需读取，丢弃单独记录事实。`refresh` 注册到原 `DailyJobs`，通过独立只读 `WorkspaceQuery.local_coverage` 复查新资料，不调用模型或修复索引；验证当前资料后，在投影事务中复核设置、原轮次和 CAS。原 `kernel.receipt_projection.kernel_call_groups` 的默认关闭选项支持合法无模型无命中轮次，不改变既有读取默认行为。自动化和集中验收入口见 notes/task.md T12.21 与 Q64。前端复用 Composer 可选 draft/onDraft 保存本次会话内的项目草稿，handoff/onHandoff 一次切换场景范围、记住意图并聚焦；成功发送通过原回调清空来源草稿，失败保持正文与附件。
 
 - T15.15 本机对话分享：`shared/lib/conversationSnapshot.js` 只冻结问题、回答和普通引用标题/片段，移除已识别角标，画像、用量及内部身份不进快照；`readingMarkdown.js` 复用原 unified/remark AST，仅移除阅读器既有根级系统标记节点，MarkdownBody 共用同一判断，原稿与坐标不改。`ConversationSharePreview` 复用 FocusPanel、Icon、StatusDot 和 useRequestScope，引用可逐条移除，关闭/换范围作废迟到导出并回收 URL；`conversationImage.js` 用原 token/字体、Unicode grapheme 和原换行生成完整 PNG 分页，不读取远程图片。Workbench 的 ASK/灵感及真实 DO/记住整理稿入口共用，后两者沿 recognitionApi.loadDocument 读原修订。新39及原工作台52节点、3相关导入契约通过；平台替身覆盖边界和未完成的服务器/Q66见 task.md。
+- T15.15 同服务器对话快照：`ConversationShares` 复用真实个人执行空间、原完成轮次与逻辑范围，`/api/v2/server/conversation-shares` 按原预览修订和选中的引用序号冻结问题、正文、标题及片段。任务正文从原生完成事实和原交付文稿读取。个人外部任务复用真实运行结果与回执，核对原交付操作及文稿首次出生。CommonMark 原节点位置保留字面代码和换行。收件、已发送、撤回、归档及命令核对沿原设备资格；管理员代办归已授权目标空间并留实际调用者审计。归档在接收者 `WorkspaceItems` 事务保存对话原件和出生凭证，再结算中央状态。原件目录与全文复用个人 `LibraryRead`，中央关联清理由原账号删除入口调用，接收者副本独立。共享引用读取复验当前资格和原生材料身份，仅返回受控正文及共享原件入口。`tools/check_conversation_shares.py` 验证真实完成空召回、两账号发送与接收、隔离、实际中央结算失败后的副本核对、撤回、原件目录及全文，以及管理员代办的命令归属和实际写入留痕。保留的 G06 Codex 交付以只读方式验证正文和错误空间拒绝。带真实模型引用、任务分享的服务器接口和浏览器界面单独验收。
 
 - T15.9 时效与搜索：rank@2经原registry/get选择，将过期认识排序权重乘0.5且保留召回；冻结时刻/策略及过时标记沿原画像和问答读模型复用。search@1在本地不足且时效问题时触发原web.search辅助Turn，复用ModelConfiguration与LiteLLMNativeWebSearchGateway；v2/search.supplement只追加预算内证据，WorkspaceQuery通过原WorkspaceIntake批事务保存被引用结果。每轮原搜索证明在普通材料读完后完整复验一次，MemoryTurn仍复验冻结请求与当前权限，空材料与直接调用保持。CitedAnswer沿既有标签token显示过时与网址域名。自动化结果及完整工厂未复验边界见task.md/Q65。
 
-- T16.4本机目录与材料（隔离分支codex/T16.4的40942e5c8f，主线尚未合入）：`v2.external_permissions.HostPermissions` 是desktop/local-user目录首次确认唯一CAS owner，通过`folder_reference/confirm_folder`复用许可修订并绑定目录元数据身份；`external_workspace.task_material_payloads/task_path_identity/verify_task_material`复用原名称碰撞与16MiB总量校验、有界读取及实际fd身份，原`WindowsHandleTreeIo.write_new_tree(expected_root_identity=None)`在任何目录写入前核已打开根HANDLE，默认调用不变。`policies.get("external_task_input", version="@1")`仅为指定folder给出冻结资料相对路径，ACTIVE不切换；ExternalRunner共用严格新档案与精确旧五字段分类，旧MCP白名单语义保持。实际实现与275节点证据权威入口为D:/AIworkspace/Codex/.codex/worktrees/t16-4/ChriptmasAgent/及work/T16.4-local-completed-leaf/；原Runtime/facts/intent/invoke/模拟CLI已验，真实MCP、登录、服务器及界面确认不在此阶段结论内。
+- T16.4本机目录与材料（隔离分支codex/T16.4的40942e5c8f，主线尚未合入）：`v2.external_permissions.HostPermissions` 是desktop/local-user目录首次确认唯一CAS owner，通过`folder_reference/confirm_folder`复用许可修订并绑定目录元数据身份；`external_workspace.task_material_payloads/task_path_identity/verify_task_material`复用原名称碰撞与16MiB总量校验、有界读取及实际fd身份，原`WindowsHandleTreeIo.write_new_tree(expected_root_identity=None)`在任何目录写入前核已打开根HANDLE，默认调用不变。`policies.get("external_task_input", version="@1")`仅为指定folder给出冻结资料相对路径，ACTIVE不切换；ExternalRunner共用严格新档案与精确旧五字段分类，旧MCP白名单语义保持。原Runtime/facts/intent/invoke/模拟CLI已验，真实MCP、登录、服务器及界面确认不在此阶段结论内。
 
-- T16.4可信本机Host装配（隔离分支codex/T16.4的031bbde336，主线尚未合入）：`v2.external_host_bootstrap.discover_local_executors/install_local_host`仅消费可信启动PATH、系统profile及原认证目录位置，解析Windows原生入口与已核固定版本Codex npm nested/hoisted/bundled布局；wrapper不读不执行，认证目录不创建不读正文。公开package.json经既有Core `_Nt`单文件HANDLE在读前核五字段身份并有界读取，不枚举目录或重开正文；`external_host._local_candidate_path/_local_candidate_metadata`共用全部盘符先核与盘根到叶祖先预检，`ExecutorRegistration.discovery_stamps`为内存元数据资格快照，持续到原prepare/lease，旧显式Host空默认兼容。原v2首次Kernel前用同DeploymentLayout/root/records/context/owner固定Host，缓存不重新发现，server/未知配置仍拒绝。129不同节点及4定向契约证据入口为work/T16.4-host-bootstrap-completed-leaf/，源权威位置仍为D:/AIworkspace/Codex/.codex/worktrees/t16-4/ChriptmasAgent/；整项、既有登录、真实MCP与系统隔离尚未完成。
+- T16.4可信本机Host装配（隔离分支codex/T16.4的031bbde336，主线尚未合入）：`v2.external_host_bootstrap.discover_local_executors/install_local_host`仅消费可信启动PATH、系统profile及原认证目录位置，解析Windows原生入口与已核固定版本Codex npm nested/hoisted/bundled布局；wrapper不读不执行，认证目录不创建不读正文。公开package.json经既有Core `_Nt`单文件HANDLE在读前核五字段身份并有界读取，不枚举目录或重开正文；`external_host._local_candidate_path/_local_candidate_metadata`共用全部盘符先核与盘根到叶祖先预检，`ExecutorRegistration.discovery_stamps`为内存元数据资格快照，持续到原prepare/lease，旧显式Host空默认兼容。原v2首次Kernel前用同DeploymentLayout/root/records/context/owner固定Host，缓存不重新发现，server/未知配置仍拒绝。129不同节点及4定向契约证据入口为work/T16.4-host-bootstrap-completed-leaf/；整项、既有登录、真实MCP与系统隔离尚未完成。
 
-- T16.4可信内部并发（隔离分支codex/T16.4的3f85b17a9a，主线尚未合入）：原`HostAdmission(concurrency_limit=1)`接受可信严格正整数构造值，固定后经prepare真实准入才Weak登记租约records/owner/limit/原plan身份；`HostLease.execution_limit`校验同源真实签发身份供原execute_external复用ExternalRuns(limit=...) CAS占位。原close按真实签发拥有权清环境和秘密，未签发副本只脱离自己；原派发接点在before_launch后再验，不改事实或持久shape。213不同聚焦节点与4导入契约证据见work/T16.4-concurrency-completed-leaf/，源权威位置为D:/AIworkspace/Codex/.codex/worktrees/t16-4/ChriptmasAgent/。此处只提供可信内部Host配置，设置UI/server/真实MCP和登录不在阶段结论内。
+- T16.4可信内部并发（隔离分支codex/T16.4的3f85b17a9a，主线尚未合入）：原`HostAdmission(concurrency_limit=1)`接受可信严格正整数构造值，固定后经prepare真实准入才Weak登记租约records/owner/limit/原plan身份；`HostLease.execution_limit`校验同源真实签发身份供原execute_external复用ExternalRuns(limit=...) CAS占位。原close按真实签发拥有权清环境和秘密，未签发副本只脱离自己；原派发接点在before_launch后再验，不改事实或持久shape。213不同聚焦节点与4导入契约证据见work/T16.4-concurrency-completed-leaf/。此处只提供可信内部Host配置，设置UI/server/真实MCP和登录不在阶段结论内。
 - T12.8材料绑定下钻：WorkspaceQuery.gap_materials复用原Document markdown/RecognitionService与SourceEgress来源闭包重建L3/L2正文和精确窗口，纯策略只经原领域owner构造prompt。kernel.answer_turns.gap_answer_input及原nested handle在网络前不可变绑定input_ref/route_ref/actual model_request_id；短锁/事务在wire前释放，缓存复验身份、失败/超时/缺历史binding不新发。multi_query.expand_gap_plan复用原aux预算槽与lower RRF，充分/空材料零aux，失败按原预算退回。验证新材料17节点分批、原8caller与3精确契约；ACTIVE/质量仍待。
 - T12.8工作台接线：`v2.workbench._answer_workbench` 仅在原accepted冻结retrieve@4时成对调用prepare_drilldown/expand_gap_plan，默认@3保持原ladder/rewrite直调用。历史与私密/来源复验、书架恢复、引用及原回执保留，condense/gap/primary最多三个原nested handles；新gap撤回映射既有409，迟到结果丢弃且已发生用量保留。验证新11真实HTTP控制分批、原4caller与3精确契约；零gap原5样本本地中位226.846ms≤250ms通过，原样保留413.023/354.188ms两慢样本；真实质量Q58仍待，ACTIVE保持@3。
 - T14.5管家主配置恢复：ProductGenerationRouting私有provider-store资格复用真实parent Planner及原coordinator binding/topology验证，保留_main_owner；ProductTaskPlanner仅为steward.scheduler冻结既有primary/Main选择并接原Responses背景激活，worker仍OFF。原child严格租约、2000token及每GET当前guard/费用owner不变，历史缺失/OFF不接管。验证新steward13节点分批及6原caller、3精确导入契约；跨attempt/full output/回执字段仍待。

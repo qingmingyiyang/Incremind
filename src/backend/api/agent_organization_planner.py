@@ -88,10 +88,14 @@ class MainCoordinationPlanner:
         self._remote, self._wait_timeout_ms = remote, wait_timeout_ms
 
     def plan(self, request, events, capabilities, payloads, execution_control=None):
-        lists = [value for capability, value in _completed_tools(request, events, payloads) if capability == "agent.list"]
+        lists = [(index, value) for index, event in enumerate(events)
+            if event.get('type') == 'tool.completed' and event.get('data', {}).get('capability_id') == 'agent.list'
+            and (value := _same_turn_tool_result(request, event['data'], payloads)) is not None]
         if not lists:
             return _tool("agent.list", {"include_messages": False})
-        latest = lists[-1]
+        list_index, latest = lists[-1]
+        if _plan_completed_after(request, events, payloads, list_index):
+            return _tool('agent.list', {'include_messages': False})
         children = latest.get("children") if isinstance(latest, Mapping) else None
         children = list(children) if isinstance(children, Sequence) and not isinstance(children, (str, bytes, bytearray)) else []
         stewards = [item for item in children if isinstance(item, Mapping) and item.get("profile_id") == _STEWARD_PROFILE]
@@ -125,6 +129,10 @@ class MainCoordinationPlanner:
         if plan is None or plan.get("steward_run_id") != stewards[0].get("run_id"):
             return _tool("agent.list", {"include_messages": False})
         mode, plan_status = plan.get("mode"), plan.get("status")
+        if plan.get('effective_revision') and not plan.get('assignment_ids'):
+            if plan_status != 'completed':
+                return _tool('agent.list',{'include_messages':False})
+            return self._synthesize(request,events,capabilities,payloads,execution_control,(),latest)
         if mode == "main_only":
             if plan_status != "completed":
                 return _tool("agent.list", {"include_messages": False})
@@ -142,7 +150,11 @@ class MainCoordinationPlanner:
         expert_ids = {
             str(item["run_id"]) for item in experts if isinstance(item.get("run_id"), str)
         }
-        if not _has_terminal_fan_in(latest, expert_ids):
+        fan_topology = latest
+        if plan.get('effective_revision'):
+            fan_topology = {**latest,'fan_ins':[value for value in latest.get('fan_ins',())
+                if value.get('fan_in_id') == plan.get('fan_in_id')]}
+        if not _has_terminal_fan_in(fan_topology, expert_ids):
             # Child Run convergence and fan-in completion are separate durable
             # writes.  Raw terminal child states are not yet safe synthesis
             # evidence, so refresh until the parent-owned fan-in is visible.
@@ -249,6 +261,30 @@ def _last_completed_index(events: Sequence[Mapping[str, object]], capability_id:
 
 def _completed_after(request, events, payloads, capability_id: str, index: int) -> bool:
     return any(capability == capability_id for capability, _ in _completed_tools(request, events[index + 1:], payloads))
+
+
+def _plan_completed_after(request, events, payloads, index):
+    changed = False
+    for event in events[index + 1:]:
+        data = event.get('data', {})
+        if event.get('type') != 'tool.completed' or data.get('capability_id') != 'agent.plan':
+            continue
+        result = _same_turn_tool_result(request, data, payloads)
+        reference = data.get('receipt_ref')
+        if (result is None or not isinstance(result.get('plan_id'), str) or not result['plan_id']
+                or not isinstance(result.get('permit_ids'), (tuple, list)) or not isinstance(reference, str)
+                or not reference.startswith(f"crp://session/{request['turn_id']}/")):
+            raise ValueError('main_plan_completion_proof_unavailable')
+        receipt = payloads.get(reference)
+        expected = {'schema_version': '1.0.0', 'kind': 'agent.operation.receipt.v1', 'capability_id': 'agent.plan',
+            'tool_call_id': event.get('correlation', {}).get('tool_call_id'), 'turn_id': request['turn_id'],
+            'project_id': request['scope']['project_id'], 'status': 'completed'}
+        if (not isinstance(receipt, Mapping) or set(receipt) != {*expected, 'operation_id'}
+                or any(receipt[key] != value for key, value in expected.items())
+                or not isinstance(receipt['operation_id'], str) or not receipt['operation_id']):
+            raise ValueError('main_plan_completion_receipt_changed')
+        changed = True
+    return changed
 
 
 def _status_counts(children: Sequence[Mapping[str, object]]) -> dict[str, int]:

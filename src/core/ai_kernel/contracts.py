@@ -34,7 +34,7 @@ _POLICY_VERSION = re.compile(r"@[1-9][0-9]*")
 _POLICY_INTERFACES = frozenset({
     "organize", "place", "extract", "route", "steer", "scope", "retrieve", "rank",
     "strength", "forget", "enough", "compose", "trigger", "consolidate", "search", "nudge", "handoff", "image_read", "retry",
-    "skill_export", "skill_author",
+    "skill_export", "skill_author", "external_task_output",
     # 材料分析仅增加已登记策略键，不改变 Turn 的权限或执行合同。
     "material_analysis",
     "context_preparation",

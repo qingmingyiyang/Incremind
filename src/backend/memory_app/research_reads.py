@@ -141,7 +141,42 @@ def read_dependencies(records, turns, agents, turn_id, project):
     return sorted(proofs,key=lambda proof:proof['id'])
 
 
-def validate_reads(records, scope, proofs, *, authority, remote=True):
+def completed_read_result(turns, proof):
+    if (proof.get('id') != proof.get('tool_call_id') or type(proof.get('revision')) is not int
+            or proof['revision'] != 1):
+        raise RecognitionConflict('product draft read proof changed')
+    events = tuple(turns.events_after(proof['turn_id'], after_sequence=0))
+    completed = [event for event in events if event.get('type') == 'tool.completed'
+        and event.get('correlation', {}).get('tool_call_id') == proof['id']]
+    if len(completed) != 1 or completed[0]['data'].get('capability_id') != proof['capability_id']:
+        raise RecognitionConflict('product draft read completion is unavailable')
+    complete = completed[0]
+    result_ref = complete['data'].get('payload_ref')
+    matched = []
+    for event in events:
+        if (event.get('type') != 'tool.outcome.recorded'
+                or event.get('correlation', {}).get('tool_call_id') != proof['id']
+                or event['sequence'] >= complete['sequence']):
+            continue
+        reference = event['data'].get('payload_ref')
+        outcome = turns.get(reference) if isinstance(reference, str) else None
+        if (isinstance(outcome, Mapping) and outcome.get('status') == 'completed'
+                and outcome.get('turn_id') == proof['turn_id'] and outcome.get('invocation_id') == proof['id']
+                and outcome.get('capability_id') == proof['capability_id'] and outcome.get('payload_ref') == result_ref):
+            matched.append((event, reference))
+    if len(matched) != 1 or not isinstance(result_ref, str):
+        raise RecognitionConflict('product draft read result binding is unavailable')
+    return {'result': turns.get(result_ref), 'result_ref': result_ref, 'outcome_ref': matched[0][1],
+        'completed_sequence': complete['sequence'], 'evidence_refs': matched[0][0]['data'].get('evidence_refs', [])}
+
+
+def validate_reads(records, scope, proofs, *, authority, remote=True, shared_reads=None):
+    if any('shared_task_read' in proof for proof in proofs):
+        if shared_reads is None or not all('shared_task_read' in proof for proof in proofs):
+            raise RecognitionConflict('shared_task_read_qualified_consumer_required')
+        for proof in proofs:
+            shared_reads.validate_proof(proof, reader=records)
+        return
     if remote and authority.private_project(scope):
         raise RecognitionConflict('private_project_remote_blocked')
     for proof in proofs:
@@ -168,15 +203,15 @@ def validate_reads(records, scope, proofs, *, authority, remote=True):
             if remote: authority.require(snapshot,'generation')
 
 
-def product_read_sources(records, turns, agents, request, project):
+def product_read_sources(records, turns, agents, request, project, *, authority=None):
     from .kernel.agent_coordinator import AgentCoordinatorError
     try:
-        return _product_read_sources(records, turns, agents, request, project)
+        return _product_read_sources(records, turns, agents, request, project, authority=authority)
     except (KeyError, TypeError, AttributeError, IndexError, ValueError, AgentCoordinatorError) as error:
         raise RecognitionConflict('product draft read owner evidence is invalid') from error
 
 
-def _product_read_sources(records, turns, agents, request, project):
+def _product_read_sources(records, turns, agents, request, project, *, authority=None):
     """Bind successful product reads to their immutable result and CAS-1 proof.
 
     This reads existing authorities only. Privacy is evaluated by SourceEgress
@@ -189,6 +224,8 @@ def _product_read_sources(records, turns, agents, request, project):
         if accepted != _product_agent_request(turns, agents, request, project):
             raise RecognitionConflict('product draft kernel request changed')
     proofs = read_dependencies(records, turns, agents, identity, project)
+    if any('shared_task_read' in proof for proof in proofs):
+        raise RecognitionConflict('shared_task_read_qualified_consumer_required')
     entries, snapshots = [], []
     for proof in proofs:
         if (type(proof['revision']) is not int or proof['revision'] != 1
@@ -223,7 +260,7 @@ def _product_read_sources(records, turns, agents, request, project):
         scope = WorkScope('local-user', project)
         refs = evidence_refs(proof['capability_id'], {'result': result})
         if proof.get('v2_recall') is not None:
-            _validate_recall_result(records, scope, proof, refs)
+            _validate_recall_result(records, scope, proof, refs, authority=authority)
             roots = proof['source_egress']['roots'] if proof['source_egress'] else []
         else:
             with records.begin() as reader:
@@ -273,7 +310,7 @@ def _product_read_sources(records, turns, agents, request, project):
     return tuple(entries), tuple(snapshots)
 
 
-def _validate_recall_result(records, scope, proof, refs):
+def _validate_recall_result(records, scope, proof, refs, *, authority=None):
     from .source_egress import SourceEgressService
     binding = proof['v2_recall']
     expected = []
@@ -282,7 +319,8 @@ def _validate_recall_result(records, scope, proof, refs):
         expected.append(f"crp://default/{collection}/{item['id']}")
     if refs != expected:
         raise RecognitionConflict('product recall result source binding changed')
-    validate_recall_binding(records, scope, binding, authority=SourceEgressService(records), inherit=True)
+    validate_recall_binding(records, scope, binding,
+        authority=SourceEgressService(records) if authority is None else authority, inherit=True)
     roots, styles = {}, []
     for item in binding['materials']:
         if item['project_id'] == scope.project_id:

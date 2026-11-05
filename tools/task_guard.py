@@ -7,6 +7,7 @@ Run automatically by the git hooks it installs:
 
 It blocks newly added test-skip markers, likely secrets, staged runtime/work/.env files,
 and removed test assertions that the commit message does not explain.
+暂存文档中标记的当前默认必须与暂存的策略登记一致。
 """
 
 from __future__ import annotations
@@ -19,10 +20,14 @@ from pathlib import Path
 
 # Hooks execute this file directly, including from a different working
 # directory. The shared leaf has no application or optional dependency import.
-_SRC_ROOT = str(Path(__file__).resolve().parents[1] / "src")
+_ROOT = Path(__file__).resolve().parents[1]
+_SRC_ROOT = str(_ROOT / "src")
 if _SRC_ROOT not in sys.path:
     sys.path.insert(0, _SRC_ROOT)
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 from backend.shared.secret_detection import SECRET_PATTERNS
+from tools.check_doc_defaults import INPUT_PATHS, check_defaults
 
 CODE_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
 SELF_PATHS = {"tools/task_guard.py", "tests/tools/test_task_guard.py"}
@@ -94,6 +99,24 @@ def _staged() -> tuple[str, list[str]]:
     return diff, paths
 
 
+def _check_staged_defaults(result: ScanResult) -> ScanResult:
+    # 文档与默认切换必须在同一提交中一致，未暂存的修正不能代替待提交内容。
+    paths = (*INPUT_PATHS, "tools/check_doc_defaults.py")
+    changed = _git("diff", "--cached", "--name-only", "--",
+                   *(":(top,literal)" + name for name in paths)).splitlines()
+    if not changed:
+        return result
+    inputs = {}
+    for name in INPUT_PATHS:
+        try:
+            inputs[name] = _git("show", ":" + name)
+        except subprocess.CalledProcessError:
+            result.errors.append(f"{name}: required current-defaults input is missing from the index")
+            return result
+    result.errors.extend(check_defaults(inputs))
+    return result
+
+
 def _report(result: ScanResult, message: str | None) -> int:
     errors = list(result.errors)
     if message is not None and result.removed_asserts and MESSAGE_MARKER not in message:
@@ -140,10 +163,10 @@ def main(argv: list[str]) -> int:
     if argv[:1] == ["--commit-msg"] and len(argv) == 2:
         diff, paths = _staged()
         message = Path(argv[1]).read_text(encoding="utf-8", errors="replace")
-        return _report(scan_diff(diff, paths), message)
+        return _report(_check_staged_defaults(scan_diff(diff, paths)), message)
     if argv[:1] in (["--pre-commit"], []):
         diff, paths = _staged()
-        return _report(scan_diff(diff, paths), None)
+        return _report(_check_staged_defaults(scan_diff(diff, paths)), None)
     print(__doc__)
     return 2
 

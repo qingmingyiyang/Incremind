@@ -3,70 +3,7 @@
    Chrip_OS 基础层 · Esther Design System
    ═══════════════════════════════════════════════════════════ */
 
-/* ── 修复前字体，本地随包加载，不在首帧请求外部字体 ── */
-@font-face {
-  font-family: "Noto Sans SC";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/noto-sans-sc-400.ttf") format("truetype");
-}
-
-@font-face {
-  font-family: "Noto Sans SC";
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url("/fonts/noto-sans-sc-500.ttf") format("truetype");
-}
-
-@font-face {
-  font-family: "Noto Sans SC";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("/fonts/noto-sans-sc-700.ttf") format("truetype");
-}
-
-@font-face {
-  font-family: "Noto Serif SC";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("/fonts/noto-serif-sc-600.ttf") format("truetype");
-}
-
-@font-face {
-  font-family: "Noto Serif SC";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("/fonts/noto-serif-sc-700.ttf") format("truetype");
-}
-
-@font-face {
-  font-family: "Noto Serif SC";
-  font-style: normal;
-  font-weight: 900;
-  font-display: swap;
-  src: url("/fonts/noto-serif-sc-900.ttf") format("truetype");
-}
-
-@font-face {
-  font-family: "Fira Code";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/fira-code-400.ttf") format("truetype");
-}
-
-@font-face {
-  font-family: "Fira Code";
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url("/fonts/fira-code-500.ttf") format("truetype");
-}
+@import "./font-faces.css";
 
 @tailwind base;
 @tailwind components;

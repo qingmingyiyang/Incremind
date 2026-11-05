@@ -47,6 +47,8 @@ def _credential(models):
 
 def harness_credential_status(models):
     try:
+        if shared_harness_selection(models) is not None:
+            return {'has_key': True}
         _credential(models)
         return {'has_key': True}
     except (ValueError, TypeError):
@@ -54,12 +56,31 @@ def harness_credential_status(models):
 
 
 def acquire_harness_credential(models):
+    if shared_harness_selection(models) is not None:
+        raise ValueError('external_executor_shared_gateway_required')
     revision, reference, snapshot = _credential(models)
     def current():
         fresh_revision, fresh_reference, fresh = _credential(models)
         if (fresh_revision, fresh_reference, fresh.generation) != (revision, reference, snapshot.generation):
             raise ValueError('external_executor_credentials_changed')
     return snapshot.value, current
+
+
+def shared_harness_selection(models):
+    access = getattr(models, 'server_model_access', None)
+    if access is None:
+        return None
+    selection = access.selection('generation')
+    if selection['mode'] != 'shared':
+        return None
+    config = selection['configuration']
+    parsed = urlsplit(config['base_url'])
+    if (config['provider'] != 'openai' or parsed.scheme != 'https'
+            or parsed.hostname != 'api.deepseek.com' or parsed.port not in {None, 443}
+            or parsed.path.rstrip('/') not in {'', '/v1'} or parsed.username or parsed.password
+            or parsed.query or parsed.fragment):
+        raise ValueError('external_executor_credentials_unavailable')
+    return selection
 
 
 def memory_patch(config, *, remote_backend=None):

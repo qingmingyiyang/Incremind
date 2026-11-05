@@ -29,6 +29,7 @@ _SAFE_ERRORS = frozenset({
     'external_context_citations_invalid', 'external_context_material_changed', 'external_context_not_accepted',
     'external_context_not_completed', 'external_context_not_delivered', 'external_context_owner_changed',
     'external_context_selection_invalid', 'external_context_unavailable',
+    'external_context_evidence_invalid', 'shared_forbidden', 'shared_project_unavailable',
 })
 _STRING = {'type': 'string', 'minLength': 1}
 _REFERENCE = {'type': 'object', 'additionalProperties': False, 'required': ['turn_id', 'id'],
@@ -48,44 +49,74 @@ _INPUTS = {
         'type': 'string', 'pattern': '^[MP][1-9][0-9]*$'}, 'uniqueItems': True}}, ['turn_id', 'ids']),
 }
 _DESCRIPTIONS = {'projects': '列出可用项目和场景', 'recall': '召回带编号的记忆',
-    'methods': '按情境补充方法', 'read': '下钻原交付编号的证据', 'remember': '记住原件，保持未核对',
+    'methods': '按情境补充方法', 'read': '下钻原交付编号的证据', 'remember': '记住原件，保持未核对；text与url二选一',
     'propose_insight': '提一条待确认认识', 'report_use': '回报原交付中使用的编号'}
 
 
-def _output_schema(name, handoff):
+def _output_schema(name, handoff, *, shared=False):
     if name in _READ:
-        result = deepcopy(handoff['oneOf'][1 if name == 'projects' else 0])
+        personal = deepcopy(handoff['oneOf'][1 if name == 'projects' else 0])
+        result = {'oneOf': [personal, deepcopy(handoff['oneOf'][2 if name == 'projects' else 3])]} if shared else personal
     elif name == 'report_use':
         result = {'type': 'object', 'additionalProperties': False, 'required': ['turn_id', 'ids'],
             'properties': {'turn_id': _STRING, 'ids': {'type': 'array', 'uniqueItems': True,
                 'items': {'type': 'string', 'pattern': '^[MP][1-9][0-9]*$'}}}}
     else:
         properties = {'receipt_id': _STRING, 'revision': {'type': 'integer', 'minimum': 1},
-            'project_id': _STRING, 'client': {'enum': ['claude', 'codex', 'deepseek-harness']},
+            'project_id': _STRING, 'client': {'enum': ['claude', 'codex', 'deepseek-harness', 'chatgpt']},
             'state': {'const': 'staged' if name == 'remember' else 'pending'}}
         properties['item_id' if name == 'remember' else 'candidate_id'] = _STRING
         if name == 'remember':
             properties['verified'] = {'const': False}
         result = {'type': 'object', 'additionalProperties': False,
             'required': list(properties), 'properties': properties}
+        if shared:
+            qualified = {**properties, 'scope_kind': {'const': 'shared'}, 'namespace': _STRING}
+            result = {'oneOf': [result, {'type': 'object', 'additionalProperties': False,
+                'required': list(qualified), 'properties': qualified}]}
     return {'$schema': handoff['$schema'], 'type': 'object', 'additionalProperties': False,
         'required': ['turn_id', 'result'], '$defs': deepcopy(handoff['$defs']),
         'properties': {'turn_id': _STRING if name in (*_READ, 'report_use') else {'type': 'null'},
             'result': result}}
 
 
-def _tools():
+def _input_schema(name, *, advertised=False, shared=False):
+    properties, required = _INPUTS[name]
+    scoped = shared and name in {'projects', 'recall', 'methods', 'remember', 'propose_insight'}
+    writes = name in {'remember', 'propose_insight'}
+    if scoped:
+        properties = {**properties, 'scope_kind': {'enum': ['personal', 'shared']}}
+        if writes:
+            properties['idempotency_key'] = {'type': 'string', 'pattern': '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'}
+    schema = {'type': 'object', 'additionalProperties': False,
+        'properties': properties, 'required': required}
+    # Claude 接口不接纳根级组合，真实调用仍由原 Schema 严格校验二选一。
+    if name == 'remember' and not advertised:
+        schema['oneOf'] = [{'required': ['text']}, {'required': ['url']}]
+    if scoped and not advertised and name != 'projects':
+        schema['if'] = {'required': ['scope_kind'], 'properties': {'scope_kind': {'const': 'shared'}}}
+        schema['then'] = {'required': ['project', 'idempotency_key'] if writes else ['project']}
+        if writes:
+            schema['else'] = {'not': {'required': ['idempotency_key']}}
+    return schema
+
+
+def _tools(*, shared=False):
     result = []
     # Reuse the product's declared handoff contract; this opens no database.
     handoff = json.loads((Path(__file__).resolve().parents[3] /
         'core-contracts/ai/external-context-result.schema.json').read_text(encoding='utf-8'))
-    for name, (properties, required) in _INPUTS.items():
-        schema = {'type': 'object', 'additionalProperties': False,
-            'properties': properties, 'required': required}
-        if name == 'remember':
-            schema['oneOf'] = [{'required': ['text']}, {'required': ['url']}]
-        output = _output_schema(name, handoff)
-        result.append(types.Tool(name=name, description=_DESCRIPTIONS[name], inputSchema=schema,
+    for name in _INPUTS:
+        schema = _input_schema(name, advertised=True, shared=shared)
+        output = _output_schema(name, handoff, shared=shared)
+        description = _DESCRIPTIONS[name]
+        if shared and name in {'projects', 'recall', 'methods', 'remember', 'propose_insight'}:
+            description += '。scope_kind=shared 选择共享项目'
+            if name != 'projects':
+                description += '，必须指定 project'
+            if name in {'remember', 'propose_insight'}:
+                description += ' 和 idempotency_key，重试沿用原键'
+        result.append(types.Tool(name=name, description=description, inputSchema=schema,
             outputSchema=output, annotations=types.ToolAnnotations(readOnlyHint=name in _READ,
                 destructiveHint=False, openWorldHint=True)))
     return result
@@ -133,7 +164,7 @@ async def _serve(reader, writer, client, backend):
         if client_id is None:
             return _error('external_agent_client_unknown')
         tool = tools.get(name)
-        if tool is None or not Draft202012Validator(tool.inputSchema).is_valid(arguments):
+        if tool is None or not Draft202012Validator(_input_schema(name)).is_valid(arguments):
             return _error('external_agent_arguments_invalid')
         if name == 'read' and 'window' in arguments and arguments['window']['start'] >= arguments['window']['end']:
             return _error('external_agent_arguments_invalid')

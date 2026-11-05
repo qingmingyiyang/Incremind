@@ -13,7 +13,7 @@ from .external_recall import ExternalRecall
 
 def _arguments(body):
     if (not isinstance(body, dict) or set(body) != {'client', 'arguments'}
-            or not isinstance(body['client'], str) or body['client'] not in {'claude', 'codex', 'deepseek-harness'}
+            or not isinstance(body['client'], str) or body['client'] not in {'claude', 'codex', 'deepseek-harness', 'chatgpt'}
             or not isinstance(body['arguments'], dict)):
         raise HTTPException(400, 'external_agent_request_invalid')
     return body['client'], body['arguments']
@@ -31,9 +31,23 @@ def _read_selections(proof, window):
     if not roots:
         raise ExternalContextError('external_context_material_changed')
     # The original frozen source graph supplies every identity and revision.
+    namespace = {'namespace': proof['material']['namespace']} if 'namespace' in proof['material'] else {}
     return [{'type': node['type'], 'id': node['id'], 'revision': node['source_revision'],
-             'project_id': project, 'layer': 'L0', 'windows': [dict(window)] if window else []}
+             'project_id': project, **namespace, 'layer': 'L0', 'windows': [dict(window)] if window else []}
             for node in roots]
+
+
+def _scope_kind(arguments, *, project=False):
+    kind = arguments.get('scope_kind', 'personal')
+    if kind not in ('personal', 'shared') or kind == 'shared' and project and 'project' not in arguments:
+        raise HTTPException(400, 'external_agent_request_invalid')
+    return kind
+
+
+def _shared(api):
+    if api.shared is None:
+        raise HTTPException(403, 'shared_project_unavailable')
+    return api.shared
 
 
 def install_mcp_memory_routes(application, *, workspace):
@@ -45,10 +59,11 @@ def install_mcp_memory_routes(application, *, workspace):
 
     def recall_owned(client, arguments, tool):
         field = 'query' if tool == 'recall' else 'situation'
-        allowed = {field, 'project', 'scene'} | ({'budget'} if tool == 'recall' else set())
+        allowed = {field, 'project', 'scene', 'scope_kind'} | ({'budget'} if tool == 'recall' else set())
         if field not in arguments or set(arguments).difference(allowed):
             raise HTTPException(400, 'external_agent_request_invalid')
         text = _text(arguments[field], field)
+        scope_kind = _scope_kind(arguments, project=True)
         project = _project(arguments.get('project', 'default'))
         scene = _text(arguments['scene'], 'scene') if 'scene' in arguments else None
         budget = arguments.get('budget', 3000)
@@ -60,7 +75,8 @@ def install_mcp_memory_routes(application, *, workspace):
             turn_id = 'turn-' + uuid4().hex
             request = {'client': client, 'tool': tool, 'query': text, 'budget': budget,
                 'scope': {'user_id': api.owner_id, 'project_id': project}}
-            api.prepare_recall(turn_id, request, scene=scene, session_id='session-mcp-' + uuid4().hex,
+            producer = _shared(api) if scope_kind == 'shared' else api
+            producer.prepare_recall(turn_id, request, scene=scene, session_id='session-mcp-' + uuid4().hex,
                 operation_id='mcp-' + turn_id, idempotency_key=turn_id, created_at=_now())
             return {'turn_id': turn_id, 'result': api.execute(turn_id, runtime=runtime,
                 runner=application.state.ai_turn_runner)}
@@ -68,15 +84,17 @@ def install_mcp_memory_routes(application, *, workspace):
             raise HTTPException(409, str(error)) from None
 
     def projects_owned(client, arguments):
-        if arguments:
+        if set(arguments) - {'scope_kind'}:
             raise HTTPException(400, 'external_agent_request_invalid')
+        scope_kind = _scope_kind(arguments)
         try:
             runtime = workspace.query.answer_turns._runtime()
             api = application.state.external_context
             turn_id = 'turn-' + uuid4().hex
             call = {'client': client, 'tool': 'projects', 'query': '', 'budget': 3000,
                 'scope': {'user_id': api.owner_id, 'project_id': 'default'}}
-            api.prepare_projects(turn_id, call, session_id='session-mcp-' + uuid4().hex,
+            prepare = _shared(api).prepare_catalog if scope_kind == 'shared' else api.prepare_projects
+            prepare(turn_id, call, session_id='session-mcp-' + uuid4().hex,
                 operation_id='mcp-' + turn_id, idempotency_key=turn_id, created_at=_now())
             return {'turn_id': turn_id, 'result': api.execute(turn_id, runtime=runtime,
                 runner=application.state.ai_turn_runner)}
@@ -89,7 +107,7 @@ def install_mcp_memory_routes(application, *, workspace):
             raise HTTPException(400, 'external_agent_request_invalid')
         try:
             api = application.state.external_context
-            result = api.report_use(arguments['turn_id'], arguments['ids'], client=client)
+            result = api.report_use(arguments['turn_id'], arguments['ids'], client=client, _shared=True)
             return {'turn_id': arguments['turn_id'], 'result': result}
         except (ExternalContextError, ExternalAgentGuardError) as error:
             raise HTTPException(409, str(error)) from None
@@ -105,11 +123,12 @@ def install_mcp_memory_routes(application, *, workspace):
         try:
             runtime = workspace.query.answer_turns._runtime()
             api = application.state.external_context
-            proof, original = api.delivered_proof(identity['turn_id'], identity['id'], client=client)
+            proof, original = api.delivered_proof(identity['turn_id'], identity['id'], client=client, _shared_tool='read')
             selections = _read_selections(proof, arguments.get('window'))
             turn_id = 'turn-' + uuid4().hex
             call = {**original, 'tool': 'read'}
-            api.prepare(turn_id, call, selections, session_id='session-mcp-' + uuid4().hex,
+            prepare = _shared(api).prepare_read if original.get('scope_kind') == 'shared' else api.prepare
+            prepare(turn_id, call, selections, session_id='session-mcp-' + uuid4().hex,
                 operation_id='mcp-' + turn_id, idempotency_key=turn_id, created_at=_now(), origin=identity)
             result = api.execute(turn_id, runtime=runtime, runner=application.state.ai_turn_runner)
             return {'turn_id': turn_id, 'result': result}

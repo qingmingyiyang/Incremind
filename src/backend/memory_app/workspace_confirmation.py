@@ -212,6 +212,13 @@ class WorkspaceConfirmation:
             tx.put(COLLECTION, operation_id,
                    {**operation, "state": "committed", "document_id": document["id"]},
                    expected_revision=op_row.revision)
+            from .v2.material_logical_scope import bind_confirmed_materials_in_uow
+            bind_confirmed_materials_in_uow(tx, self.records, document_id=document['id'],
+                source_item_id=item_id, source_id=source_id, project_id=str(item['project_id']),
+                namespace_id=self.documents.namespace_id)
+            observer = getattr(self, 'document_completion_observer', None)
+            if observer is not None:
+                observer(tx, project=str(item['project_id']), document_id=document['id'])
             tx.commit()
             return item
 

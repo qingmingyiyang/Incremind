@@ -1,0 +1,9 @@
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 14px/1.6 var(--sans); }
+.native-memory-card { padding: 16px; max-width: 100%; overflow-wrap: anywhere; }
+.native-memory-card h2 { margin: 0 0 12px; font-family: var(--serif); }
+.native-memory-card article { padding: 12px 0; border-top: 1px solid var(--line2); }
+.native-memory-card button { padding: 8px 12px; font: inherit; color: var(--red); background: var(--panel); border: 1px solid var(--line2); border-radius: var(--r-panel); cursor: pointer; }
+.native-memory-card button:disabled { color: var(--muted); cursor: default; }
+.native-memory-card p { white-space: pre-wrap; }
+.native-memory-card code { font-family: var(--mono); }

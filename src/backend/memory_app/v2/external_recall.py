@@ -35,8 +35,15 @@ def _material(kind, identity, revision, project):
 
 
 class ExternalRecall:
-    def __init__(self, query, *, owner_id):
+    def __init__(self, query, *, owner_id, external_authority=None, include_profile=True):
         self.query, self.records, self.owner_id = query, query.records, owner_id
+        self.external_authority = external_authority
+        self.include_profile = include_profile
+
+    def _allows(self, reader, project, client):
+        if self.external_authority is not None:
+            return self.external_authority(reader, project, client)
+        return external_egress_allowed(reader, project, client)
 
     def _markers(self, reader, projects):
         identities = {row.object_id for collection in ('workspace_items', 'documents', 'recognitions', 'recognition_candidates')
@@ -81,25 +88,26 @@ class ExternalRecall:
         return {**material, 'layer': layer,
             'windows': [{'start': window.start - offset, 'end': window.end - offset} for window in windows]}
 
-    def plan(self, request, *, scene=None):
+    def plan(self, request, *, scene=None, reader=None):
         if request['tool'] not in {'recall', 'methods'} or request['scope']['user_id'] != self.owner_id:
             raise ValueError('external_context_binding_invalid')
         project, client = request['scope']['project_id'], request['client']
-        if not external_egress_allowed(self.records, project, client):
+        if not self._allows(reader or self.records, project, client):
             raise ValueError('external_agent_remote_blocked')
-        if project == 'me' and not external_agent_settings(self.records)['include_profile']:
+        if self.include_profile and project == 'me' and not external_agent_settings(self.records)['include_profile']:
             raise ExternalAgentGuardError('external_agent_profile_disabled')
         versions = {**versions_for_turn('external.context'), 'compose': version('compose')}
         with override(**versions):
+            authority = {} if self.external_authority is None else {'external_authority': self.external_authority}
             collected = self.query.collect_candidates(project, request['query'], scene=scene,
-                situation=request['query'], external_client=client)
+                situation=request['query'], external_client=client, **authority)
             ordinary = [row for row in collected['candidates'] if row['snapshot'] is not None]
             methods = [row for row in collected.get('method_candidates', []) if row['snapshot'] is not None]
             planned = plan_ladder(ordinary if request['tool'] == 'recall' else [], request['query'],
                 token_budget=request['budget'], methods=methods, situation=request['query'])
-            settings = external_agent_settings(self.records)
             profile = (confirmed_profile(self.records, self.query.service)
-                if settings['include_profile'] and external_egress_allowed(self.records, 'me', client) else None)
+                if self.include_profile and external_agent_settings(self.records)['include_profile']
+                and external_egress_allowed(self.records, 'me', client) else None)
             candidates = []
             for row in [*ordinary, *methods]:
                 proof = self._candidate(row)
@@ -119,8 +127,8 @@ class ExternalRecall:
             projects = {project} | ({'me'} if profile else set())
             plan = {'schema_version': 1, 'owner_id': self.owner_id, 'request': deepcopy(request), 'scene': scene,
                 'policy_versions': versions, 'materials': materials, 'selections': selections,
-                'candidates': candidates, 'profile_basis': basis, 'markers': self._markers(self.records, projects)}
-        self.validate(plan)
+                'candidates': candidates, 'profile_basis': basis, 'markers': self._markers(reader or self.records, projects)}
+        self.validate(plan, reader)
         return plan
 
     def validate(self, plan, reader=None):
@@ -140,12 +148,12 @@ class ExternalRecall:
             if plan['profile_basis'] is not None:
                 validate_profile(reader, self.query.service, {'basis': plan['profile_basis']})
             request = plan['request']
-            if not external_egress_allowed(reader, request['scope']['project_id'], request['client']):
+            if not self._allows(reader, request['scope']['project_id'], request['client']):
                 raise ValueError('external_agent_remote_blocked')
             projects = {request['scope']['project_id']} | ({'me'} if plan['profile_basis'] is not None else set())
             if _encoded(self._markers(reader, projects)) != _encoded(plan['markers']):
                 raise ValueError('external_context_material_changed')
-            authority = SourceEgressService(reader)
+            authority = SourceEgressService(self.records, reader=reader)
             for proof in plan['candidates']:
                 if not isinstance(proof, dict) or set(proof) != _CANDIDATE:
                     raise ValueError('external_context_binding_invalid')

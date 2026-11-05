@@ -10,6 +10,7 @@ from core.ai_tooling.contracts import tool_from_legacy_capability
 from core.application_skill.package_catalog import (
     ApplicationSkillCatalog, ApplicationSkillPackageLoader, ApplicationSkillSource,
 )
+from core.product_core.asr_lexicon_changes import MAINTENANCE_SCHEMA
 from ..transaction_records import TransactionRecords
 from ..workspace_contracts import _now
 from .policies import get
@@ -54,7 +55,10 @@ class _Capability:
         except Exception as error:
             code = getattr(error, 'code', None)
             if code in {'invalid_asr_lexicon_import', 'asr_lexicon_revision_conflict',
-                        'asr_lexicon_capacity_exceeded', 'asr_lexicon_import_too_large'}:
+                        'asr_lexicon_capacity_exceeded', 'asr_lexicon_import_too_large',
+                        'invalid_asr_lexicon_changes', 'asr_lexicon_change_conflict',
+                        'asr_lexicon_term_exists', 'asr_lexicon_term_not_found', 'asr_lexicon_term_retired',
+                        'asr_lexicon_preview_changed'}:
                 raise AgentDataToolError(code) from None
             raise AgentDataToolError('agent_data_operation_failed') from None
 
@@ -68,12 +72,17 @@ class AgentDataTools:
         if self.skill is None:
             raise AgentDataToolError('agent_data_skill_unavailable')
         self.instructions = ApplicationSkillPackageLoader().load_instructions(self.skill).markdown
+        self.maintenance_skill = catalog.get('asr-lexicon-maintenance')
+        if self.maintenance_skill is None:
+            raise AgentDataToolError('agent_data_skill_unavailable')
+        self.maintenance_instructions = ApplicationSkillPackageLoader().load_instructions(self.maintenance_skill).markdown
         self.schemas = {}
         for name in ('read', 'preview', 'import', 'result'):
             filename = f'asr-lexicon-{name}' + ('' if name == 'result' else '-request') + '.schema.json'
             schema = json.loads((skill_root.parents[1] / 'core-contracts' / 'ai' / filename).read_text(encoding='utf-8'))
             Draft202012Validator.check_schema(schema)
             self.schemas[name] = Draft202012Validator(schema)
+        self.schemas['maintenance'] = Draft202012Validator(MAINTENANCE_SCHEMA)
 
     def install(self, registry):
         for definition in definitions():
@@ -82,7 +91,13 @@ class AgentDataTools:
     def catalog(self, request):
         if request.get('execution_policy', {}).get('template_version') != 3:
             return ''
-        return self._policy(request).catalog(self.skill.description)
+        skill = self.maintenance_skill if self._maintenance_enabled(request) else self.skill
+        return self._policy(request).catalog(skill.description)
+
+    def planning_catalog(self, request):
+        if request.get('policy_versions', {}).get('agent_data') not in ('@3', '@4'):
+            return ''
+        return self._policy(request).planning_catalog(request)
 
     def validate_context(self, request):
         """下一次模型外发前复验已读词表，不能继续使用已变化的设置。"""
@@ -121,18 +136,22 @@ class AgentDataTools:
         proof = authority.payload
         operation = self.records.read(OPERATIONS, proof.get('operation_id', ''))
         preview = self.records.read(PREVIEWS, proof.get('preview_id', ''))
+        maintenance = preview is not None and preview.payload.get('kind') == 'maintenance'
         if (operation is None or preview is None or proof['user']['facts'] != user['facts']
                 or proof['user']['id'] != user['id']
                 or operation.payload.get('user', {}).get('id') != user['id']
                 or operation.payload.get('user', {}).get('facts') != user['facts']
                 or operation.payload.get('inputs') != {'turn_id': turn_id, 'preview_id': proof['preview_id']}
-                or preview.payload.get('turn_id') != turn_id or preview.payload.get('authorized') is not True
+                or preview.payload.get('turn_id') != turn_id
+                or not (maintenance and self._maintenance_enabled(request) or preview.payload.get('authorized') is True)
                 or preview.payload['user']['id'] != user['id']
                 or preview.payload['user']['facts'] != user['facts']
-                or not self._policy(request).authorized_import(user['facts']['user_text'],
+                or not maintenance and not self._policy(request).authorized_import(user['facts']['user_text'],
                     preview.payload['inputs']['text'], preview.payload['inputs']['format'])):
             raise AgentDataToolError('asr_lexicon_update_not_completed')
         result = operation.payload['result']
+        if maintenance and (result.get('maintenance') is not True or result.get('changes') != preview.payload.get('changes')):
+            raise AgentDataToolError('asr_lexicon_update_not_completed')
         actual = self.lexicon.read()
         terms = {row['id']: row for row in actual['terms']}
         if (result.get('verified') is not True or actual['revision'] != result.get('revision')
@@ -152,14 +171,121 @@ class AgentDataTools:
     @staticmethod
     def _record_read(tx, turn_id, revision):
         prior = tx.read(READS, turn_id)
-        tx.put(READS, turn_id, {'revision': revision}, expected_revision=prior.revision if prior else 0)
+        tx.put(READS, turn_id, {**(prior.payload if prior else {}), 'revision': revision},
+            expected_revision=prior.revision if prior else 0)
+
+    def requires_verification(self, request):
+        row = self.records.read(READS, request['turn_id'])
+        return (self.data_operation(request) is not None or self.explicit_import(request)
+            or row is not None and bool(row.payload.get('maintenance_preview_id')))
+
+    @staticmethod
+    def data_operation(request):
+        if request.get('policy_versions', {}).get('agent_data') != '@4':
+            return None
+        value = json.loads(request['input']['text']).get('data_operation')
+        if value is not None and value not in ('lexicon.read', 'lexicon.maintain'):
+            raise AgentDataToolError('agent_data_operation_invalid')
+        return value
+
+    def _completed_results(self, request, capability):
+        for event in reversed(tuple(self.turns.events_after(request['turn_id']))):
+            if event.get('type') == 'tool.completed' and event.get('data', {}).get('capability_id') == capability:
+                reference = event['data'].get('payload_ref')
+                if isinstance(reference, str):
+                    value = self.turns.get(reference)
+                    if isinstance(value, dict):
+                        yield value, reference
+
+    def completion_result(self, request):
+        purpose = self.data_operation(request)
+        _, user = self._binding(request['turn_id'])
+        actual = self.lexicon.read()
+        read = self.records.read(READS, request['turn_id'])
+        if read is None or read.payload['revision'] != actual['revision']:
+            raise AgentDataToolError('asr_lexicon_read_not_completed')
+        if purpose == 'lexicon.read':
+            completed = next(((value, ref) for value, ref in self._completed_results(request, CAPABILITIES[0])
+                if value.get('revision') == actual['revision'] and value.get('terms') == actual['terms']), None)
+            if completed is None:
+                raise AgentDataToolError('asr_lexicon_read_not_completed')
+            return {'state': 'read', 'revision': actual['revision'], 'terms': actual['terms'],
+                'verified': True, 'receipt_ref': completed[1]}
+        if purpose != 'lexicon.maintain':
+            raise AgentDataToolError('agent_data_operation_invalid')
+        if self.records.read(AUTHORIZATIONS, user['id']) is not None:
+            saved = self.verify_completion(request)
+            return {'state': 'saved', 'revision': saved['revision'], 'changes': saved.get('changes', []),
+                'verified': True, 'receipt_ref': saved['receipt_ref']}
+        preview_id = read.payload.get('maintenance_preview_id')
+        preview, _, _ = self._preview(request['turn_id'], preview_id)
+        changes = preview.payload.get('changes')
+        completed = next(((value, ref) for value, ref in self._completed_results(request, CAPABILITIES[1])
+            if value.get('preview_id') == preview_id and value.get('changes') == changes), None)
+        if (not changes or any(change['before'] != change['after'] for change in changes) or completed is None):
+            raise AgentDataToolError('asr_lexicon_update_not_completed')
+        return {'state': 'unchanged', 'revision': actual['revision'], 'changes': changes,
+            'verified': True, 'receipt_ref': completed[1]}
+
+    def pending_maintenance(self, request, *, validate_current=False):
+        if not self._maintenance_enabled(request):
+            return None
+        events = tuple(self.turns.events_after(request['turn_id']))
+        if not events or events[-1]['type'] != 'approval.required':
+            return None
+        target = events[-1]
+        decision = self.turns.get(target['data']['payload_ref'])
+        if decision.get('capability_id') != CAPABILITIES[2]:
+            return None
+        arguments = decision.get('arguments', {})
+        if not isinstance(arguments, dict) or set(arguments) != {'preview_id'}:
+            raise AgentDataToolError('agent_data_arguments_invalid')
+        preview, _, _ = self._preview(request['turn_id'], arguments['preview_id'], validate_current=validate_current)
+        if preview.payload.get('kind') != 'maintenance':
+            return None
+        return {'preview_id': preview.object_id, 'preview_revision': preview.revision,
+            'event_id': target['event_id'], 'sequence': len(events),
+            'lexicon_revision': preview.payload['inputs']['expected_revision'],
+            'changes': preview.payload['changes'], 'state': 'pending',
+            'stale': self.lexicon.current_revision() != preview.payload['inputs']['expected_revision']}
+
+    def saved_maintenance(self, request):
+        row = self.records.read(READS, request['turn_id'])
+        if row is None or not row.payload.get('maintenance_preview_id'):
+            return None
+        _, user = self._binding(request['turn_id'])
+        authority = self.records.read(AUTHORIZATIONS, user['id'])
+        if authority is None:
+            return None
+        result = self.verify_completion(request)
+        if result.get('maintenance') is not True:
+            raise AgentDataToolError('asr_lexicon_update_not_completed')
+        return {'state': 'saved', 'revision': result['revision'], 'changes': result['changes'],
+            'verified': True, 'receipt_ref': result['receipt_ref']}
 
     @staticmethod
     def _policy(request):
         version = request.get('policy_versions', {}).get('agent_data')
-        if version != '@1':
+        if not isinstance(version, str) or version not in {'@1', '@2', '@3', '@4'}:
             raise AgentDataToolError('agent_data_policy_unavailable')
         return get('agent_data', version=version)
+
+    @staticmethod
+    def _maintenance_enabled(request):
+        return request.get('policy_versions', {}).get('agent_data') in ('@2', '@3', '@4')
+
+    def _maintenance(self, request, inputs):
+        if not self._maintenance_enabled(request) or inputs.get('format') != 'json':
+            return None
+        try:
+            value = json.loads(inputs['text'])
+        except (ValueError, TypeError) as error:
+            raise AgentDataToolError('invalid_asr_lexicon_import') from error
+        if isinstance(value, list):
+            return None
+        if not self.schemas['maintenance'].is_valid(value):
+            raise AgentDataToolError('invalid_asr_lexicon_changes')
+        return value['operations']
 
     def _binding(self, turn_id, reader=None):
         reader = reader or self.records
@@ -187,7 +313,7 @@ class AgentDataTools:
         facts = {key: user.payload.get(key) for key in ('user_text', 'created_at', 'thread_id', 'project_id', 'intent')}
         return frozen, {'id': identity, 'revision': user.revision, 'facts': facts}
 
-    def _preview(self, turn_id, identity, reader=None):
+    def _preview(self, turn_id, identity, reader=None, *, validate_current=True):
         reader = reader or self.records
         frozen, user = self._binding(turn_id, reader)
         row = reader.read(PREVIEWS, identity) if isinstance(identity, str) else None
@@ -199,7 +325,16 @@ class AgentDataTools:
         if reader.read(AUTHORIZATIONS, user['id']) is not None:
             raise AgentDataToolError('agent_data_instruction_consumed')
         inputs = row.payload['inputs']
-        if not self._policy(frozen).authorized_import(user['facts']['user_text'], inputs['text'], inputs['format']):
+        if row.payload.get('kind') == 'maintenance':
+            operations = self._maintenance(frozen, inputs)
+            if operations is None:
+                raise AgentDataToolError('agent_data_preview_changed')
+            lexicon = self.lexicon if reader is self.records else self._enlisted(reader)
+            if validate_current:
+                current = lexicon.change_terms(operations=operations, expected_revision=inputs['expected_revision'])
+                if current['changes'] != row.payload.get('changes'):
+                    raise AgentDataToolError('agent_data_preview_changed')
+        elif not self._policy(frozen).authorized_import(user['facts']['user_text'], inputs['text'], inputs['format']):
             raise AgentDataToolError('agent_data_explicit_instruction_required')
         return row, frozen, user
 
@@ -216,7 +351,8 @@ class AgentDataTools:
         calls = [decision] if decision.get('type') == 'tool' else decision.get('calls', []) if decision.get('type') == 'tools' else []
         imports = [call for call in calls if call.get('capability_id') == CAPABILITIES[2]]
         if imports and (len(calls) != 1 or not self.can_import(request['turn_id'], imports[0].get('arguments'))):
-            return {'type': 'complete', 'summary': '热词表尚未保存。请以“更新热词表：”开头，换行提供要导入的完整词表。'}
+            return {'type': 'complete', 'summary': ('热词变更未保存，请重新读取词表并生成预览。'
+                if self._maintenance_enabled(request) else '热词表尚未保存。请以“更新热词表：”开头，换行提供要导入的完整词表。')}
         return decision
 
     def invoke(self, identity, call):
@@ -225,12 +361,16 @@ class AgentDataTools:
         if schema is None or not schema.is_valid(args):
             raise AgentDataToolError('agent_data_arguments_invalid')
         frozen, user = self._binding(turn_id)
+        if self.data_operation(frozen) == 'lexicon.read' and identity != CAPABILITIES[0]:
+            raise AgentDataToolError('agent_data_tool_not_allowed')
         if identity not in frozen['capability_policy']['allowed'] or identity in frozen['capability_policy']['denied']:
             raise AgentDataToolError('agent_data_tool_not_allowed')
         if identity == CAPABILITIES[0]:
             if not isinstance(args, dict) or set(args) != {'view'} or args['view'] not in {'skill', 'terms'}:
                 raise AgentDataToolError('agent_data_arguments_invalid')
-            result = ({'name': self.skill.name, 'instructions': self.instructions}
+            selected_skill = self.maintenance_skill if self._maintenance_enabled(frozen) else self.skill
+            instructions = self.maintenance_instructions if self._maintenance_enabled(frozen) else self.instructions
+            result = ({'name': selected_skill.name, 'instructions': instructions}
                       if args['view'] == 'skill' else self.lexicon.read())
             if args['view'] == 'terms':
                 with self.records.begin() as tx:
@@ -241,8 +381,11 @@ class AgentDataTools:
         elif identity == CAPABILITIES[1]:
             if not isinstance(args, dict) or set(args) != {'text', 'format', 'expected_revision'}:
                 raise AgentDataToolError('agent_data_arguments_invalid')
-            result = self.lexicon.import_text(**args, preview=True)
-            authorized = self._policy(frozen).authorized_import(user['facts']['user_text'], args['text'], args['format'])
+            operations = self._maintenance(frozen, args)
+            result = (self.lexicon.import_text(**args, preview=True) if operations is None else
+                self.lexicon.change_terms(operations=operations, expected_revision=args['expected_revision']))
+            authorized = operations is None and self._policy(frozen).authorized_import(
+                user['facts']['user_text'], args['text'], args['format'])
             preview_id = 'lexicon-preview-' + uuid4().hex
             with self.records.begin() as tx:
                 _, current_user = self._binding(turn_id, tx)
@@ -253,7 +396,13 @@ class AgentDataTools:
                     raise AgentDataToolError('agent_data_read_revision_changed')
                 self._record_read(tx, turn_id, result['revision'])
                 tx.put(PREVIEWS, preview_id, {'turn_id': turn_id, 'user': current_user,
-                    'inputs': dict(args), 'authorized': authorized}, expected_revision=0)
+                    'inputs': dict(args), 'authorized': authorized,
+                    'kind': 'maintenance' if operations is not None else 'import',
+                    'changes': result.get('changes')}, expected_revision=0)
+                if operations is not None:
+                    recorded = tx.read(READS, turn_id)
+                    tx.put(READS, turn_id, {**recorded.payload, 'maintenance_preview_id': preview_id},
+                        expected_revision=recorded.revision)
                 tx.commit()
             result = {**result, 'preview_id': preview_id, 'authorized': authorized}
         elif identity == CAPABILITIES[2]:
@@ -271,7 +420,14 @@ class AgentDataTools:
                     preview, _, current_user = self._preview(turn_id, args['preview_id'], tx)
                     self._approved(turn_id, args)
                     enlisted = self._enlisted(tx)
-                    result = enlisted.import_text(**preview.payload['inputs'], preview=False)
+                    if preview.payload.get('kind') == 'maintenance':
+                        operations = self._maintenance(frozen, preview.payload['inputs'])
+                        result = enlisted.change_terms(operations=operations,
+                            expected_revision=preview.payload['inputs']['expected_revision'], preview=False)
+                        if result['changes'] != preview.payload['changes']:
+                            raise AgentDataToolError('agent_data_preview_changed')
+                    else:
+                        result = enlisted.import_text(**preview.payload['inputs'], preview=False)
                     actual = enlisted.read()
                     actual_terms = {row['id']: row for row in actual['terms']}
                     if (actual['revision'] != result['revision']
@@ -315,7 +471,14 @@ class AgentDataTools:
             return False
         target = events[-1]
         decision = self.turns.get(target['data']['payload_ref'])
+        arguments = decision.get('arguments', {})
+        proposed = self.records.read(PREVIEWS, arguments.get('preview_id', '')) if isinstance(arguments, dict) else None
+        if proposed is not None and proposed.payload.get('kind') == 'maintenance':
+            return False
         if decision.get('capability_id') != CAPABILITIES[2] or not self.can_import(request['turn_id'], decision.get('arguments')):
+            return False
+        preview, _, _ = self._preview(request['turn_id'], decision['arguments']['preview_id'])
+        if preview.payload.get('kind') == 'maintenance':
             return False
         action = validate_turn_action({'schema_version': '1.0.0',
             'action_id': 'action-' + uuid4().hex, 'turn_id': request['turn_id'], 'type': 'approve',

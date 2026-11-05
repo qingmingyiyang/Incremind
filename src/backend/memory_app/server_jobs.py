@@ -4,12 +4,13 @@ from __future__ import annotations
 import asyncio
 from collections import Counter, deque
 from contextvars import Context, copy_context
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager, ExitStack, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import inspect
 from pathlib import Path
 import stat
+from threading import Lock
 import time
 
 from backend.security.user_context import USER_ACCESS, authorize_user
@@ -19,6 +20,78 @@ from core.storage_provider.vault_backup_restore import _native_io_path
 
 class QuotaError(ValueError):
     """Fixed resource-paused reason for API/tray projection."""
+
+
+class _IntakeBudget:
+    def __init__(self, scheduler, user_id):
+        self.scheduler, self.user_id = scheduler, user_id
+        self.baseline, self.reserved = scheduler.storage_bytes(user_id), 0
+        self.active = True
+
+    def _basis(self):
+        if not self.active:
+            raise QuotaError('intake_admission_expired')
+        user = self.scheduler._user(self.user_id)
+        return user, max(self.baseline + self.reserved, self.scheduler.storage_bytes(self.user_id))
+
+    def __call__(self, bytes_delta):
+        if type(bytes_delta) is not int or bytes_delta < 0:
+            raise ValueError('intake_bytes_invalid')
+        user, accounted = self._basis()
+        limit = user['storage_limit_mb']
+        if limit is not None and accounted + bytes_delta > limit * 1024 * 1024:
+            raise QuotaError('storage_quota_exceeded')
+        self.reserved += bytes_delta
+
+    def reserve_up_to(self, cap_bytes):
+        if type(cap_bytes) is not int or cap_bytes < 1:
+            raise ValueError('intake_cap_invalid')
+        user, accounted = self._basis()
+        limit = user['storage_limit_mb']
+        amount = cap_bytes if limit is None else min(cap_bytes, max(0, limit * 1024 * 1024 - accounted))
+        if amount < 1:
+            raise QuotaError('storage_quota_exceeded')
+        self.reserved += amount
+        return _FiniteIntakeCap(self, amount, user['revision'])
+
+
+class _FiniteIntakeCap:
+    def __init__(self, budget, amount, user_revision):
+        self.budget, self.remaining, self.user_revision = budget, amount, user_revision
+        self.active, self._reader = True, None
+
+    @contextmanager
+    def using_reader(self, reader):
+        if self._reader is not None:
+            raise QuotaError('intake_cap_reader_conflict')
+        self._reader = reader
+        try:
+            self.validate()
+            yield self
+        finally:
+            self._reader = None
+
+    def validate(self):
+        if not self.active or not self.budget.active:
+            raise QuotaError('intake_admission_expired')
+        reader = self._reader if self._reader is not None else self.budget.scheduler.users.records
+        user = reader.read('server_users', self.budget.user_id)
+        if (user is None or user.revision != self.user_revision or user.payload.get('disabled_at') is not None
+                or reader.read('server_user_deletions', self.budget.user_id) is not None):
+            raise QuotaError('intake_account_changed')
+
+    def consume(self, size):
+        self.validate()
+        if type(size) is not int or size < 0:
+            raise ValueError('intake_bytes_invalid')
+        if size > self.remaining:
+            raise QuotaError('intake_phase_budget_exceeded')
+        self.remaining -= size
+
+    def close(self):
+        if self.active:
+            self.budget.reserved -= self.remaining
+            self.active = False
 
 
 async def retain_until_finished(awaitable):
@@ -56,7 +129,8 @@ class _Job:
 
 
 class ServerJobScheduler:
-    def __init__(self, users, *, concurrency=1, monotonic=time.monotonic, clock=None, execution_lease=None):
+    def __init__(self, users, *, concurrency=1, monotonic=time.monotonic, clock=None, execution_lease=None,
+                 related_storage_roots=None):
         if type(concurrency) is not int or concurrency < 1:
             raise ValueError('server_concurrency_invalid')
         self.users, self.concurrency = users, concurrency
@@ -67,26 +141,57 @@ class ServerJobScheduler:
         self._last_user = None
         self._active, self._ledger_failed = Counter(), False
         self._intake_locks = {}
+        self._intake_locks_guard = Lock()
+        self.related_storage_roots = related_storage_roots
         self.execution_lease = execution_lease
+        self.admission = None
+
+    @property
+    def closed(self):
+        return self._closed
 
     @asynccontextmanager
     async def intake(self, user_id):
-        """Serialize user admission through the real owner persistence boundary."""
-        lock = self._intake_locks.setdefault(user_id, asyncio.Lock())
-        async with lock:
-            self.check_intake(user_id)
-            baseline, reserved = self.storage_bytes(user_id), 0
-            def check(bytes_delta):
-                nonlocal reserved
-                if type(bytes_delta) is not int or bytes_delta < 0:
-                    raise ValueError('intake_bytes_invalid')
-                user = self._user(user_id)
-                limit = user['storage_limit_mb']
-                projected = max(baseline + reserved, self.storage_bytes(user_id)) + bytes_delta
-                if limit is not None and projected > limit * 1024 * 1024:
-                    raise QuotaError('storage_quota_exceeded')
-                reserved += bytes_delta
-            yield check
+        async with self.intake_many((user_id,)) as budgets:
+            yield budgets[user_id]
+
+    def _intake_lock(self, user_id):
+        with self._intake_locks_guard:
+            return self._intake_locks.setdefault(user_id, Lock())
+
+    @contextmanager
+    def storage_guard(self, user_ids):
+        # 同步转让与异步入库共用同一组锁，始终按用户编号取得。
+        with ExitStack() as stack:
+            for user_id in sorted(set(user_ids)):
+                lock = self._intake_lock(user_id)
+                if not lock.acquire(blocking=False):
+                    raise QuotaError('storage_admission_in_progress')
+                stack.callback(lock.release)
+            yield
+
+    @asynccontextmanager
+    async def intake_many(self, user_ids):
+        user_ids = sorted(set(user_ids))
+        locks, budgets = [], {}
+        try:
+            for user_id in user_ids:
+                lock = self._intake_lock(user_id)
+                # 等待容量锁时不占用实际文件和 SQLite 作业使用的线程池。
+                while not lock.acquire(blocking=False):
+                    await asyncio.sleep(0.05)
+                locks.append(lock)
+            for user_id in user_ids:
+                self.check_intake(user_id)
+                budgets[user_id] = _IntakeBudget(self, user_id)
+            try:
+                yield budgets
+            finally:
+                for budget in budgets.values():
+                    budget.active = False
+        finally:
+            for lock in reversed(locks):
+                lock.release()
 
     def active_for(self, user_id):
         return self._active[user_id]
@@ -102,9 +207,34 @@ class ServerJobScheduler:
             raise QuotaError('user_disabled')
         return user
 
-    def storage_bytes(self, user_id):
+    def storage_bytes(self, user_id, *, reader=None):
+        related = (self.related_storage_roots(user_id, reader=reader)
+                   if self.related_storage_roots is not None else nullcontext(()))
+        with related as roots:
+            return self._storage_bytes(user_id, roots)
+
+    def _storage_bytes(self, user_id, related_roots):
+        roots = (self.users.root_for(user_id), *related_roots)
+        distinct, total = set(), 0
+        for root in roots:
+            root = Path(root).absolute()
+            if root in distinct:
+                continue
+            distinct.add(root)
+            total += self._root_bytes(root)
+        return total
+
+    @staticmethod
+    def _root_bytes(root):
         # 与备份和删除预检共用扩展路径，避免长文件被 is_file 静默漏算。
-        root = Path(_native_io_path(self.users.root_for(user_id)))
+        root = Path(_native_io_path(root))
+        try:
+            information = root.lstat()
+        except FileNotFoundError:
+            return 0
+        if (not stat.S_ISDIR(information.st_mode) or stat.S_ISLNK(information.st_mode)
+                or getattr(information, 'st_file_attributes', 0) & 0x400):
+            raise QuotaError('user_storage_invalid')
         total = 0
         for path in root.rglob('*'):
             try:
@@ -155,6 +285,8 @@ class ServerJobScheduler:
     async def submit(self, user_id, kind, callback, *, retain_running=False):
         if self._closed:
             raise QuotaError('server_jobs_closed')
+        if self.admission is not None and not self.admission(user_id):
+            raise QuotaError('runtime_restore_in_progress')
         access = USER_ACCESS.get()
         if access is not None and access.target_user_id != user_id:
             raise ValueError('job_target_mismatch')

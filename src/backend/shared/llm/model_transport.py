@@ -47,6 +47,55 @@ class ModelContinuationFailed(RuntimeError):
         super().__init__('model_continuation_failed')
 
 
+class ModelSteerInterrupt(BaseException):
+    def __init__(self, identity, *, attempt_generation, close_witness=None):
+        self.identity, self.close_witness = identity, close_witness
+        self.attempt_generation = attempt_generation
+        super().__init__('model_steer_interrupted')
+
+
+class OwnedAttemptInterruption:
+    def __init__(self, *, turn_id, invocation_id, attempt_id):
+        self.identity = (turn_id, invocation_id, attempt_id)
+        if any(not isinstance(value, str) or not value for value in self.identity):
+            raise ValueError('invalid_steer_attempt_identity')
+        self.lock, self.pending, self.registration = RLock(), False, None
+        self.generation = 0
+
+    def register(self, interrupt):
+        if not callable(interrupt):
+            raise ValueError('invalid_steer_interrupt_callback')
+        token = object()
+        with self.lock:
+            if self.registration is not None:
+                raise RuntimeError('steer_attempt_already_registered')
+            self.generation += 1
+            self.registration = (token, interrupt, self.generation)
+            pending = self.pending
+        if pending:
+            interrupt()
+        return token
+
+    def generation_for(self, token):
+        with self.lock:
+            if self.registration is None or self.registration[0] is not token:
+                raise RuntimeError('steer_attempt_registration_changed')
+            return self.registration[2]
+
+    def unregister(self, token):
+        with self.lock:
+            if self.registration is not None and self.registration[0] is token:
+                self.registration = None
+
+    def request(self):
+        with self.lock:
+            self.pending = True
+            callback = self.registration[1] if self.registration is not None else None
+        # 关闭动作不持登记锁，旧 attempt 的清理只能移除自己的登记。
+        if callback is not None:
+            callback()
+
+
 class ModelTransportTimeout(float):
     """SDK-compatible header timeout carrying an injected live body deadline.
 
@@ -56,7 +105,7 @@ class ModelTransportTimeout(float):
     can close its own socket without affecting other sessions.
     """
     def __new__(cls, *, remaining: Callable[[], float], limits: Mapping[str, object],
-                header_retry: bool = False, owned_client_factory=None):
+                header_retry: bool = False, owned_client_factory=None, interruption=None):
         header, idle = float(limits['header_timeout']), float(limits['idle_timeout'])
         if any(not math.isfinite(value) or value <= 0 for value in (header, idle)):
             raise ValueError('invalid_model_transport_timeout')
@@ -64,6 +113,9 @@ class ModelTransportTimeout(float):
         instance = super().__new__(cls, value)
         instance.remaining, instance.idle = remaining, idle
         instance.owned_client_factory = owned_client_factory
+        if interruption is not None and not isinstance(interruption, OwnedAttemptInterruption):
+            raise ValueError('invalid_owned_attempt_interruption')
+        instance.interruption = interruption
         return instance
 
     def header_error(self, error):
@@ -117,6 +169,8 @@ def complete_with_owned_transport(completion, request):
     """
     timeout = request.get('timeout')
     if not isinstance(timeout, ModelTransportTimeout) or not str(request.get('model', '')).startswith('openai/'):
+        if isinstance(timeout, ModelTransportTimeout) and timeout.interruption is not None:
+            raise ModelTransportError('provider_rejected')
         return completion(**request)
     import litellm
     from litellm.main import openai_chat_completions
@@ -133,10 +187,11 @@ def complete_with_owned_transport(completion, request):
         raise ModelTransportError('provider_rejected')
     attempt = _OwnedHTTPAttempt(client, timeout)
     try:
+        attempt.check()
         result = completion(**{**request, 'client': sdk.with_options(http_client=client, max_retries=0)})
         attempt.check()
         if request.get('stream'):
-            return _OwnedModelStream(result, attempt)
+            return _OwnedModelStream(result, attempt, _observe_sdk_provider(result))
     except BaseException as error:
         attempt.close()
         attempt.check()
@@ -151,9 +206,23 @@ class _OwnedHTTPAttempt:
         self.client, self.timeout = client, timeout
         self.lock, self.sockets = RLock(), []
         self.failure, self.closed = None, False
+        self.registration = None
+        self.interruption_generation = None
         self.header = None
         self.header_deadline = None
-        self.total = Timer(timeout.remaining(), lambda: self._expire('total'))
+        try:
+            remaining = timeout.remaining()
+        except BaseException:
+            client.close()
+            raise
+        if timeout.interruption is not None:
+            try:
+                self.registration = timeout.interruption.register(lambda: self._expire('steer'))
+                self.interruption_generation = timeout.interruption.generation_for(self.registration)
+            except BaseException:
+                client.close()
+                raise
+        self.total = Timer(remaining, lambda: self._expire('total'))
         self.total.daemon = True
         self.total.start()
         client.event_hooks['request'].insert(0, self.request)
@@ -172,6 +241,10 @@ class _OwnedHTTPAttempt:
                 pass
 
     def check(self):
+        if self.failure == 'steer':
+            raise ModelSteerInterrupt(self.timeout.interruption.identity,
+                attempt_generation=self.interruption_generation,
+                close_witness=_provider_closed_witness() if self.closed else None)
         if self.failure == 'header':
             raise ModelTransportError('header_timeout')
         if self.failure == 'total':
@@ -224,12 +297,65 @@ class _OwnedHTTPAttempt:
         except Exception:
             raise ModelTransportError('provider_close_failed') from None
         self.closed = True
+        if self.registration is not None:
+            self.timeout.interruption.unregister(self.registration)
+
+
+def _observe_sdk_provider(completion):
+    """Observe only the proven SDK pair, before LiteLLM normalizes its chunks.
+
+    LiteLLM can synthesize a terminal and estimate usage at natural EOF.  Those
+    adapter values do not prove that this provider finished or reported tokens.
+    Custom completion streams retain their existing behavior.
+    """
+    provider = getattr(completion, 'completion_stream', None)
+    if provider is None:
+        return None
+    from litellm.utils import CustomStreamWrapper
+    from openai import Stream
+    if (not isinstance(completion, CustomStreamWrapper)
+            or not isinstance(provider, Stream)):
+        return None
+    observer = _ProviderChunkFacts(provider)
+    completion.completion_stream = observer
+    return observer
+
+
+class _ProviderChunkFacts:
+    """Pass through original SDK chunks; retain no content or tool arguments."""
+    def __init__(self, provider):
+        self.provider, self.iterator = provider, iter(provider)
+        self.terminal, self.usage = False, None
+
+    @property
+    def response(self):
+        return self.provider.response
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        chunk = next(self.iterator)
+        if any((getattr(choice, 'index', None) == 0
+                or len(chunk.choices) == 1 and getattr(choice, 'index', None) is None)
+               and isinstance(choice.finish_reason, str) and choice.finish_reason for choice in chunk.choices):
+            self.terminal = True
+        if chunk.usage is not None:
+            # exclude_unset preserves provider-reported zero and omitted fields;
+            # SDK defaults are not measured provider usage.
+            self.usage = chunk.usage.model_dump(exclude_unset=True)
+        return chunk
+
+    def close(self):
+        self.provider.close()
 
 
 class _OwnedModelStream:
-    def __init__(self, stream, attempt):
+    def __init__(self, stream, attempt, provider_facts=None):
         self.stream, self.iterator, self.attempt = stream, iter(stream), attempt
-        self.closed = False
+        self.provider_facts = provider_facts
+        self.closed, self.provider_incomplete = False, False
+        self.last_chunk, self.usage_projected, self.pending_error = None, None, None
 
     @property
     def completion_stream(self):
@@ -239,12 +365,59 @@ class _OwnedModelStream:
         return self
 
     def __next__(self):
+        if self.pending_error is not None:
+            error, self.pending_error = self.pending_error, None
+            raise error
         try:
-            return next(self.iterator)
+            self.attempt.check()
+            if self.provider_incomplete:
+                raise ConnectionError('provider stream ended before its terminal event')
+            chunk = next(self.iterator)
+            self.attempt.check()
+            self.last_chunk = chunk
+            if self.provider_facts is not None:
+                if (not self.provider_facts.terminal
+                        and any(getattr(choice, 'finish_reason', None) is not None for choice in chunk.choices)):
+                    if self.provider_facts.usage is not None:
+                        # Preserve already reported consumption before failing;
+                        # this metadata contains no terminal or answer content.
+                        self.provider_incomplete = True
+                        return self._usage_metadata()
+                    raise ConnectionError('provider stream ended before its terminal event')
+                # Keep the SDK's public chunk type and content; only measured
+                # provider usage may enter the normal attempt ledger.
+                chunk = chunk.model_copy(update={'usage': self.provider_facts.usage})
+                self.usage_projected = self.provider_facts.usage
+            return chunk
+        except StopIteration:
+            self.close()
+            self.attempt.check()
+            if self.provider_facts is not None and not self.provider_facts.terminal:
+                raise ConnectionError('provider stream ended before its terminal event') from None
+            raise
         except BaseException as error:
             self.close()
             self.attempt.check()
-            raise self.attempt.timeout.header_error(error) from None
+            failure = self.attempt.timeout.header_error(error)
+            if (self.provider_facts is not None and self.provider_facts.usage is not None
+                    and self.provider_facts.usage != self.usage_projected and isinstance(failure, Exception)):
+                # Only ordinary SDK/provider decoding failures may yield already
+                # measured usage once. Control/cancellation and close failures
+                # retain the immediate path above, without another body read.
+                import json
+                from openai import APIError
+                if isinstance(failure, (APIError, json.JSONDecodeError)):
+                    self.pending_error = failure
+                    return self._usage_metadata()
+            raise failure from None
+
+    def _usage_metadata(self):
+        chunk = self.last_chunk
+        if chunk is None:
+            from litellm.types.utils import ModelResponseStream
+            chunk = ModelResponseStream(choices=[])
+        self.usage_projected = self.provider_facts.usage
+        return chunk.model_copy(update={'choices': [], 'usage': self.usage_projected})
 
     def close(self):
         if self.closed:

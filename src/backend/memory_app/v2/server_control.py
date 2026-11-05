@@ -64,7 +64,7 @@ async def body(request, allowed, required=()):
     return value
 
 
-def install_server_routes(application, *, users, registry, audit, jobs):
+def install_server_routes(application, *, users, registry, audit, jobs, accounts=None):
     router = APIRouter(prefix='/api/v2/server')
 
     @router.get('/users')
@@ -88,8 +88,18 @@ def install_server_routes(application, *, users, registry, audit, jobs):
 
     @router.post('/users')
     async def create_user(request: Request):
-        data = await body(request, {'name'}, {'name'})
-        return response(201, users.create(USER_ACCESS.get().caller, **data))
+        from starlette.concurrency import run_in_threadpool
+        data = await body(request, {'name', 'login_name', 'password'}, {'name'})
+        return response(201, await run_in_threadpool(users.create, USER_ACCESS.get().caller, **data))
+
+    @router.put('/users/{user_id}/login')
+    async def reset_login(user_id: str, request: Request):
+        from starlette.concurrency import run_in_threadpool
+        from .server_accounts import ServerAccounts
+        owner = accounts or ServerAccounts(users, registry)
+        data = await body(request, {'login_name', 'password', 'expected_revision', 'expected_login_revision'},
+                          {'login_name', 'password', 'expected_revision', 'expected_login_revision'})
+        return response(200, await run_in_threadpool(owner.reset, USER_ACCESS.get().caller, user_id, **data))
 
     @router.patch('/users/{user_id}')
     async def update_user(user_id: str, request: Request):
@@ -102,7 +112,8 @@ def install_server_routes(application, *, users, registry, audit, jobs):
         from .server_deletion import ServerUserDeletion
         data = await body(request, {'expected_revision', 'confirmation'}, {'expected_revision', 'confirmation'})
         intent = request.scope['state'].get('server_audit_intent')
-        deletion = ServerUserDeletion(users, application.state.server_user_pool, jobs)
+        deletion = ServerUserDeletion(users, application.state.server_user_pool, jobs,
+            related_owners=getattr(application.state, 'server_related_owners', ()))
         result, removed = await retain_until_finished(deletion.delete(USER_ACCESS.get().caller, user_id,
                                          intent_id=intent, control_token=request.scope['state'].get('server_control_token'), **data))
         if removed:
@@ -123,7 +134,14 @@ def install_server_routes(application, *, users, registry, audit, jobs):
 
     @router.get('/audit')
     def access_history():
-        return response(200, {'items': audit.list_for(USER_ACCESS.get())})
+        return response(200, {'items': audit.list_for(USER_ACCESS.get()), 'entries': audit.entries_for(USER_ACCESS.get())})
+
+    @router.get('/audit/{audit_id}/objects')
+    async def audit_objects(audit_id: str):
+        from .audit_objects import object_details
+        if not _SEGMENT.fullmatch(audit_id):
+            raise UserError('user_request_invalid')
+        return response(200, await object_details(application, audit, audit_id))
 
     @router.get('/attribution')
     async def attribution(collection: str, object_id: str, revision: int = Query(gt=0),
@@ -153,6 +171,8 @@ def install_server_routes(application, *, users, registry, audit, jobs):
     async def user_error(_request, error):
         code = str(error)
         status = {'user_unauthorized': 401, 'user_forbidden': 403, 'user_not_found': 404,
+            'login_failed': 401, 'login_rate_limited': 429,
+            'login_name_conflict': 409, 'login_revision_conflict': 409,
             'user_revision_conflict': 409, 'user_name_conflict': 409,
             'user_delete_protected': 403, 'user_delete_requires_disabled': 409,
             'user_delete_busy': 409, 'user_delete_shared_owner': 409,

@@ -7,6 +7,7 @@ from backend.shared.memory_sidecars import decayed_score, utc_now
 from ..context_adapter import ContextSelectionError, format_recognition_content
 from ..recall_state import is_recall_excluded
 from ..source_egress import SourceEgressService
+from ..transaction_records import TransactionRecords
 from .budget import text_tokens
 from .insights import insight_view
 from .policies import get, version as policy_version
@@ -18,10 +19,14 @@ TASK_COLLECTION = 'v2_task_styles'
 _INPUT_FIELDS = ('version','text','count','tokens','selected')
 
 
-def _eligible(records, service, project, scene, scope_version):
-    authority, result = SourceEgressService(records), []
+def _eligible(records, service, project, scene, scope_version, *, source_owner=None,
+              source_reader=None, own_projects=None):
+    authority = (SourceEgressService(source_owner, reader=source_reader) if source_owner is not None else
+        SourceEgressService(service.records, reader=records)
+        if isinstance(records, TransactionRecords) else SourceEgressService(records))
+    result = []
     visibility = get('scope', version=scope_version)
-    for own in sorted({project, 'me'}):
+    for own in sorted({project, 'me'} if own_projects is None else own_projects):
         if is_private_project(records, own):
             continue
         scope = WorkScope('local-user', own)

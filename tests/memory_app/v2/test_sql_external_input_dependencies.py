@@ -1,5 +1,6 @@
 """Delivered SQL numbers retain their selected domain incarnations at writeback."""
 from copy import deepcopy
+from functools import partial
 import json
 import sqlite3
 from types import SimpleNamespace
@@ -528,7 +529,7 @@ def test_bare_domain_service_refuses_sql_capability_and_keeps_ordinary_statement
 def test_fixed_source_factory_uses_the_real_service_reader_and_complete_chain(env):
     from backend.memory_app.source_egress import recognition_service, prepare_sources
     from backend.recognition import RecognitionService
-    hook = prepare_sources
+    hook = partial(prepare_sources, source_owner=env.records)
     service = recognition_service(env.records, cache_invalidation=hook)
     assert isinstance(service, RecognitionService) and service.records is env.records
     assert service.cache_invalidation is hook

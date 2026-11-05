@@ -26,12 +26,20 @@ export function saveDeviceCredential(value) {
   writeStoredJson(SLOT, inMemory);
 }
 
-export function forgetDeviceCredential() {
+export function deviceIdentity() { return { key: readDeviceCredential()?.key || null, revision: spaceRevision }; }
+
+export function isDeviceIdentity(identity) {
+  return identity?.revision === spaceRevision && identity?.key === (readDeviceCredential()?.key || null);
+}
+
+export function forgetDeviceCredential(identity) {
+  if (identity && !isDeviceIdentity(identity)) return false;
   inMemory = null;
   sessionInitialized = true;
   selectedUser = null; spaceRevision += 1;
   removeStoredItem(SLOT);
   globalThis.window?.dispatchEvent(new Event('chriptmas-device-required'));
+  return true;
 }
 
 export function readUserSpace() { return readDeviceCredential() ? selectedUser : null; }
@@ -60,11 +68,11 @@ export function isProductUrl(input) {
 
 export async function productFetch(input, init = {}) {
   const url = isProductUrl(input) ? new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, globalThis.location?.href) : null;
-  const publicPath = url && ['/api/health', '/api/v2/devices/exchange'].includes(url.pathname);
+  const publicPath = url && ['/api/health', '/api/v2/devices/exchange', '/api/v2/auth/login'].includes(url.pathname);
   const credential = url && !publicPath ? readDeviceCredential() : null;
   const revision = spaceRevision, target = credential ? readUserSpace() : null;
-  // The one-time pairing code in the exchange body is also a credential.
-  let options = url?.pathname === '/api/v2/devices/exchange' ? { ...init, redirect: 'error' } : init;
+  // 登录密码和配对码均禁止通过重定向发送。
+  let options = publicPath && url.pathname !== '/api/health' ? { ...init, redirect: 'error' } : init;
   if (credential) {
     const headers = new Headers(init.headers || (typeof input === 'object' ? input.headers : undefined));
     headers.set('Authorization', 'Bearer ' + credential.key);
@@ -77,15 +85,32 @@ export async function productFetch(input, init = {}) {
   return response;
 }
 
-export async function downloadProductFile(url, name, isCurrent = () => true) {
+export async function downloadProductFile(url, name, isCurrent = () => true, { signal } = {}) {
   const revision = spaceRevision;
   if (!isProductUrl(url)) throw new Error('device_download_destination_invalid');
-  const response = await productFetch(url, { cache: 'no-store' });
-  if (!response.ok) throw new Error('device_download_failed');
+  const response = await productFetch(url, { cache: 'no-store', signal });
+  return downloadResponseBlob(response, name, () => revision === spaceRevision && isCurrent(), { signal });
+}
+
+export async function downloadResponseBlob(response, name, isCurrent = () => true, { signal } = {}) {
+  const revision = spaceRevision;
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error('device_download_failed');
+  }
+  if (signal?.aborted || !isCurrent()) { await response.body?.cancel(); return; }
   const blob = await response.blob();
-  if (!isCurrent() || revision !== spaceRevision) return;
-  const href = URL.createObjectURL(blob), link = document.createElement('a');
-  link.href = href; link.download = name || '原件'; link.rel = 'noreferrer';
-  document.body.appendChild(link); link.click(); link.remove();
-  setTimeout(() => URL.revokeObjectURL(href), 1000);
+  if (signal?.aborted || !isCurrent() || revision !== spaceRevision) return;
+  const encoding = response.headers.get('content-encoding');
+  const length = response.headers.get('content-length');
+  if ((!encoding || encoding.toLowerCase() === 'identity') && length !== null
+    && (!/^\d+$/.test(length) || Number(length) !== blob.size)) throw new Error('device_download_size_mismatch');
+  const link = document.createElement('a'), href = URL.createObjectURL(blob);
+  try {
+    link.href = href; link.download = name || '原件'; link.rel = 'noreferrer';
+    document.body.appendChild(link); link.click();
+    return { size_bytes: blob.size, filename: link.download };
+  } finally {
+    link.remove(); setTimeout(() => URL.revokeObjectURL(href), 1000);
+  }
 }

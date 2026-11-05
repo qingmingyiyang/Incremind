@@ -1,12 +1,10 @@
 """认识领域资格、显式用户审阅和导出事实的事务编排。"""
 from copy import deepcopy
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from uuid import uuid4
 
 from backend.recognition import RecognitionError, WorkScope
 from ..source_egress import SourceEgressService
-from ..transaction_records import TransactionRecords
 from .insights import insight_view
 from .insight_validity import read_validity
 from .policies import get, version
@@ -18,8 +16,9 @@ _UNSET = object()
 
 
 class SkillExports:
-    def __init__(self, records, service, *, owner_id):
+    def __init__(self, records, service, *, owner_id, generation_validator=None):
         self.records, self.service, self.owner_id = records, service, owner_id
+        self.generation_validator = generation_validator
 
     def _sources(self, reader, project, descriptors, scene, *, scope_version=None):
         if not isinstance(descriptors, list) or not 1 <= len(descriptors) <= 100:
@@ -42,9 +41,7 @@ class SkillExports:
             except RecognitionError as error:
                 raise ValueError('skill_source_unavailable') from error
             # 用原读模型继承候选和整理稿的场景，同一事务内读取领域资格。
-            view = insight_view(reader, scope, identity, service=SimpleNamespace(
-                get_recognition=lambda *, scope, recognition_id: qualified
-                if scope == qualified.scope and recognition_id == qualified.id else None))
+            view = insight_view(reader, scope, identity, service=self.service, source_owner=self.records)
             validity = read_validity(reader, identity)
             if view is None or not qualified.authorized or not get('skill_export', version='@1')(
                     view, scene=scene, validity=validity, reference=reference, scope_version=scope_version):
@@ -52,7 +49,7 @@ class SkillExports:
             identities.add(identity)
             result.append({'number': len(result) + 1, **descriptor, 'text': row.payload['content'],
                 'conditions': view['conditions'], 'scene': view['scene'], 'validity': validity,
-                'source_snapshot': SourceEgressService(TransactionRecords(reader)).snapshot(scope,
+                'source_snapshot': SourceEgressService(self.records, reader=reader).snapshot(scope,
                     [{'type': 'recognition', 'id': identity, 'revision': row.revision}])})
         return result
 
@@ -80,7 +77,7 @@ class SkillExports:
         return {'id': row.object_id, **deepcopy(dict(row.payload)), 'revision': row.revision,
             'needs_update': self._changed(reader, row)}
 
-    def _generation_origin(self, reader, project, sources, document, turn_id):
+    def _generation_origin(self, reader, project, sources, document, turn_id, *, scene=None):
         if turn_id is None:
             return None
         binding = reader.read('v2_memory_turn_keys', turn_id)
@@ -88,12 +85,19 @@ class SkillExports:
                 or binding.payload['request']['scope']['project_id'] != project):
             raise ValueError('skill_generation_origin_invalid')
         request = binding.payload['request']
+        from .automatic_constraint_input import KIND, constraint_markers
+        from .memory_turn import MemoryTurn
+        store = MemoryTurn.store_for(self.records)
+        if self.generation_validator is not None:
+            self.generation_validator(request, reader=reader, spec={
+                'producer': 'skill-export', 'mode': 'scope', 'scene': scene,
+                'anchors': [{'type': 'recognition', 'id': source['id']} for source in sources]})
+        elif constraint_markers(request) or store.get_immutable_payload(turn_id, KIND) is not None:
+            raise ValueError('skill_generation_origin_invalid')
         materials = [{'type': 'recognition', 'id': source['id'], 'revision': source['revision'],
             'project_id': project} for source in sources]
         if request['privacy']['material_refs'] != materials:
             raise ValueError('skill_generation_origin_invalid')
-        from .memory_turn import MemoryTurn
-        store = MemoryTurn.store_for(self.records)
         saved = store.get_immutable_payload(turn_id, 'memory-generation-output-v1')
         events = tuple(store.events_after(turn_id))
         # 不可变结果可能先于终态落盘；原内核完成证明与原请求同时成立才接收。
@@ -112,7 +116,7 @@ class SkillExports:
             if frozen_sources is not None and frozen != frozen_sources:
                 raise ValueError('skill_sources_changed')
             document = validate_document(document, source_count=len(frozen))
-            origin = self._generation_origin(tx, project, frozen, document, generation_turn_id)
+            origin = self._generation_origin(tx, project, frozen, document, generation_turn_id, scene=scene)
             if origin is not None:
                 # 相同生成请求重放只返回已有草稿，保留用户后续的编辑和审阅事实。
                 existing = next((item for item in tx.list(COLLECTION)
@@ -191,7 +195,7 @@ class SkillExports:
             if frozen_sources is not None and frozen != frozen_sources:
                 raise ValueError('skill_sources_changed')
             document = validate_document(document, source_count=len(frozen))
-            origin = self._generation_origin(tx, project, frozen, document, generation_turn_id)
+            origin = self._generation_origin(tx, project, frozen, document, generation_turn_id, scene=scene)
             origins = list(current.payload.get('generation_turn_ids',
                 [current.payload['generation_turn_id']] if current.payload.get('generation_turn_id') else []))
             if origin is not None and origin not in origins:
@@ -225,7 +229,7 @@ class SkillExports:
         if not current.payload['reviewed'] or current.payload['reviewed_by'] != self.owner_id:
             raise ValueError('skill_review_required')
         # 本地预览允许手写；发出的包仍排除私密及已撤回的来源。
-        authority = SourceEgressService(TransactionRecords(reader))
+        authority = SourceEgressService(self.records, reader=reader)
         for source in current.payload['sources']:
             try:
                 authority.require(source['source_snapshot'], 'generation')

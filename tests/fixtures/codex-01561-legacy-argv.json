@@ -1,0 +1,15 @@
+[
+  "EXE", "exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--strict-config",
+  "--skip-git-repo-check", "-C", "CWD", "--sandbox", "workspace-write",
+  "-c", "approval_policy=\"never\"", "-c", "web_search=\"live\"", "-c", "notify=[]",
+  "-c", "project_doc_max_bytes=0", "-c", "features.shell_tool=false", "-c", "features.unified_exec=false",
+  "-c", "features.hooks=false", "-c", "features.plugins=false", "-c", "features.apps=false",
+  "-c", "features.multi_agent=false", "-c", "features.shell_snapshot=false",
+  "-c", "features.skill_mcp_dependency_install=false", "-c", "features.code_mode_host=false",
+  "-c", "mcp_servers.chriptmas-memory.env.CODEX_API_KEY=\"\"",
+  "-c", "mcp_servers.chriptmas-memory.env.OPENAI_API_KEY=\"\"",
+  "-c", "mcp_servers.chriptmas-memory.env.ANTHROPIC_API_KEY=\"\"",
+  "-c", "mcp_servers.chriptmas-memory.env.DEEPSEEK_API_KEY=\"\"",
+  "-c", "PYTHON_TOML", "-c", "ARGS_TOML",
+  "-c", "mcp_servers.chriptmas-memory.env_vars=[]", "-"
+]

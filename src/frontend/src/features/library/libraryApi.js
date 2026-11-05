@@ -3,14 +3,16 @@ import { readResponseJson } from '../../shared/lib/responseJson';
 import { recognitionApi } from '../../shared/api/recognitionApi';
 import { libraryBackendUrl } from '../rebuild/libraryOverviewTransport';
 
-async function request(path, options = {}, expectNoContent = false) {
-  const response = await fetch(libraryBackendUrl(`/api/v2/library/${path}`), { cache: 'no-store', ...options });
+async function request(path, options = {}, expectNoContent = false, binary = false) {
+  const { preserveFailureCode = false, ...transportOptions } = options;
+  const response = await fetch(libraryBackendUrl(`/api/v2/library/${path}`), { cache: 'no-store', ...transportOptions });
   if (expectNoContent && response.status === 204) return;
+  if (binary && response.ok) return response.blob();
   const value = await readResponseJson(response);
   if (!response.ok) {
     const error = new Error(response.status === 409 ? '内容已变化 · 刷新' : '读取未完成 · 重试');
     error.status = response.status;
-    if (value?.detail === 'consolidate_limit') error.code = 'consolidate_limit';
+    if (value?.detail === 'consolidate_limit' || preserveFailureCode && typeof value?.detail === 'string') error.code = value.detail;
     throw error;
   }
   return value;
@@ -34,6 +36,11 @@ const skillMutation = (project, suffix, body, method = 'POST', binary = false) =
   method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 }, binary);
 export const libraryApi = {
+  automaticInspirations: (project, id, { signal } = {}) => request(`inspirations/automatic/${encodeURIComponent(id)}?${new URLSearchParams({ project_id: project })}`, { signal }),
+  readAutomaticInspirations: (project, id, revision, { signal } = {}) => request(`inspirations/automatic/${encodeURIComponent(id)}/read`, {
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: project, expected_revision: revision }),
+  }, true),
   gaps(project, { signal } = {}) {
     return request(`gaps?${new URLSearchParams({ project_id: project })}`, { signal });
   },
@@ -41,7 +48,22 @@ export const libraryApi = {
     return request(`gaps/${encodeURIComponent(id)}/dismiss`, { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: project }) }, true);
   },
   outcomeChoices: (project, { signal } = {}) => request(`outcomes?${new URLSearchParams({ project_id: project })}`, { signal }),
+  outcomeChanges: (project, id) => request(`outcomes/${encodeURIComponent(id)}/changes?${new URLSearchParams({ project_id: project })}`),
+  ackOutcomeChanges: (project, id, changes) => mutation(`outcomes/${encodeURIComponent(id)}/ack`, {
+    project_id: project, expected_revision: changes.ack_revision, observation: changes.observation,
+  }),
+  prepareOutcomeUpdate: (project, id, changes, key) => request(`outcomes/${encodeURIComponent(id)}/update`, {
+    preserveFailureCode: true,
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+    body: JSON.stringify({ project_id: project, expected_revision: changes.ack_revision, observation: changes.observation }),
+  }),
   outcomeVersions: (project, id, { signal } = {}) => request(`outcomes/${encodeURIComponent(id)}/versions?${new URLSearchParams({ project_id: project })}`, { signal }),
+  documentRevision: (project, id, revision, { signal } = {}) => request(`notes/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revision)}?${new URLSearchParams({ project_id: project })}`, { signal }),
+  restoreOutcome: (project, id, sourceRevision, latest, { signal } = {}) => request(`outcomes/${encodeURIComponent(id)}/restore`, {
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: project, source_revision: sourceRevision,
+      expected_latest_id: latest.document_id, expected_latest_revision: latest.revision }),
+  }),
   skillExports: (project, { signal } = {}) => skillRequest(project, '', { signal }),
   skillExportMethods: (project, { scene, signal } = {}) => skillRequest(project, `/methods${scene ? `?${new URLSearchParams({ scene })}` : ''}`, { signal }),
   skillExport: (project, id, { signal } = {}) => skillRequest(project, `/${encodeURIComponent(id)}`, { signal }),
@@ -60,6 +82,27 @@ export const libraryApi = {
   },
   consolidation: (project, { signal } = {}) => request(`consolidate?${new URLSearchParams({ project_id: project })}`, { signal }),
   consolidate: project => mutation('consolidate', { project_id: project }),
+  async extractInspirations(project, scene, documents, { signal, retryToken } = {}) {
+    const response = await fetch(libraryBackendUrl('/api/v2/library/inspirations/extract'), {
+      method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: project, scene: scene || null, documents,
+        ...(retryToken ? { retry_token: retryToken } : {}) }),
+    });
+    const value = await readResponseJson(response);
+    if (!response.ok) {
+      const messages = {
+        inspiration_sources_changed: '资料已变化 · 刷新',
+        inspiration_material_budget_insufficient: '资料过长 · 减少选择',
+        inspiration_document_unavailable: '资料不可用 · 刷新',
+      };
+      const detail = value?.detail;
+      const error = new Error(messages[detail?.code] || (detail?.code === 'inspiration_generation_unknown' ? '提炼状态未确认' : '提炼未完成'));
+      error.status = response.status; error.detail = detail; error.code = detail?.code;
+      if (typeof detail?.retry_token === 'string' && detail.retry_token) error.retryToken = detail.retry_token;
+      throw error;
+    }
+    return value;
+  },
   fileDocument: (project,row,target,scene) => mutation(`notes/${encodeURIComponent(row.document_id)}/file`,{project_id:project,target_project_id:target,scene,expected_revision:row.revision}),
   unfileDocument: (project,id,revision) => mutation(`notes/${encodeURIComponent(id)}/unfile`,{project_id:project,expected_revision:revision}),
   documentScene: (project,row,scene,assignment) => mutation(`notes/${encodeURIComponent(row.document_id)}/scene`,{project_id:project,scene,expected_revision:row.revision,assignment_revision:assignment},'PATCH'),
@@ -89,6 +132,7 @@ export const libraryApi = {
   list: (layer, project, { scene, q = '', signal } = {}) => request(`${names[layer]}?${new URLSearchParams({ project_id: project, ...(scene ? { scene } : {}), q })}`, { signal }),
   drill: (project, layer, id, { document_id, source_id } = {}) => request(`drill?${new URLSearchParams({ project_id: project, from: layer, id, ...(document_id ? { document_id } : {}), ...(source_id ? { source_id } : {}) })}`),
   sourceText: (project, id, { signal } = {}) => request(`sources/${encodeURIComponent(id)}/text?${new URLSearchParams({ project_id: project })}`, { signal }),
+  audioClip: (project, id, start, end, { signal } = {}) => request(`sources/${encodeURIComponent(id)}/clip?${new URLSearchParams({ project_id: project, start, end })}`, { signal }, false, true),
   review: (project, row, action) => mutation(`insights/${encodeURIComponent(row.id)}/${action}`, { project_id: project, expected_revision: row.revision }),
   forget: (project, row, forgotten) => mutation(`insights/${encodeURIComponent(row.id)}/forget`, { project_id: project, forgotten }),
   edit: (project, row, text, conditions) => mutation(`insights/${encodeURIComponent(row.id)}`, { project_id: project, expected_revision: row.revision, text, conditions }, 'PATCH'),

@@ -7,7 +7,6 @@ import logging
 from uuid import uuid4
 
 from backend.memory_app.source_egress import SourceEgressService
-from backend.memory_app.transaction_records import TransactionRecords
 from backend.recognition import WorkScope
 from backend.shared.secret_detection import REDACTED_SECRET, redact_secrets
 
@@ -115,7 +114,7 @@ class ProxyHandoff:
     def _check_selected_secrets(self, selections, credentials):
         """原交接将保存证据正文，先检查拟复制字段并保持原事实不变。"""
         with self.context.records.begin() as tx:
-            authority = SourceEgressService(TransactionRecords(tx))
+            authority = SourceEgressService(self.context.records, reader=tx)
             for selection in selections:
                 material = {key:selection[key] for key in ('type','id','revision','project_id')}
                 scope = WorkScope(self.context.owner_id, selection['project_id'])

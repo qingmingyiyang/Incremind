@@ -2,7 +2,7 @@
 import json
 from datetime import datetime, timezone
 
-from backend.recognition import RecognitionConflict, RecognitionError, RecognitionService, WorkScope
+from backend.recognition import RecognitionConflict, RecognitionError, WorkScope
 from core.document_engine import SQLiteDocumentRepository
 from ..context_adapter import format_recognition_content
 from .budget import _source_texts, user_text
@@ -10,7 +10,8 @@ from .followup import _answer, _history_text
 from ..kernel.receipt_projection import kernel_call_groups
 from ..original_sources import document_roots, original, resolve, source_store
 from ..research_packets import authority_stores
-from ..source_egress import SourceEgressService, validate_product_draft_source
+from ..source_egress import SourceEgressService, recognition_service as source_recognition_service
+from ..transaction_records import TransactionRecords
 from ..source_graph import SourceGraph, validate_graph
 from ..privacy_state import privacy_revision, is_private_project
 from .insights import source_documents
@@ -45,7 +46,7 @@ def _scope(row, project):
     return row.payload.get('scope') == {'user_id': 'local-user', 'project_id': project}
 
 
-def _ask(records, turns, groups, identity, project, owners, proofs, memo, visited=frozenset()):
+def _ask(records, turns, groups, identity, project, owners, proofs, memo, visited=frozenset(), *, authority=None):
     if identity in visited or len(proofs) + len(visited) >= get('review').feedback_history_turns:
         raise RecognitionConflict('review_feedback_history_unavailable')
     if identity in memo:
@@ -116,7 +117,9 @@ def _ask(records, turns, groups, identity, project, owners, proofs, memo, visite
                     or owner.revision != source['revision'] or not _scope(owner, project)
                     or owner.payload.get('state') != 'active'):
                 raise RecognitionConflict('review_feedback_recognition_changed')
-            recognition_service = RecognitionService(records, product_draft_validator=validate_product_draft_source)
+            recognition_service = source_recognition_service(records,
+                **({'source_owner': authority._owner_records}
+                   if isinstance(records, TransactionRecords) and authority is not None else {}))
             recognition = (recognition_service.get_recognition(scope=scope, recognition_id=owner.object_id)
                 if hasattr(records, '_connect') else recognition_service._qualified_recognition(records, owner))
             if (recognition is None or recognition.id != owner.object_id or recognition.scope != scope
@@ -185,7 +188,7 @@ def _ask(records, turns, groups, identity, project, owners, proofs, memo, visite
                 or previous.payload.get('thread_id') != row.payload['thread_id']):
             raise RecognitionConflict('review_feedback_history_changed')
         previous_question, previous_answer, inherited_refs, inherited_docs, _ = _ask(
-            records, turns, groups, ancestor['id'], project, owners, proofs, memo, visited)
+            records, turns, groups, ancestor['id'], project, owners, proofs, memo, visited, authority=authority)
         history.append({'question': previous_question, 'answer': _answer(previous_answer)})
         refs.extend(inherited_refs); documents.update(inherited_docs)
     count = next((part['count'] for part in answer.get('context', {}).get('parts', [])
@@ -212,11 +215,12 @@ def _window_text(text, windows):
     return '\n…\n'.join(text[window['start']:window['end']] for window in windows)
 
 
-def review_corrections(records, project, *, now=None, local_only=False):
+def review_corrections(records, project, *, now=None, local_only=False, authority=None):
     """Explicit confirmations survive recording OFF/clear; missing proof defers."""
     if type(local_only) is not bool:
         raise ValueError('review_feedback_local_only_invalid')
     clock, scope = _clock(now), WorkScope('local-user', project)
+    authority = SourceEgressService(records) if authority is None else authority
     consumed = {identity for row in records.list('v2_consolidation_inputs')
         if row.payload.get('project_id') == project for identity in row.payload.get('event_ids', [])}
     try:
@@ -236,10 +240,11 @@ def review_corrections(records, project, *, now=None, local_only=False):
             owners = {('v2_signal_decisions', row.object_id): row}
             questions, answers, refs, docs, proofs, memo = [], [], [], set(), {}, {}
             for identity in row.payload['turn_ids']:
-                question, answer, source_refs, documents, proof = _ask(records, turns, groups, identity, project, owners, proofs, memo)
+                question, answer, source_refs, documents, proof = _ask(records, turns, groups, identity, project, owners, proofs, memo,
+                    authority=authority)
                 questions.append(question); answers.append(answer); refs.extend(source_refs); docs.update(documents)
                 proofs[identity] = proof
-            authority, graph, snapshots = SourceEgressService(records), SourceGraph(), []
+            graph, snapshots = SourceGraph(), []
             refs = {(ref['type'], ref['id'], ref['revision']): ref for ref in refs}
             if refs:
                 snapshot = authority.snapshot(scope, [{key: ref[key] for key in ('type', 'id', 'revision')}
@@ -314,12 +319,12 @@ def review_corrections(records, project, *, now=None, local_only=False):
     return output
 
 
-def validate_review_corrections(records, events, *, project, now=None):
+def validate_review_corrections(records, events, *, project, now=None, authority=None):
     events = tuple(events)
     if len({event['event_id'] for event in events}) != len(events) or len({event['_local_only'] for event in events}) > 1:
         raise RecognitionConflict('review_feedback_identity_changed')
     current = {event['event_id']: event for event in review_corrections(records, project, now=now,
-        local_only=events[0]['_local_only'])} if events else {}
+        local_only=events[0]['_local_only'], authority=authority)} if events else {}
     if any(current.get(event['event_id']) != event for event in events):
         raise RecognitionConflict('review_feedback_changed')
 
@@ -333,8 +338,8 @@ def review_key(events):
             for identity, proof in sorted(event['_ask_proofs'].items())]] for event in events]
 
 
-def review_feedback(records, events, *, project, now=None):
+def review_feedback(records, events, *, project, now=None, authority=None):
     events = tuple(events)
-    validate_review_corrections(records, events, project=project, now=now)
+    validate_review_corrections(records, events, project=project, now=now, authority=authority)
     return json.dumps({'corrections': [{key: event[key] for key in ('event_id', 'type', 'before', 'after', 'turn_ids')}
         for event in events]}, ensure_ascii=False)

@@ -7,7 +7,8 @@ from pathlib import Path
 from core.product_core.asr_lexicon_service import AsrLexiconService
 
 from ..model_config import ModelConfigurationError
-from ..turn_routing import CONFIGURATION_FIELDS, _revision
+from ..turn_routing import _revision
+from ..model_binding import public_model_configuration
 from .context_preparation import prepare_context
 from .organize_turns import STEPS
 from .policies import get
@@ -35,7 +36,7 @@ def _configuration(models):
     selected = models.for_auxiliary(binding) if binding is not None else models
     def public(owner):
         value = owner.public()['generation']
-        return {key: deepcopy(value.get(key)) for key in (*CONFIGURATION_FIELDS, 'subscription_binding')}
+        return {**public_model_configuration(value), 'subscription_binding': deepcopy(value.get('subscription_binding'))}
     return {'primary': public(models), 'auxiliary': public(selected), 'binding': binding}, selected
 
 
@@ -146,7 +147,8 @@ def _checked(reader, row, payload, *, root=None):
                 or step.payload.get('inputs') != ref['inputs']):
             raise ValueError('transcript_correction_binding_changed')
         expected = {'messages': messages, 'max_tokens': payload['budget'][1], 'project_id': row.payload['project_id'],
-            'configuration': {key: binding['configuration']['primary'].get(key) for key in CONFIGURATION_FIELDS}}
+            'configuration': public_model_configuration({key: value for key, value in
+                binding['configuration']['primary'].items() if value is not None})}
         stored = connection.execute('SELECT request_json FROM ai_turns WHERE turn_id=?', (ref['turn_id'],)).fetchone()
         request = json.loads(stored[0]) if stored else None
         events = [json.loads(event[0]) for event in connection.execute(
@@ -217,7 +219,7 @@ class TranscriptCorrection:
         self.records = organize.records
 
     def run(self, *, candidate_flow=False):
-        row = self.records.read('workspace_items', self.organize.item_id)
+        row = self.organize.source_item()
         evidence = row.payload.get('audio_transcription')
         if (row.payload.get('input_kind') not in {'audio', 'video'}
                 or not isinstance(evidence, dict) or evidence.get('provider') != 'tokenhub-asr'):
@@ -257,6 +259,8 @@ class TranscriptCorrection:
                 raise ValueError('transcript_correction_capacity_unavailable')
             limits = budget_reader(expected_revision=configuration['auxiliary']['revision'])
             input_limit, output_limit = policy.budget(limits)
+            input_limit = self.organize.reserve_input_limit(input_limit,
+                error_code='transcript_organization_budget_insufficient', bind_limit=False)
             with self.records.begin() as tx:
                 self.organize._guard_write(tx)
                 current = tx.read(EPISODES, episode_id)

@@ -151,7 +151,7 @@ def test_v28_reuses_schema_keeps_default_and_four_handle_budget(material):
     assert answer_response_model('@28') is answer_response_model('@27')
     assert final_response_model('@28', 'What?') is final_response_model('@27', 'What?')
     assert {name: ACTIVE[name] for name in ('compose', 'ladder', 'retrieve', 'rerank')} == {
-        'compose': '@30', 'ladder': '@15', 'retrieve': '@5', 'rerank': '@2'}
+        'compose': '@37', 'ladder': '@15', 'retrieve': '@9', 'rerank': '@2'}
     assert get('compose', version='@28')(None, operation='answer_contract')['nested_model_handle_budget'] == 4
     messages = build_partition_messages(chosen, 'What did Maya paint?', first_output=first, compose_version='@28')
     assert 'first_fact_diagnostics": []' in messages[-1]['content']

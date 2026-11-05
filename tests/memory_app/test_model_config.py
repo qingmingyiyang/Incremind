@@ -158,15 +158,9 @@ def test_video_chunk_call_can_use_inherited_remote_timeout(config):
     assert observed == [(7000, 90)]
 
 
-def test_explicit_local_chunk_timeout_is_not_replaced_by_default(config, tmp_path):
-    config.update("generation", settings())
-    model_file = tmp_path / "data/models/qwen2.5-1.5b-instruct/model.safetensors"
-    model_file.parent.mkdir(parents=True)
-    model_file.write_bytes(b"installed-model-test")
-    config.update_generation_mode(
-        mode="local", local_enabled=True,
-        local_base_url="http://127.0.0.1:8001/local-model/v1", expected_revision=0,
-    )
+def test_explicit_loopback_chunk_timeout_is_not_replaced_by_default(config):
+    config.update("generation", {**settings(), "base_url": "http://127.0.0.1:8765/v1",
+        "model": "local-qa", "allow_remote": False})
     observed = []
 
     class Gateway:
@@ -191,21 +185,17 @@ def test_generation_mode_requires_explicit_local_enable_and_preserves_api_key(co
     model_file = tmp_path / "data/models/qwen2.5-1.5b-instruct/model.safetensors"
     model_file.parent.mkdir(parents=True)
     model_file.write_bytes(b"installed-model-test")
-    local = config.update_generation_mode(
-        mode="local", local_enabled=True,
-        local_base_url="http://127.0.0.1:8001/local-model/v1", expected_revision=0,
-    )
-    assert local["mode"] == "local" and local["local_enabled"] is True
-    assert local["api_configured"] is True
-    assert config.local_generation_allowed() is True
-    assert config.public()["generation"]["configured"] is True
-    assert config.public()["generation"]["has_api_key"] is False
-    assert config.snapshot("generation")["api_key"] == "local-model"
-    with pytest.raises(ModelConfigurationError, match="select_api_before_editing_generation"):
-        config.update("generation", {"expected_revision": 2, "model": "wrong"})
+    before = config.generation_mode()
+    with pytest.raises(ModelConfigurationError, match="local_model_assets_missing"):
+        config.update_generation_mode(mode="local", local_enabled=True,
+            local_base_url="http://127.0.0.1:8001/local-model/v1", expected_revision=0)
+    assert config.generation_mode() == before
+    assert before["local_model_installed"] is False
+    assert before["local_readiness"]["status"] == "missing_assets"
+    assert config.local_generation_allowed() is False
     api = config.update_generation_mode(
         mode="api", local_enabled=False,
-        local_base_url="http://127.0.0.1:8001/local-model/v1", expected_revision=1,
+        local_base_url="http://127.0.0.1:8001/local-model/v1", expected_revision=0,
     )
     assert api["mode"] == "api" and api["local_enabled"] is False
     assert config.local_generation_allowed() is False
@@ -242,9 +232,6 @@ def test_generation_mode_rejects_non_string_without_mutating_configuration(tmp_p
 
 def test_generation_mode_rejects_wrong_endpoint_and_stale_revision(config, tmp_path):
     config.update("generation", settings())
-    model_file = tmp_path / "data/models/qwen2.5-1.5b-instruct/model.safetensors"
-    model_file.parent.mkdir(parents=True)
-    model_file.write_bytes(b"installed-model-test")
     with pytest.raises(ModelConfigurationError, match="invalid_local_model_endpoint"):
         config.update_generation_mode(
             mode="local", local_enabled=True,

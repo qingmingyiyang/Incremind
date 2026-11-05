@@ -5,7 +5,7 @@ import { workbenchApi } from './workbenchApi';
 const toolNames = {'memory.recall':'查找资料','source.evidence.read':'读取原件',
  'document.draft.propose':'起草整理稿','analyze_source':'分析原件','project_skill.evidence.read':'读取方法'};
 
-export function TaskDivision({ project, turnId, task, api = workbenchApi, onRedo, onReference }) {
+export function TaskDivision({ project, turnId, task, api = workbenchApi, onRedo, onReference, readOnly = false, showEvidence = true }) {
  const [expanded,setExpanded] = useState(null), [sample,setSample] = useState(null);
  const [items,setItems] = useState([]), [busy,setBusy] = useState(false), [error,setError] = useState('');
  const [deleted,setDeleted] = useState(false);
@@ -47,10 +47,10 @@ export function TaskDivision({ project, turnId, task, api = workbenchApi, onRedo
     <span>{item.deliverable}</span><span className="workbench-division-usage">{item.model_usage?.input_tokens??'—'} / {item.model_usage?.output_tokens??'—'}</span>
     {(item.tools||[]).map(tool=><Row key={tool.id} title={toolNames[tool.capability_id]||'工具'}
       dot={tool.state==='running'?'processing':tool.state==='waiting'?'unverified':tool.state} readOnly/>)}
-    {(item.recalled||[]).map((entry,i)=><div key={i}><Row title={entry.title} readOnly/><p>{entry.text}</p></div>)}
+    {showEvidence&&(item.recalled||[]).map((entry,i)=><div key={i}><Row title={entry.title} readOnly/><p>{entry.text}</p></div>)}
    </div>}
   </div>)}
-  {terminal&&<details onToggle={event=>{if(event.currentTarget.open&&!sample&&!deleted&&!busy) load();}}>
+  {terminal&&!readOnly&&<details onToggle={event=>{if(event.currentTarget.open&&!sample&&!deleted&&!busy) load();}}>
    <summary>分工{sample?.adjusted?' · 已调整':''}</summary>
    {sample&&<form onSubmit={async event=>{event.preventDefault();const value=await run(()=>api.saveDivision(project,turnId,items,sample.revision));if(value){setSample(value);setItems(value.items);}}}>
     {items.map((item,index)=><fieldset key={index} disabled={busy}>
@@ -64,7 +64,7 @@ export function TaskDivision({ project, turnId, task, api = workbenchApi, onRedo
     </fieldset>)}
     <button type="button" disabled={busy||items.length>=8} aria-label="添加一项" onClick={()=>setItems(old=>[...old,{goal:'',deliverable:'整理稿',capabilities:['memory.recall','document.draft.propose'],depends_on:[]}])}>＋</button>
     <button type="submit" disabled={busy}>保存</button>
-    <button type="button" disabled={busy||JSON.stringify(items)!==JSON.stringify(sample.items)} aria-label="按此分工重做" onClick={async()=>{const result=await run(()=>api.redo(project,turnId,sample.revision));if(result)onRedo?.(result);}}>重做</button>
+    <button type="button" disabled={busy||task.state==='failed'&&task.retryable!==true||JSON.stringify(items)!==JSON.stringify(sample.items)} aria-label="按此分工重做" onClick={async()=>{const result=await run(()=>api.redo(project,turnId,sample.revision));if(result)onRedo?.(result);}}>重做</button>
     <button type="button" disabled={busy} aria-label="删除分工样例" onClick={async()=>{const value=await run(()=>api.deleteDivision(project,turnId,sample.revision));if(value){setDeleted(true);setSample(null);setItems([]);}}}>删除样例</button>
    </form>}
    {!!task.division_examples?.length&&<div>{task.division_examples.map((item,index)=><button type="button" key={item.turn_id} aria-label={`查看参考分工 ${index+1}`} onClick={()=>onReference?.(item)}>↗ {index+1}</button>)}</div>}

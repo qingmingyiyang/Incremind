@@ -43,8 +43,7 @@ def create_application(*, frontend_root=None, port=None):
     from .app import app
     if app.state.recognition_runtime_root != layout.user_root:
         raise ValueError('deployment_runtime_conflict')
-    app.state.server_device_auth.configure_port(8001 if port is None else port)
-    app.state.deployment = layout
+    app.configure(port=8001 if port is None else port, layout=layout)
     return app
 
 

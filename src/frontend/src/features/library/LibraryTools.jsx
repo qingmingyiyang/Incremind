@@ -22,16 +22,19 @@ function useOperation() {
 
 export function MemoPanel({ projectId, onClose }) {
   const [items, setItems] = useState([]);
-  const { error, run } = useOperation();
+  const [error, setError] = useState(''), [reading, setReading] = useState(false), [refresh, setRefresh] = useState(0);
   useEffect(() => {
     let current = true;
-    run(() => api.loadWorkbench({ projectId }), result => {
-      if (current && result) setItems(result.mental_models || []);
-    });
+    setItems([]); setError(''); setReading(true);
+    api.loadWorkbench({ projectId }).then(result => {
+      if (current) setItems(result.mental_models || []);
+    }).catch(() => { if (current) setError('读取未完成'); })
+      .finally(() => { if (current) setReading(false); });
     return () => { current = false; };
-  }, [projectId]);
+  }, [projectId, refresh]);
   return <FocusPanel className="library-focus library-tools" title="备忘" onClose={onClose}>
-    {error && <p role="alert">{error}</p>}
+    {error && <p role="alert">{error}<button type="button" disabled={reading} onClick={() => setRefresh(value => value + 1)}>重新读取</button></p>}
+    {reading && <p role="status">读取备忘</p>}
     {items.map(row => <section key={row.id} className="library-question"><h3>{row.question}</h3>
       <MarkdownBody>{row.answer}</MarkdownBody>
       <p className="library-meta">{formatLocalDate(row.updated_at)} · 认 {Number.isInteger(row.evidence_count) && row.evidence_count >= 0 ? row.evidence_count : '—'}</p>
@@ -40,8 +43,10 @@ export function MemoPanel({ projectId, onClose }) {
 }
 
 const erasedLabels = { recognitions:'认识',recognition_versions:'历史版本',recognition_candidates:'待确认认识',recognition_task_feedback:'任务反馈',recognition_migration_imports:'迁移记录',recognition_migration_versions:'迁移历史',recognition_graph_views:'图谱视图',recognition_restructure_proposals:'重组记录',recognition_recall_preferences:'召回偏好',recognition_experiences:'关联原件',recognition_questions:'固定问题',recognition_relations:'关系',recognition_relation_proposals:'关系记录',recognition_context_packets:'发送记录',recognition_tasks:'任务',documents:'整理稿',document_revisions:'整理稿版本',document_markdown:'整理稿正文' };
-export function InsightMaintenance({ projectId, insight, insights, action, onReload, onDone }) {
+export function InsightMaintenance({ projectId, insight, insights, action, onReload, onDone,
+  merge = api.mergeRecognitions, onBusy, disabled = false }) {
   const { busy, error, run } = useOperation();
+  useEffect(() => { onBusy?.(busy); return () => onBusy?.(false); }, [busy, onBusy]);
   const [parts, setParts] = useState(['','']), [ids,setIds] = useState([insight.id]), [content,setContent] = useState(''), [conditions,setConditions] = useState('');
   const [preview,setPreview] = useState(null), [ack,setAck] = useState(false);
   const [choices, setChoices] = useState(()=>[...insights.filter(row=>row.id!==insight.id),insight]), [needsRead, setNeedsRead] = useState(false);
@@ -51,7 +56,7 @@ export function InsightMaintenance({ projectId, insight, insights, action, onRel
   const scope={projectId,recognitionId:insight.id,expectedRevision:insight.revision};
   const candidates=choices.filter(row=>row.kind==='recognition' && (row.state==='active' || ids.includes(row.id)));
   const selected=ids.map(id=>choices.find(row=>row.id===id));
-  const writable=insight.state==='active' && !needsRead && !busy;
+  const writable=insight.state==='active' && !needsRead && !busy && !disabled;
   const canSplit=writable && parts.every(part=>part.trim());
   const canMerge=writable && ids.length>=2 && ids.length<=12 && content.trim()
     && selected.every(row=>row?.kind==='recognition' && row.state==='active');
@@ -86,7 +91,7 @@ export function InsightMaintenance({ projectId, insight, insights, action, onRel
       <button type="button" disabled={parts.length>=12 || busy} onClick={()=>setParts(old=>[...old,''])}>增加一条</button>
       <button type="submit" disabled={!canSplit}>确认拆分</button>
     </form>}
-    {action === 'merge' && <form className="library-edit" onSubmit={event=>{event.preventDefault();if(canMerge)maintain(()=>api.mergeRecognitions({projectId,expectedRevisions:Object.fromEntries(selected.map(row=>[row.id,row.revision])),content,conditions:lines(conditions)}));}}>
+    {action === 'merge' && <form className="library-edit" onSubmit={event=>{event.preventDefault();if(canMerge)maintain(()=>merge({projectId,expectedRevisions:Object.fromEntries(selected.map(row=>[row.id,row.revision])),content,conditions:lines(conditions)}));}}>
       <div className="library-choice">{candidates.map(row=><label key={row.id}><input type="checkbox" checked={ids.includes(row.id)} onChange={()=>setIds(old=>old.includes(row.id)?old.filter(id=>id!==row.id):[...old,row.id])}/>{row.text}{row.state!=='active' && ' · 当前不可用'}</label>)}</div>
       <label>合并正文<textarea aria-label="合并正文" value={content} onChange={event=>setContent(event.target.value)}/></label>
       <label>补充条件<textarea aria-label="补充条件" value={conditions} onChange={event=>setConditions(event.target.value)}/></label>

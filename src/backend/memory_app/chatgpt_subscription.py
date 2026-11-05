@@ -11,12 +11,14 @@ import re
 import secrets as random
 import threading
 import time
+from contextvars import copy_context
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import uuid4
 
 import httpx
 import jwt
+from litellm.llms.custom_httpx.http_handler import get_ssl_configuration
 
 
 ISSUER = "https://auth.openai.com"
@@ -33,15 +35,42 @@ class SubscriptionError(ValueError):
         super().__init__(code)
 
 
+def _callback_parameters(callback_url, redirect_uri, expected_state):
+    if (not isinstance(callback_url, str) or not 1 <= len(callback_url) <= 16000
+            or any(ord(character) <= 32 or ord(character) == 127 for character in callback_url)):
+        raise SubscriptionError("subscription_callback_invalid", 400)
+    try:
+        parsed, expected = urlsplit(callback_url), urlsplit(redirect_uri)
+        if ((parsed.scheme, parsed.netloc, parsed.path) != (expected.scheme, expected.netloc, expected.path)
+                or parsed.fragment or '#' in callback_url or parsed.username is not None or parsed.password is not None):
+            raise ValueError()
+        params = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True,
+                          max_num_fields=10, errors='strict')
+        if (any(len(values) != 1 for values in params.values())
+                or set(params) - {'state', 'code', 'client_id', 'scope', 'error', 'error_description', 'error_uri', 'iss'}
+                or len(params.get('state', [])) != 1
+                or not random.compare_digest(params['state'][0].encode('utf-8'), expected_state.encode('utf-8'))
+                or params.get('iss', [ISSUER]) != [ISSUER]
+                or ('error' in params) == ('code' in params)
+                or not params.get('error', params.get('code', ['']))[0]):
+            raise ValueError()
+    except (ValueError, UnicodeError):
+        raise SubscriptionError("subscription_callback_invalid", 400) from None
+    return params
+
+
 class ChatGPTSubscriptions:
     def __init__(self, records, secret_store, *, client=None):
         self.records, self.secrets = records, secret_store
-        self.client = client or httpx.Client(timeout=15, follow_redirects=False, trust_env=False)
+        self.client = client if client is not None else httpx.Client(
+            timeout=15, follow_redirects=False, verify=get_ssl_configuration())
         self._owns_client = client is None
         self._lock = threading.RLock()
         self._attempts = {}
         self._discovery = None
         self._closed = False
+        self._login_stopping = False
+        self._login_threads = set()
 
     def _ensure_open(self):
         if self._closed:
@@ -135,7 +164,7 @@ class ChatGPTSubscriptions:
             tx.put(PROFILES, PROFILE, {"provider": PROFILE, "state": state, "secret_ref": PROFILE_REFERENCE}, expected_revision=expected)
             tx.commit()
 
-    def status(self):
+    def status(self, *, owner=None):
         with self._lock:
             row = self.records.read(PROFILES, PROFILE)
             profile = self._read_profile()
@@ -143,8 +172,13 @@ class ChatGPTSubscriptions:
             return {"provider": PROFILE, "connected": connected, "sharing": connected and "chatgpt.tokens.use.direct" in profile.get("scopes", []),
                 "identity": {"email": profile.get("email", ""), "name": profile.get("name", "")} if connected else None,
                 "revision": row.revision if row else 0, "state": row.payload["state"] if row else "disconnected",
-                "login": next(({"attempt_id": key, "expires_at": value["expires_at"]} for key, value in self._attempts.items()
-                               if value["state"] == "pending"), None)}
+                "login": next(({"attempt_id": key, "expires_at": value["expires_at"],
+                                **({"authorization_url": value["authorization_url"]}
+                                   if value.get("authorization_url") and not value.get("callback_received") else {}),
+                                "callback_received": value.get("callback_received", False)}
+                               for key, value in self._attempts.items()
+                               if value["state"] == "pending" and value["expires_at"] > time.time()
+                               and value.get("owner") == owner), None)}
 
     def _verify(self, token, client_id, *, nonce=None, received_at=None):
         config = self.discovery()
@@ -180,9 +214,11 @@ class ChatGPTSubscriptions:
         return {"access_token": value["access_token"], "refresh_token": value["refresh_token"],
             "expires_at": time.time() + expiry, "scopes": scopes.split()}
 
-    def login(self, *, expected_revision):
+    def login(self, *, expected_revision, owner=None, validate_owner=None):
         with self._lock:
             self._ensure_open()
+            if self._login_stopping:
+                raise SubscriptionError('subscription_closed', 409)
             self._check_revision(expected_revision)
             if any(value["state"] == "pending" for value in self._attempts.values()):
                 raise SubscriptionError("subscription_login_in_progress", 409)
@@ -191,23 +227,24 @@ class ChatGPTSubscriptions:
             config = self.discovery()
             state, nonce, verifier = (random.token_urlsafe(32) for _ in range(3))
             attempt_id = uuid4().hex
-            entry = {"state": "pending", "expires_at": time.time() + 600, "revision": expected_revision}
+            entry = {"state": "pending", "expires_at": time.time() + 600,
+                     "revision": expected_revision, "owner": owner, "oauth_state": state,
+                     "validate_owner": validate_owner}
             previous = self._read_profile()
             service = self
-            accepted = threading.Lock()
             class Callback(BaseHTTPRequestHandler):
                 def log_message(self, *args):
                     return  # Authorization codes must never enter request logs.
 
                 def do_GET(self):
                     self.connection.settimeout(10)
-                    parsed = urlsplit(self.path)
-                    params = parse_qs(parsed.query, keep_blank_values=True)
-                    valid = (self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
-                        and parsed.path == "/auth/callback" and len(self.path) <= 16000
-                        and params.get("state") == [state] and entry["state"] == "pending"
-                        and time.time() < entry["expires_at"])
-                    if not valid or not accepted.acquire(blocking=False):
+                    try:
+                        if self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}" or not self.path.startswith('/'):
+                            raise SubscriptionError("subscription_callback_invalid", 400)
+                        with service._lock:
+                            params = service._claim_callback(entry, f"http://127.0.0.1:{self.server.server_port}" + self.path)
+                            finish = entry["finish"]
+                    except SubscriptionError:
                         self.send_response(400); self.end_headers(); return
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -218,7 +255,7 @@ class ChatGPTSubscriptions:
                     self.end_headers()
                     self.wfile.write(("<!doctype html><meta charset=utf-8><title>ChatGPT</title><p>请返回应用查看登录结果。</p>"
                         + f"<script nonce='{page_nonce}'>history.replaceState(null,'','/auth/complete')</script>").encode())
-                    threading.Thread(target=service._finish_login, args=(entry, params, previous, nonce, verifier, redirect), daemon=True).start()
+                    service._start_login_finish(finish, params)
 
             try:
                 server = ThreadingHTTPServer(("127.0.0.1", 0), Callback)
@@ -228,11 +265,15 @@ class ChatGPTSubscriptions:
             server.daemon_threads = True
             redirect = f"http://127.0.0.1:{server.server_port}/auth/callback"
             entry["server"] = server
+            entry["redirect_uri"] = redirect
+            context = copy_context()
+            entry["finish"] = lambda params: context.run(self._finish_login, entry, params, previous, nonce, verifier, redirect)
             self._attempts[attempt_id] = entry
             threading.Thread(target=server.serve_forever, daemon=True).start()
             def expired():
-                if entry["state"] == "pending":
-                    entry.update(state="failed", error="subscription_login_expired")
+                with self._lock:
+                    if entry["state"] == "pending":
+                        entry.update(state="failed", error="subscription_login_expired")
                 self._stop(entry)
             timer = threading.Timer(600, expired)
             timer.daemon = True
@@ -245,10 +286,91 @@ class ChatGPTSubscriptions:
                 "code_challenge_method": "S256", "code_challenge": challenge, "ext_agent_host_id": self.host_id()}
             if not previous.get("client_id"):
                 params["agent_name_hint"] = "ChriptmasAgent"
-            return {"attempt_id": attempt_id, "authorization_url": config["authorization_endpoint"] + "?" + urlencode(params), "expires_at": entry["expires_at"]}
+            # 页面刷新只恢复本次尚未领取的地址，授权参数不写入持久记录。
+            entry["authorization_url"] = config["authorization_endpoint"] + "?" + urlencode(params)
+            return {"attempt_id": attempt_id, "authorization_url": entry["authorization_url"], "expires_at": entry["expires_at"]}
+
+    def _owned_attempt(self, attempt_id, owner):
+        self._ensure_open()
+        entry = self._attempts.get(attempt_id)
+        if entry is None or entry.get("owner") != owner:
+            raise SubscriptionError("subscription_login_not_found", 404)
+        return entry
+
+    def _claim_callback(self, entry, callback_url):
+        # 回调监听与已鉴权粘贴共用一次领取；授权码不进入保存记录或错误信息。
+        with self._lock:
+            self._ensure_open()
+            if entry["state"] != "pending" or entry.get("callback_received"):
+                raise SubscriptionError("subscription_callback_consumed", 409)
+            try:
+                self._validate_login(entry)
+            except SubscriptionError as error:
+                entry.update(state="failed", error=error.code)
+                self._stop(entry)
+                raise
+            params = _callback_parameters(callback_url, entry["redirect_uri"], entry["oauth_state"])
+            entry["callback_received"] = True
+            entry.pop("authorization_url", None)
+            return params
+
+    def complete(self, attempt_id, callback_url, *, owner=None):
+        with self._lock:
+            entry = self._owned_attempt(attempt_id, owner)
+            params = self._claim_callback(entry, callback_url)
+            finish = entry["finish"]
+        # 不访问粘贴的回调地址；仅用原流程向已校验的官方 token endpoint 交换。
+        self._start_login_finish(finish, params)
+        return self.attempt(attempt_id, owner=owner)
+
+    def _start_login_finish(self, finish, params):
+        with self._lock:
+            if self._login_stopping:
+                return
+            def run():
+                try:
+                    finish(params)
+                finally:
+                    with self._lock:
+                        self._login_threads.discard(threading.current_thread())
+            thread = threading.Thread(target=run, daemon=True)
+            self._login_threads.add(thread)
+            thread.start()
+
+    def quiesce_logins(self):
+        """停止交互等待，并等已开始的真实兑换线程完成。"""
+        with self._lock:
+            self._login_stopping = True
+            entries = tuple(self._attempts.values())
+            timers = tuple(entry['timer'] for entry in entries if 'timer' in entry)
+            for entry in entries:
+                if entry['state'] == 'pending':
+                    entry.update(state='failed', error='subscription_login_interrupted')
+        # 回调服务停止和兑换线程等待均在配置锁外完成。
+        for entry in entries:
+            self._stop(entry)
+        for timer in timers:
+            if timer is not threading.current_thread():
+                timer.join()
+        while True:
+            with self._lock:
+                threads = tuple(self._login_threads)
+            if not threads:
+                return
+            if threading.current_thread() in threads:
+                raise SubscriptionError('subscription_login_busy', 409)
+            for thread in threads:
+                thread.join()
+
+    def has_pending_login(self):
+        with self._lock:
+            return not self._closed and any(value['state'] == 'pending' and time.time() < value['expires_at']
+                                            for value in self._attempts.values())
 
     def _finish_login(self, entry, params, previous, nonce, verifier, redirect):
         try:
+            if params.get("error"):
+                raise SubscriptionError("subscription_login_denied", 401)
             client_id = params.get("client_id", [previous.get("client_id")])
             code = params.get("code", [])
             if (params.get("error") or len(code) != 1 or not code[0] or len(client_id) != 1
@@ -256,11 +378,10 @@ class ChatGPTSubscriptions:
                     or client_id[0] == "dynamic_agent_client" or previous.get("client_id") not in (None, client_id[0])):
                 raise SubscriptionError("subscription_registration_invalid", 401)
             with self._lock:
-                if entry["state"] != "pending":
-                    raise SubscriptionError("subscription_login_cancelled", 409)
-                self._check_revision(entry["revision"])
+                self._validate_login(entry)
                 # Preserve dynamically issued registration even if the code fails.
                 self._write_profile({**previous, "client_id": client_id[0]}, expected_revision=entry["revision"])
+                self._validate_login(entry)
             value = self._json("POST", self.discovery()["token_endpoint"], data={"grant_type": "authorization_code",
                 "client_id": client_id[0], "code": code[0], "code_verifier": verifier, "redirect_uri": redirect, "resource": RESOURCE})
             fields = self._token_fields(value)
@@ -268,9 +389,7 @@ class ChatGPTSubscriptions:
             if previous.get("sub") not in (None, identity["sub"]):
                 raise SubscriptionError("subscription_account_mismatch", 401)
             with self._lock:
-                if entry["state"] != "pending":
-                    raise SubscriptionError("subscription_login_cancelled", 409)
-                self._check_revision(entry["revision"])
+                self._validate_login(entry)
                 self._write_profile({**fields, **identity, "client_id": client_id[0], "verified": True},
                     expected_revision=entry["revision"], state="connected")
                 entry["state"] = "completed"
@@ -281,28 +400,42 @@ class ChatGPTSubscriptions:
         finally:
             self._stop(entry)
 
-    def attempt(self, attempt_id):
-        value = self._attempts.get(attempt_id)
-        if not value:
-            raise SubscriptionError("subscription_login_not_found", 404)
-        return {key: value[key] for key in ("state", "error", "expires_at") if key in value}
+    def _validate_login(self, entry):
+        self._ensure_open()
+        if self._login_stopping:
+            raise SubscriptionError('subscription_login_cancelled', 409)
+        if entry["state"] != "pending":
+            raise SubscriptionError("subscription_login_cancelled", 409)
+        if time.time() >= entry["expires_at"]:
+            raise SubscriptionError("subscription_login_expired", 409)
+        validator = entry.get("validate_owner")
+        if validator is not None:
+            validator()
+        self._check_revision(entry["revision"])
+
+    def attempt(self, attempt_id, *, owner=None):
+        with self._lock:
+            value = self._owned_attempt(attempt_id, owner)
+            return {key: value[key] for key in ("state", "error", "expires_at", "callback_received") if key in value}
 
     def _stop(self, entry):
+        entry.pop("finish", None)
+        entry.pop("oauth_state", None)
+        entry.pop("authorization_url", None)
+        entry.pop("validate_owner", None)
         timer, server = entry.pop("timer", None), entry.pop("server", None)
         if timer:
             timer.cancel()
         if server:
             server.shutdown(); server.server_close()
 
-    def cancel(self, attempt_id):
+    def cancel(self, attempt_id, *, owner=None):
         with self._lock:
-            entry = self._attempts.get(attempt_id)
-            if not entry:
-                raise SubscriptionError("subscription_login_not_found", 404)
+            entry = self._owned_attempt(attempt_id, owner)
             if entry["state"] == "pending":
                 entry.update(state="failed", error="subscription_login_cancelled")
         self._stop(entry)
-        return self.attempt(attempt_id)
+        return self.attempt(attempt_id, owner=owner)
 
     def _acquire_refresh(self):
         owner = uuid4().hex
@@ -433,13 +566,10 @@ class ChatGPTSubscriptions:
     def close(self):
         # Started refreshes hold this lock until the rotated token and checkpoint
         # are saved. Caller cancellation or shutdown must not close their client.
+        self.quiesce_logins()
         with self._lock:
             if self._closed:
                 return
             self._closed = True
-            for entry in self._attempts.values():
-                if entry["state"] == "pending":
-                    entry.update(state="failed", error="subscription_login_interrupted")
-                self._stop(entry)
             if self._owns_client:
                 self.client.close()

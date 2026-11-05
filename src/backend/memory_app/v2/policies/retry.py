@@ -18,6 +18,15 @@ def v2(request: Mapping[str, object]) -> dict[str, object]:
     return decide(request)
 
 
+def v3(request: Mapping[str, object]) -> dict[str, object]:
+    # 自动灵感只保留一次物理尝试，结构化模式切换也使用同一上限。
+    if request.get('kind') == 'limits':
+        return {**v2(request), 'max_wire_attempts': 1}
+    if request.get('phase') in {'before_output', 'thinking'}:
+        return {'retry': False}
+    return v2(request)
+
+
 def _retry_display(request):
     budget, reason, counts = request.get('budget'), request.get('reason'), request.get('counts')
     if (type(budget) is not str or budget not in _RETRY_BUDGETS

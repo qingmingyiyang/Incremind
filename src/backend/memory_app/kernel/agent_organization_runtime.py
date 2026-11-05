@@ -23,6 +23,7 @@ from backend.memory_app.kernel.agent_coordinator import (
 )
 from core.ai_kernel import AgentBudget, AgentFanIn, AgentRun, TurnReceipt, validate_turn_request
 from core.ai_kernel.agent_dispatch_contracts import AgentDispatchPlan, DispatchPermit
+from core.ai_kernel.agent_dispatch_store import EffectiveDispatchSnapshot, AgentDispatchStoreConflict
 
 
 class AgentOrganizationError(RuntimeError):
@@ -31,7 +32,7 @@ class AgentOrganizationError(RuntimeError):
 
 class OrganizationCoordinatorPort(Protocol):
     def assignment_dependencies(self, *, project_id: str, permit_id: str) -> tuple[str, ...]: ...
-    def accept_and_register_main(self, request: Mapping[str, object]) -> PreparedMainTurn: ...
+    def accept_and_register_main(self, request: Mapping[str, object], *, admission_bundle=None) -> PreparedMainTurn: ...
     def submit_accepted_turn(self, prepared: PreparedMainTurn | PreparedChildTurn) -> TurnReceipt: ...
     def resubmit_existing_turn(self, *, turn_id: str, project_id: str) -> TurnReceipt: ...
     def prepare_child(self, *, parent_turn_id: str, request: SpawnRequest, project_id: str, scope: Mapping[str, object], privacy: Mapping[str, object], child_request_factory: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None) -> PreparedChildTurn: ...
@@ -40,6 +41,9 @@ class OrganizationCoordinatorPort(Protocol):
 
 
 class OrganizationDispatchStorePort(Protocol):
+    def effective_snapshot(self, plan_id: str, *, project_id: str) -> EffectiveDispatchSnapshot: ...
+    def transition_effective(self, snapshot: EffectiveDispatchSnapshot, *, phase: str) -> EffectiveDispatchSnapshot: ...
+    def get_permit(self, permit_id: str, *, project_id: str) -> DispatchPermit | None: ...
     def get_permit_child_run_binding(self, permit_id: str, *, project_id: str) -> str | None: ...
     def list_plans_for_main(self, *, project_id: str, main_run_id: str) -> tuple[AgentDispatchPlan, ...]: ...
     def list_permits(self, *, project_id: str, plan_id: str | None = None) -> tuple[DispatchPermit, ...]: ...
@@ -82,7 +86,7 @@ class AgentOrganizationRuntime:
         self._start_pair_scanner = start_pair_scanner
         self._recovery_plan_scanner = recovery_plan_scanner
 
-    def start(self, request: Mapping[str, object], *, agent_turn_mode: bool = False) -> Mapping[str, object]:
+    def start(self, request: Mapping[str, object], *, agent_turn_mode: bool = False, admission_bundle=None) -> Mapping[str, object]:
         """Accept a host-owned external Turn, then submit steward before main.
 
         Caller-supplied agent routing fields are rejected rather than silently
@@ -99,7 +103,8 @@ class AgentOrganizationRuntime:
             with self._product_dispatching(payload['turn_id']) as allowed:
                 if not allowed:
                     raise AgentOrganizationError('product task is paused')
-                main = self._coordinator.accept_and_register_main(payload)
+                main = self._coordinator.accept_and_register_main(payload,
+                    **({'admission_bundle':admission_bundle} if admission_bundle is not None else {}))
                 steward = self._prepare_steward(main)
                 # 主轮读取实际已接纳并派发的 Steward，停止同时读取这组成员。
                 self._coordinator.submit_accepted_turn(steward)
@@ -187,6 +192,10 @@ class AgentOrganizationRuntime:
                 continue
             main = self._run(plan.main_run_id, plan.project_id)
             steward = self._run(plan.steward_run_id, plan.project_id)
+            effective = self._dispatch_store.effective_snapshot(plan.plan_id,project_id=plan.project_id)
+            if effective.steer_input_refs:
+                results.append(self._advance_amended(effective,main))
+                continue
             if not _is_start_pair(main, steward) or plan.status not in {"ready", "dispatching", "dispatched"}:
                 continue
             if plan.mode == "main_only" and _is_converged_steward(steward):
@@ -262,6 +271,10 @@ class AgentOrganizationRuntime:
         for plan in self._dispatch_store.list_plans_for_main(
             project_id=project_id, main_run_id=main.run_id,
         ):
+            effective = self._dispatch_store.effective_snapshot(plan.plan_id,project_id=project_id)
+            if effective.steer_input_refs:
+                values.append(self._advance_amended(effective,main))
+                continue
             if plan.steward_run_id != steward.run_id or plan.status not in {
                 "ready", "dispatching", "dispatched",
             }:
@@ -293,6 +306,86 @@ class AgentOrganizationRuntime:
         for state in states[start + 1:]:
             current = self._transition(current, state, f"organization-main-only-{state}")
         return current
+
+    def _advance_amended(self, snapshot, main):
+        plan = snapshot.plan
+        def view(value):
+            return {**_safe_plan(plan),'status':value.phase,'effective_revision':value.revision,
+                'effective_generation':value.generation,'assignment_ids':value.assignment_ids}
+        if main.is_terminal or main.status == 'cancelling' or self._product_paused(main.turn_id):
+            return view(snapshot)
+        if snapshot.phase == 'ready':
+            if not self._freshness_allows(plan.project_id):
+                return view(snapshot)
+            snapshot = self._effective_transition(snapshot,'dispatching')
+        if snapshot.phase == 'dispatching':
+            permits = [self._dispatch_store.get_permit(identity,project_id=plan.project_id)
+                for identity in snapshot.permit_ids]
+            if any(permit is None for permit in permits):
+                raise AgentOrganizationError('effective permit is unavailable')
+            bound = {}
+            for permit in permits:
+                identity = self._dispatch_store.get_permit_child_run_binding(permit.permit_id,project_id=plan.project_id)
+                if identity is not None:
+                    found = self._run_store.get_run_with_revision(identity,project_id=plan.project_id)
+                    if found is not None:
+                        bound[permit.assignment_id] = found[0]
+            completed = {identity for identity,run in bound.items() if run.is_terminal}
+            active = sum(not run.is_terminal for run in bound.values())
+            for permit in permits:
+                if permit.assignment_id in bound:
+                    continue
+                dependencies = self._coordinator.assignment_dependencies(project_id=plan.project_id,permit_id=permit.permit_id)
+                if not set(dependencies).issubset(completed) or active >= plan.max_concurrent_assignments:
+                    continue
+                with self._product_dispatching(main.turn_id) as allowed:
+                    if not allowed:
+                        return view(snapshot)
+                    current = self._dispatch_store.effective_snapshot(plan.plan_id,project_id=plan.project_id)
+                    if current.generation != snapshot.generation:
+                        return view(current)
+                    prepared = self._coordinator.prepare_child_from_permit(project_id=plan.project_id,
+                        permit_id=permit.permit_id,operation_id=_id('op-organization-permit',plan.plan_id,permit.permit_id))
+                    self._coordinator.submit_accepted_turn(prepared)
+                bound[permit.assignment_id] = prepared.run
+                active += 1
+            if len(bound) != len(permits):
+                return view(self._dispatch_store.effective_snapshot(plan.plan_id,project_id=plan.project_id))
+            current = self._dispatch_store.effective_snapshot(plan.plan_id,project_id=plan.project_id)
+            if current.generation != snapshot.generation:
+                return view(current)
+            snapshot = self._effective_transition(current,'dispatched')
+        if snapshot.phase == 'dispatched':
+            child_ids = tuple(self._dispatch_store.get_permit_child_run_binding(identity,project_id=plan.project_id)
+                for identity in snapshot.permit_ids)
+            if any(identity is None for identity in child_ids):
+                raise AgentOrganizationError('effective child binding is unavailable')
+            if not child_ids:
+                return view(self._effective_transition(snapshot,'completed'))
+            request = validate_turn_request(self._request_loader(main.turn_id))
+            fan_id = _id('organization-fan-in',plan.plan_id,str(snapshot.generation))
+            operation = _id('organization-fan-in-operation',plan.plan_id,str(snapshot.generation))
+            self._coordinator.fan_in(parent_turn_id=main.turn_id,project_id=plan.project_id,
+                scope=request['scope'],privacy=request['privacy'],operation_id=operation,
+                fan_in=AgentFanIn(fan_id,plan.project_id,main.run_id,operation,child_ids,'all',None,main.cancel_epoch,'open'))
+            result = self._run_store.get_fan_in_result(fan_id,project_id=plan.project_id)
+            if result is not None:
+                if result.parent_run_id != main.run_id or result.project_id != plan.project_id:
+                    raise AgentOrganizationError('effective fan-in identity changed')
+                current = self._dispatch_store.effective_snapshot(plan.plan_id,project_id=plan.project_id)
+                if current.generation != snapshot.generation:
+                    return view(current)
+                snapshot = self._effective_transition(current,'completed' if result.status == 'completed' else 'failed')
+        return view(snapshot)
+
+    def _effective_transition(self, snapshot, phase):
+        try:
+            return self._dispatch_store.transition_effective(snapshot,phase=phase)
+        except AgentDispatchStoreConflict:
+            current = self._dispatch_store.effective_snapshot(snapshot.plan.plan_id,project_id=snapshot.plan.project_id)
+            if current.generation != snapshot.generation or current.phase != snapshot.phase:
+                return current
+            return self._dispatch_store.transition_effective(current,phase=phase)
 
     def _dispatch_cluster(self, plan: AgentDispatchPlan, main: AgentRun) -> AgentDispatchPlan:
         if self._product_paused(main.turn_id):
@@ -417,6 +510,10 @@ class AgentOrganizationRuntime:
         for plan in self._dispatch_store.list_plans_for_main(
             project_id=project_id, main_run_id=main.run_id,
         ):
+            effective = self._dispatch_store.effective_snapshot(plan.plan_id,project_id=project_id)
+            if effective.steer_input_refs:
+                values.append(self._advance_amended(effective,main))
+                continue
             if plan.mode != "cluster" or plan.status not in {"dispatching", "dispatched"}:
                 continue
             if plan.status == 'dispatching':

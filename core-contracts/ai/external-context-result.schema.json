@@ -14,9 +14,64 @@
       "profile": {"type": "array", "items": {"allOf": [{"$ref": "#/$defs/entry"}, {"properties": {"id": {"pattern": "^P[1-9][0-9]*$"}}}]}}
     }
     },
-    {"type":"object","additionalProperties":false,"required":["version","budget","entries","profile","projects","tokens","text"],"properties":{"version":{"const":"handoff@2"},"budget":{"type":"integer","minimum":1,"maximum":12000},"tokens":{"type":"integer","minimum":0},"text":{"type":"string"},"entries":{"const":[]},"profile":{"const":[]},"projects":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","name","overview","scenes"],"properties":{"id":{"type":"string","minLength":1},"name":{"type":"string","minLength":1},"overview":{"type":"string","minLength":1},"scenes":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["name","overview"],"properties":{"name":{"type":"string","minLength":1},"overview":{"type":"string","minLength":1}}}}}}}}}
+    {"type":"object","additionalProperties":false,"required":["version","budget","entries","profile","projects","tokens","text"],"properties":{"version":{"const":"handoff@2"},"budget":{"type":"integer","minimum":1,"maximum":12000},"tokens":{"type":"integer","minimum":0},"text":{"type":"string"},"entries":{"const":[]},"profile":{"const":[]},"projects":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","name","overview","scenes"],"properties":{"id":{"type":"string","minLength":1},"name":{"type":"string","minLength":1},"overview":{"type":"string","minLength":1},"scenes":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["name","overview"],"properties":{"name":{"type":"string","minLength":1},"overview":{"type":"string","minLength":1}}}}}}}}},
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "budget", "entries", "profile", "projects", "tokens", "text"],
+      "properties": {
+        "version": {"const": "handoff@3"}, "budget": {"type": "integer", "minimum": 1, "maximum": 12000},
+        "tokens": {"type": "integer", "minimum": 0}, "text": {"type": "string"},
+        "entries": {"const": []}, "profile": {"const": []},
+        "projects": {"type": "array", "items": {"$ref": "#/$defs/shared-project"}}
+      }
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "budget", "entries", "profile", "tokens", "text"],
+      "properties": {
+        "version": {"const": "handoff@4"}, "budget": {"type": "integer", "minimum": 1, "maximum": 12000},
+        "tokens": {"type": "integer", "minimum": 0}, "text": {"type": "string"},
+        "entries": {"type": "array", "items": {"allOf": [{"$ref": "#/$defs/shared-entry"}, {"properties": {"id": {"pattern": "^M[1-9][0-9]*$"}}}]}},
+        "profile": {"type": "array", "items": {"allOf": [{"$ref": "#/$defs/shared-entry"}, {"properties": {"id": {"pattern": "^P[1-9][0-9]*$"}}}]}}
+      }
+    }
   ],
   "$defs": {
+    "shared-project": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "name", "overview", "scenes", "scope_kind", "namespace"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1}, "name": {"type": "string", "minLength": 1},
+        "overview": {"type": "string", "minLength": 1}, "scope_kind": {"const": "shared"},
+        "namespace": {"type": "string", "minLength": 1},
+        "scenes": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+          "required": ["name", "overview"], "properties": {"name": {"type": "string", "minLength": 1},
+            "overview": {"type": "string", "minLength": 1}}}}
+      }
+    },
+    "shared-entry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "object_id", "layer", "title", "excerpt", "sources", "revision", "conditions"],
+      "properties": {
+        "id": {"$ref": "#/$defs/entry/properties/id"},
+        "object_id": {"$ref": "#/$defs/entry/properties/object_id"},
+        "layer": {"$ref": "#/$defs/entry/properties/layer"},
+        "title": {"$ref": "#/$defs/entry/properties/title"},
+        "excerpt": {"$ref": "#/$defs/entry/properties/excerpt"},
+        "revision": {"$ref": "#/$defs/entry/properties/revision"},
+        "conditions": {"$ref": "#/$defs/entry/properties/conditions"},
+        "sources": {"type": "array", "minItems": 1, "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["type", "id", "revision", "project_id", "namespace"],
+          "properties": {
+            "type": {"enum": ["original_item", "original_source", "document", "recognition", "experience"]},
+            "id": {"type": "string", "minLength": 1}, "revision": {"type": "integer", "minimum": 1},
+            "project_id": {"type": "string", "minLength": 1}, "namespace": {"type": "string", "minLength": 1},
+            "incarnation": {"type": "string", "minLength": 1}
+          }
+        }}
+      }
+    },
     "entry": {
       "type": "object", "additionalProperties": false,
       "required": ["id", "object_id", "layer", "title", "excerpt", "sources", "revision", "conditions"],

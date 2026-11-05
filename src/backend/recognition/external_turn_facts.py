@@ -40,7 +40,7 @@ def completed(ref, archive, request, events, payload, effect):
     """One predicate for the live owner and the retained read-only consumer."""
     turn = archive['turn_id']
     fields = {'schema_version', 'owner_id', 'turn_id', 'request', 'binding', 'selections', 'handoff', 'mapping'}
-    extra = {'1.0.0': set(), '2.0.0': {'origin'}, '3.0.0': {'catalog'}, '4.0.0': {'recall'}}
+    extra = {'1.0.0': set(), '2.0.0': {'origin'}, '3.0.0': {'catalog'}, '4.0.0': {'recall'}, '5.0.0': {'shared'}}
     version = archive.get('schema_version')
     if not isinstance(version, str) or version not in extra or set(archive) != fields | extra[version]:
         raise ValueError('external_context_binding_invalid')
@@ -131,6 +131,8 @@ def delivery_facts(reader, turn, identity, *, identities_kind=IDENTITIES):
                 raise ValueError('external_context_not_delivered')
             return row[0], json.loads(row[1])
         ref, archive = immutable(ARCHIVE)
+        if archive.get('schema_version') == '5.0.0':
+            raise ValueError('external_context_evidence_invalid')
         identities_ref, identities = immutable(identities_kind)
         row = connection.execute('SELECT request_json FROM ai_turns WHERE turn_id=?', (turn,)).fetchone()
         if row is None or archive.get('turn_id') != turn:
@@ -157,3 +159,47 @@ def delivery_facts(reader, turn, identity, *, identities_kind=IDENTITIES):
         facts = {'owner_id': archive['owner_id'], 'turn_id': turn, 'client': arguments['client'],
             'scope': arguments['scope'], 'proof': archive['mapping'].get(identity)}
         return ref, facts, identities_ref, identities, outcome, sequence
+
+
+def completed_answer_facts(reader, *, project_id, turn_id, bound_child_request=None):
+    # 只读原请求、终态与不可变回答，保存动作不恢复执行或改变公开轮次。
+    public = reader.read('v2_turns', turn_id)
+    if (public is None or public.payload.get('project_id') != project_id
+            or public.payload.get('intent') != 'ask'):
+        raise ValueError('saved_answer_unavailable')
+    with _readonly(source_store(reader).root / 'ai-turns.sqlite3') as connection:
+        row = connection.execute('SELECT request_json FROM ai_turns WHERE turn_id=?', (turn_id,)).fetchone()
+        if row is None:
+            raise ValueError('saved_answer_request_unavailable')
+        request = json.loads(row[0])
+        immutable = {kind: (ref, json.loads(raw)) for kind, ref, raw in connection.execute(
+            'SELECT kind,payload_ref,payload_json FROM ai_turn_immutable_payloads WHERE turn_id=?', (turn_id,))}
+        events = [json.loads(row[0]) for row in connection.execute(
+            'SELECT event_json FROM ai_turn_events WHERE turn_id=? ORDER BY sequence', (turn_id,))]
+        from core.ai_kernel.product_snapshot import read_product_turn_snapshot, requires_product_answer_snapshot
+        native_snapshot = (read_product_turn_snapshot(connection, turn_id)
+            if requires_product_answer_snapshot(request, immutable) else None)
+    saved = immutable.get('product-answer-result-v2')
+    terminal = [event for event in events if event.get('type') in {'turn.completed', 'turn.failed', 'turn.cancelled'}]
+    ask = saved[1].get('receipt', {}).get('ask') if saved else None
+    current = public.payload.get('receipt', {}).get('ask')
+    question = request.get('input', {}).get('text')
+    same_question = (question == public.payload.get('user_text') if bound_child_request is None else
+        public.payload.get('parent_turn_id') is not None and request == bound_child_request)
+    if (request.get('turn_id') != turn_id or request.get('desired_outcome') != 'project.answer'
+            or request.get('scope', {}).get('project_id') != project_id
+            or request.get('operation_id') != 'answer-' + turn_id
+            or not isinstance(question, str) or not question.strip() or not same_question
+            or not terminal or terminal[-1].get('turn_id') != turn_id or terminal[-1]['type'] != 'turn.completed'
+            or not isinstance(ask, dict) or not isinstance(current, dict)
+            or not isinstance(ask.get('answer'), str) or not ask['answer'].strip()
+            or ask.get('error') or current.get('error') or 'interruption' in ask or 'interruption' in current
+            or any(current.get(key) != ask.get(key) for key in
+                   ('answer', 'citations', 'egress_receipt_id', 'unverified_claims', 'unverified_claim_spans'))):
+        raise ValueError('saved_answer_not_completed')
+    thread = reader.read('v2_threads', public.payload.get('thread_id', ''))
+    if thread is None or thread.payload.get('project_id') != project_id:
+        raise ValueError('saved_answer_thread_unavailable')
+    return {'public_revision': public.revision, 'request': request, 'result_ref': saved[0],
+        'result': saved[1], 'immutable': immutable, 'question': question,
+        'answer': ask, 'thread_id': thread.object_id, 'native_snapshot': native_snapshot}

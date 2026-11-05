@@ -52,6 +52,7 @@ def _limits(organize, *, binding=_UNFROZEN):
         raise ModelConfigurationError('material_analysis_capacity_unavailable')
     policy = get('material_analysis', version='@1')
     input_limit, output = policy.budget(limits)
+    input_limit = organize.reserve_input_limit(input_limit, error_code='material_analysis_budget_insufficient')
     from urllib.parse import urlsplit
     hostname = urlsplit(public.get('base_url') or '').hostname
     local = hostname in {'localhost', '127.0.0.1', '::1'} or not public.get('allow_remote', False)
@@ -184,7 +185,9 @@ def run_analysis(organize, *, original_title, local_model=False):
         from .organize_turns import OrganizeTurns
         owner = OrganizeTurns(root=organize.store._path.parent.parent, records=organize.records,
             models=organize.models, item_id=organize.item_id, project_id=organize.project_id,
-            source=organize.source, validate_current=validate, lease=organize.lease, run_id=organize.run_id)
+            source=organize.source, validate_current=validate, lease=organize.lease, run_id=organize.run_id,
+            generation_requests=organize.generation_requests)
+        owner.input_limit = organize.input_limit
         return complete(task[1], task[2], task[3], owner=owner, record=False)
 
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='material-analysis') as pool:

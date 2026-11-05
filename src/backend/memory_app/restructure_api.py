@@ -6,7 +6,7 @@ from backend.recognition import RecognitionError
 from backend.recognition.restructuring import RestructureProposalService
 
 
-def install_restructure_routes(router: APIRouter, records, *, mutate, read_body, scope_for, revision, text, service, models):
+def install_restructure_routes(router: APIRouter, records, *, mutate, read_body, scope_for, revision, text, service, models, documents):
     proposals = RestructureProposalService(service)
 
     def fields(body, allowed):
@@ -17,7 +17,21 @@ def install_restructure_routes(router: APIRouter, records, *, mutate, read_body,
 
     @router.get("/restructure-proposals")
     async def listing(project_id: str = "default"):
-        return {"items": proposals.list(scope=scope_for(project_id))}
+        scope = scope_for(project_id)
+        items = []
+        for row in proposals.list(scope=scope):
+            refs = {}
+            for experience in row['snapshot']['experiences']:
+                for ref in experience['payload'].get('provenance', {}).get('source_refs', []):
+                    if ref.get('type') == 'document':
+                        refs.setdefault(ref['id'], ref)
+            sources = []
+            for ref in refs.values():
+                document = documents.read(ref['id'])
+                title = document['title'] if document and document.get('project_id') == scope.project_id else None
+                sources.append({**ref, 'title': title})
+            items.append({**row, 'documents': sources})
+        return {"items": items}
 
 
     @router.patch("/restructure-proposals/{proposal_id}")

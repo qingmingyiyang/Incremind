@@ -15,6 +15,7 @@ from core.ai_tooling import ToolDefinition, ToolRetryPolicy, tool_contract_ident
 from .budget import text_tokens
 from .external_executor_plugins import EXECUTOR_CLIENTS
 from .external_adapters import build_launch_plan
+from .external_output_contract import POLICY, delivery_policy_versions, output_policy
 from .external_workspace import (create_task_workspace, task_material_payloads, task_path_identity,
     validate_memory_mcp_config, validate_task_path, verify_task_material)
 
@@ -40,6 +41,10 @@ def _reject():
     raise ExternalRunnerError('external_runner_binding_invalid')
 
 
+def _archive_fields(value):
+    return isinstance(value, dict) and set(value) in (_FIELDS, _FIELDS | {'server_model_binding'})
+
+
 def definition():
     """每用户 CAS 槽限制并发，不持全 dispatcher 的独占闸或跨用户锁。"""
     base = 'crp://default/contracts/external-task-'
@@ -54,6 +59,16 @@ def definition():
 
 
 class ExternalRunner:
+    def _validate_model_binding(self, archive):
+        access = getattr(self.host.models, 'server_model_access', None)
+        binding = archive.get('server_model_binding')
+        if binding is not None:
+            if access is None:
+                _reject()
+            access.validate_binding(binding)
+        elif access is not None and access.selection('generation')['mode'] == 'shared':
+            _reject()
+
     def __init__(self, records, *, owner_id, context, host, turns, frozen_authorization=None):
         if (owner_id != context.owner_id or owner_id != host.owner_id or context.turns is not turns
                 or context.records is not records or host.records is not records):
@@ -145,24 +160,26 @@ class ExternalRunner:
 
     def _prepared_replay(self, turn_id, *, delivery_turn_id, executor, cli_version, task, mcp_config,
             session_id, operation_id, idempotency_key, created_at, preset, commands, host_permission_refs,
-            folder, attachments):
+            folder, attachments, output_policy_version):
         """已有任务只读原绑定，不生成新的目录交付，也不修补无绑定的历史任务。"""
         original = self.turns.get_request(turn_id)
         if original is None:
             return None
         saved = self.turns.get_immutable_payload(turn_id, ARCHIVE)
         events = self.turns.events_after(turn_id)
-        if (saved is None or not isinstance(saved[1], dict) or set(saved[1]) != _FIELDS
+        if (saved is None or not _archive_fields(saved[1])
                 or any(event['type'] in {'turn.failed', 'turn.cancelled'} for event in events)):
             _reject()
         ref, archive = saved
         request = validate_turn_request(original)
         launch = archive['launch']
+        self._validate_model_binding(archive)
         if (archive['owner_id'] != self.owner_id or archive['turn_id'] != turn_id
                 or archive['schema_version'] != '1.0.0'
                 or _encoded(archive['request']) != _encoded(request)
                 or request['desired_outcome'] != 'project.task'
                 or request['execution_policy']['template_version'] != 2
+                or request['policy_versions'].get(POLICY) != output_policy_version
                 or request['capability_request']['arguments'] != {'binding_ref':ref}
                 or (session_id, operation_id, idempotency_key, created_at, task)
                     != tuple(request[key] for key in ('session_id', 'operation_id', 'idempotency_key', 'created_at'))
@@ -192,18 +209,23 @@ class ExternalRunner:
 
     def prepare(self, turn_id, *, delivery_turn_id, executor, cli_version, task, mcp_config,
             session_id, operation_id, idempotency_key, created_at,
-            preset='workspace', commands='disabled', host_permission_refs=None, folder=None, attachments=None):
+            preset='workspace', commands='disabled', host_permission_refs=None, folder=None, attachments=None,
+            output_policy_version=None):
         """先核验记忆入口，再由原 Kernel 接受任务并冻结宿主交付绑定。"""
         newly_accepted = False
         try:
             self._composition_current()
+            spec = output_policy(output_policy_version)
+            if spec is not None and (executor not in {'claude-code', 'codex'} or preset != 'workspace'
+                    or not isinstance(json.loads(task), dict) or json.loads(task).get('output') != spec):
+                _reject()
             if self.runtime is None or self.frozen_authorization is None:
                 _reject()
             replay = self._prepared_replay(turn_id, delivery_turn_id=delivery_turn_id, executor=executor,
                 cli_version=cli_version, task=task, mcp_config=mcp_config, session_id=session_id,
                 operation_id=operation_id, idempotency_key=idempotency_key, created_at=created_at,
                 preset=preset, commands=commands, host_permission_refs=host_permission_refs,
-                folder=folder, attachments=attachments)
+                folder=folder, attachments=attachments, output_policy_version=output_policy_version)
             if replay is not None:
                 return replay
             self._check_memory_configuration(mcp_config, executor, turn_id=turn_id)
@@ -231,7 +253,7 @@ class ExternalRunner:
                 privacy=delivery['privacy'], refs=delivery['refs'],
                 capability_request={'mode':'execute_exact_v1', 'capability_id':CAPABILITY,
                     'arguments':{'binding_ref':'crp://session/' + turn_id + '/' + ARCHIVE}})
-            frozen['policy_versions'] = delivery['policy_versions']
+            frozen['policy_versions'] = {**delivery['policy_versions'], **({POLICY: output_policy_version} if spec is not None else {})}
             validate_turn_request(frozen)
             registration = self.host.registrations[executor]
             if preset == 'folder':
@@ -252,7 +274,8 @@ class ExternalRunner:
             plan = build_launch_plan(executor, cli_version=cli_version, executable=registration.executable,
                 cwd=cwd, task=task, mcp_config=mcp_config, preset=preset, commands=commands,
                 memory_endpoint=self.host.memory_endpoint,
-                material_directory=material_directory if preset == 'folder' else None)
+                material_directory=material_directory if preset == 'folder' else None,
+                codex_api=self.host.codex_api_configuration(executor))
             # 核许可不需要外部进程；目录仍将在版本后和真正启动前复验。
             self.host._permission_check(frozen, plan,
                 {'folder':None, 'commands':None} if host_permission_refs is None else host_permission_refs,
@@ -302,14 +325,15 @@ class ExternalRunner:
                 or delivery['project_id'] != request['scope']['project_id']
                 or _encoded(delivery['privacy']) != _encoded(request['privacy'])
                 or delivery['refs'] != request['input']['refs']
-                or delivery['policy_versions'] != request['policy_versions']):
+                or delivery['policy_versions'] != delivery_policy_versions(request)):
             _reject()
         return delivery, client
 
     def _archive_plan(self, archive):
         launch = archive['launch']
         legacy = set(launch) == _LEGACY_LAUNCH
-        if ((not legacy and (set(launch) != _LAUNCH or not isinstance(launch['materials'], Mapping)))
+        if ((not legacy and (set(launch) not in (_LAUNCH, _LAUNCH | {'codex_api'})
+                    or not isinstance(launch['materials'], Mapping)))
                 or (legacy and (launch['preset'] != 'workspace'
                     or Path(launch['cwd']) != self.host.deployment.user_root / 'agent_workspaces' / archive['turn_id']))):
             _reject()
@@ -318,7 +342,8 @@ class ExternalRunner:
             executable=self.host.registrations[launch['executor']].executable, cwd=Path(launch['cwd']),
             task=archive['request']['input']['text'], mcp_config=archive['mcp_config'],
             preset=launch['preset'], commands=launch['commands'], memory_endpoint=self.host.memory_endpoint,
-            material_directory=Path(material_directory) if material_directory is not None else None)
+            material_directory=Path(material_directory) if material_directory is not None else None,
+            codex_api=launch.get('codex_api'))
         if not legacy and (launch['input_policy'] != plan.input_policy or launch['stdin_text'] != plan.stdin_text):
             _reject()
         return plan
@@ -427,6 +452,10 @@ class ExternalRunner:
                         'preset':plan.preset,'commands':plan.requested_commands,'cwd':str(plan.cwd),
                         'material_directory':str(plan.material_directory) if plan.material_directory is not None else None,
                         'input_policy':plan.input_policy, 'stdin_text':plan.stdin_text, 'materials':materials}}
+                if plan.codex_api:
+                    archive['launch']['codex_api'] = dict(plan.codex_api)
+                if lease._server_model_binding is not None:
+                    archive['server_model_binding'] = deepcopy(lease._server_model_binding)
                 ref = self.turns.get_or_create_immutable_payload(turn_id, ARCHIVE, deepcopy(archive))
                 if ref != request['capability_request']['arguments']['binding_ref']:
                     _reject()
@@ -443,9 +472,10 @@ class ExternalRunner:
             _reject()
         turn_id = value.get('turn_id')
         saved = self.turns.get_immutable_payload(turn_id, ARCHIVE)
-        if saved is None or not isinstance(saved[1], dict) or set(saved[1]) != _FIELDS:
+        if saved is None or not _archive_fields(saved[1]):
             _reject()
         ref, archive = saved
+        self._validate_model_binding(archive)
         request = validate_turn_request(archive['request'])
         context = value.get('execution_context')
         if (archive['schema_version'] != '1.0.0' or archive['owner_id'] != self.owner_id
@@ -505,6 +535,7 @@ class ExternalRunner:
                 from .external_execution import execute_external
 
                 def before_launch():
+                    self._validate_model_binding(archive)
                     if self.application is not None:
                         self._revalidate_memory(archive['memory_proof'], launch['executor'],
                             config=archive['mcp_config'], turn_id=request['turn_id'])
@@ -519,9 +550,37 @@ class ExternalRunner:
                     if _encoded(delivery) != _encoded(archive['delivery']):
                         _reject()
 
+                from .external_context import DELIVERIES
+                known_deliveries = {}
+                baseline = {row.object_id: row.revision for row in self.records.list(DELIVERIES)}
+
+                def before_shared_send():
+                    if context.cancel_requested or context.remaining_timeout_ms <= 0:
+                        _reject()
+                    before_launch()
+                    _, initial = self.context._archive(archive['delivery']['turn_id'])
+                    self.context._validate_recall(initial)
+                    rows = {row.object_id: row for row in self.records.list(DELIVERIES)}
+                    if any(identity not in rows or (rows[identity].revision, rows[identity].payload) != saved
+                            for identity, saved in known_deliveries.items()):
+                        _reject()
+                    for identity, row in rows.items():
+                        if identity in baseline and identity not in known_deliveries:
+                            continue
+                        # MCP新交付必须持续回读真实完成证明，索引本身不授予外发资格。
+                        delivered = self.context.qualified_delivery(identity)
+                        if delivered['client'] == EXECUTOR_CLIENTS[launch['executor']]:
+                            _, saved = self.context._archive(identity)
+                            self.context._validate_recall(saved)
+                            if saved['schema_version'] == '3.0.0':
+                                self.context.catalog.validate(saved['catalog'])
+                            known_deliveries[identity] = (row.revision, deepcopy(row.payload))
+
+                lease.enable_shared_gateway(before_shared_send)
                 execution_entered = True
                 return execute_external(lease, context, records=self.records, turns=self.turns,
-                    turn_id=request['turn_id'], owner_id=self.owner_id, before_launch=before_launch)
+                    turn_id=request['turn_id'], owner_id=self.owner_id, before_launch=before_launch,
+                    external_context=self.context)
             finally:
                 lease.close()
         except ToolProviderFailure:

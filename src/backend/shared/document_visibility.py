@@ -20,11 +20,12 @@ class LegacyDocumentVisibility:
     completed: frozenset[tuple[str, str]]
     pending_sources: frozenset[str] = frozenset()
     filed: frozenset[tuple[str, str]] = frozenset()
+    excluded_logical_documents: frozenset[str] = frozenset()
 
     @classmethod
     def from_repository(cls, documents: object, *, project_id: str | None = None,
                         document_ids: set[str] | None = None,
-                        metadata_only: bool = False) -> LegacyDocumentVisibility:
+                        metadata_only: bool = False, logical_scope_kind: str = 'personal') -> LegacyDocumentVisibility:
         from backend.recognition import RecognitionError, WorkScope
         from backend.recognition.document_filings import filing_document_candidate, filing_experience, DocumentFilingError
 
@@ -60,6 +61,7 @@ class LegacyDocumentVisibility:
         )
         completed |= frozenset(_task_deliveries(records, project_id=project_id, document_ids=document_ids,
                                                metadata_only=metadata_only))
+        completed |= frozenset(_restored_deliveries(records, project_id=project_id, document_ids=document_ids))
         pending_sources = frozenset(
             str(row.payload["source_id"])
             for row in (records.list_projected('workspace_review_intents', fields=('source_id', 'state'))
@@ -89,12 +91,18 @@ class LegacyDocumentVisibility:
                     visible = False
             if visible:
                 filed.add((project, marker.object_id))
-        return cls(confirmed, completed, pending_sources, frozenset(filed))
+        from backend.recognition.material_logical_scope import excluded_documents
+        excluded = excluded_documents(records, project_id=project_id,
+            namespace_id=getattr(documents, 'namespace_id', None), logical_scope_kind=logical_scope_kind,
+            document_ids=document_ids)
+        return cls(confirmed, completed, pending_sources, frozenset(filed), excluded)
 
     def allows(self, document: Mapping[str, object]) -> bool:
         from backend.recognition.document_filings import FILED_ID
 
         document_id = str(document.get("id") or "")
+        if document_id in self.excluded_logical_documents:
+            return False
         project_id = str(document.get("project_id"))
         document_type = document.get("type")
         refs = document.get("source_refs")
@@ -111,14 +119,16 @@ class LegacyDocumentVisibility:
         )
         if document_type == "restructure-internal":
             return False
-        if document_type == "agent-result" or (isinstance(document_type, str) and document_type.startswith('agent-result-turn-')):
+        if document_type == "agent-result" or (isinstance(document_type, str)
+                and document_type.startswith(('agent-result-turn-', 'agent-result-restore-', 'agent-result-answer-'))):
             return (project_id, document_id) in self.completed
         if workspace_ref:
             return (project_id, document_id) in self.confirmed
         return True
 
 
-def recognition_document_visible(records: SQLiteStructuredRecordStore, scope: WorkScope, document_id: str) -> bool:
+def recognition_document_visible(records: SQLiteStructuredRecordStore, scope: WorkScope, document_id: str,
+                                 *, logical_scope_kind: str = 'personal') -> bool:
     """Admit a current document backed by a confirmed review or completed task.
 
     Recognition only admits explicitly published results. Legacy library views
@@ -130,6 +140,10 @@ def recognition_document_visible(records: SQLiteStructuredRecordStore, scope: Wo
     document = records.read("documents", document_id)
     if (document is None or document.payload.get("project_id") != scope.project_id
             or document.payload.get("status") == "archived"):
+        return False
+    from backend.recognition.material_logical_scope import material_scope_visible
+    if not material_scope_visible(records, material_type='document', identity=document_id,
+            project_id=scope.project_id, logical_scope_kind=logical_scope_kind):
         return False
     try:
         copied = filing_experience(records, scope, document_id)
@@ -152,6 +166,9 @@ def recognition_document_visible(records: SQLiteStructuredRecordStore, scope: Wo
     if any(matching("workspace_review_intents", state="confirmed")):
         return True
     if isinstance(scope.project_id, str) and (scope.project_id, document_id) in _task_deliveries(records, project_id=scope.project_id, document_ids={document_id}):
+        return True
+    if isinstance(scope.project_id, str) and (scope.project_id, document_id) in _restored_deliveries(
+            records, project_id=scope.project_id, document_ids={document_id}):
         return True
     return any(record.payload.get("kind") != "restructure"
                for record in matching("recognition_tasks", state="completed"))
@@ -177,4 +194,26 @@ def _task_deliveries(records, *, project_id=None, document_ids=None, metadata_on
         if (creation is not None and creation.payload.get('inputs', {}).get('project_id') == project
                 and creation.payload.get('inputs', {}).get('turn_id') == kernel_id
                 and creation.payload.get('result', {}).get('document_id') == document_id):
+            yield project, document_id
+
+
+def _restored_deliveries(records, *, project_id=None, document_ids=None):
+    from backend.recognition import WorkScope
+    from backend.recognition.product_draft_dependencies import (
+        RESTORATIONS, ANSWER_OUTCOMES, product_draft_source, ProductDraftDependencyError,
+    )
+    markers = (marker for collection in (RESTORATIONS, ANSWER_OUTCOMES)
+        for marker in (records.list_matching(collection, project_id=project_id)
+            if project_id is not None and hasattr(records, 'list_matching') else records.list(collection)))
+    for marker in markers:
+        project, document_id = marker.payload.get('project_id'), marker.payload.get('document_id')
+        if (not isinstance(project, str) or not isinstance(document_id, str)
+                or project_id is not None and project != project_id
+                or document_ids is not None and document_id not in document_ids):
+            continue
+        try:
+            bound = product_draft_source(records, WorkScope('local-user', project), document_id, 1)
+        except ProductDraftDependencyError:
+            continue
+        if bound is not None and (bound.restoration is not None or bound.answer_birth is not None):
             yield project, document_id

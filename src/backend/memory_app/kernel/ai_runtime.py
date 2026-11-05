@@ -537,10 +537,14 @@ def build_ai_runtime(container: object, *, application: object | None = None) ->
         and getattr(getattr(application, "state", object()), "ai_effect_runtime", None) is not None
         else None
     )
-    session_store = SQLiteAITurnStore(
+    turn_store_factory = getattr(getattr(application, "state", None), "ai_turn_store_factory", SQLiteAITurnStore)
+    session_store = turn_store_factory(
         runtime_root / ".rebuild-data" / "ai-turns.sqlite3",
         effect_runner=shared_effect_runner, cache_immutable_reads=True,
     )
+    if (not isinstance(session_store, SQLiteAITurnStore)
+            or session_store._path != runtime_root / ".rebuild-data" / "ai-turns.sqlite3"):
+        raise ValueError("AI Turn store factory returned a different execution owner")
     store, _settings = build_rebuild_object_store(runtime_root)
     application_state = getattr(application, "state", None)
     answer_service = getattr(application_state, "product_answer_turns", None)
@@ -1215,7 +1219,9 @@ def build_ai_runtime(container: object, *, application: object | None = None) ->
             builder=steward_proposal_builder,fallback=planner, drafts=task_drafts,
             records=application_state.recognition_service.records, runtime_root=runtime_root,
             read_control_type=getattr(application_state, 'product_task_read_control_type', None),
-            frame_factory=getattr(application_state, 'product_task_frame_factory', None), data_tools=data_tools)
+            frame_factory=getattr(application_state, 'product_task_frame_factory', None), data_tools=data_tools,
+            attachment_input=getattr(application_state, 'product_task_attachment_input', None),
+            outcome_freshness=getattr(application_state, 'product_outcome_freshness', None))
         planner = task_planner
     privacy_planner = getattr(application_state,"source_privacy_planner_wrapper",None)
     if privacy_planner is not None:
@@ -1398,6 +1404,9 @@ def build_ai_runtime(container: object, *, application: object | None = None) ->
         if runtime.task_continuations is not None:
             runtime.task_continuations.stops = runtime.product_stops
     runtime.agent_data_tools = data_tools
+    product_steers = getattr(application_state, 'product_steers', None)
+    if product_steers is not None:
+        product_steers.bind_runtime(runtime)
     # Compatibility adapters must project the same immutable composition
     # snapshot used by the capability.  A configured gateway without existing
     # egress consent remains local-only.

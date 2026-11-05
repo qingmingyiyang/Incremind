@@ -62,13 +62,21 @@ class ReminderService:
 
     def stage(self, tx, *, project_id, scene, turn_id, parsed):
         project_id, turn_id = _project(project_id), _project(turn_id)
+        return self._stage(tx, identity=turn_id, project_id=project_id, scene=scene,
+                           turn_id=turn_id, parsed=parsed)
+
+    def stage_manual(self, tx, *, identity, project_id, scene, parsed):
+        return self._stage(tx, identity=_project(identity), project_id=_project(project_id),
+                           scene=scene, turn_id=None, parsed=parsed)
+
+    def _stage(self, tx, *, identity, project_id, scene, turn_id, parsed):
         scene = _scene(scene)
         if not isinstance(parsed, PreparedReminder):
             raise ValueError('invalid_prepared_reminder')
         _text(parsed.text, 'reminder_text')
         payload = {'project_id': project_id, 'scene': scene, 'at': parsed.at,
                    'text': parsed.text, 'turn_id': turn_id, 'state': 'active'}
-        existing = tx.read(COLLECTION, turn_id)
+        existing = tx.read(COLLECTION, identity)
         if existing is not None:
             return _replay(existing, project_id=project_id, scene=scene, turn_id=turn_id,
                            text=parsed.text)
@@ -78,7 +86,7 @@ class ReminderService:
         if normalized is None:
             raise HTTPException(400, 'invalid_reminder_at')
         payload['at'] = normalized
-        return _view(tx.put(COLLECTION, turn_id, payload, expected_revision=0))
+        return _view(tx.put(COLLECTION, identity, payload, expected_revision=0))
 
     def create(self, *, project_id, scene, turn_id, text):
         project_id, turn_id, scene = _project(project_id), _project(turn_id), _scene(scene)
@@ -103,7 +111,22 @@ class ReminderService:
             raise HTTPException(404, 'reminder_not_found')
         return _view(row)
 
+    def list(self, project_id, *, reader=None):
+        project_id = _project(project_id)
+        return [_view(row) for row in (reader or self.records).list(COLLECTION)
+                if row.payload['project_id'] == project_id]
+
     def update(self, identity, *, project_id, expected_revision, at=_UNSET, state=_UNSET):
+        try:
+            with self.records.begin() as tx:
+                saved = self.stage_update(tx, identity, project_id=project_id,
+                    expected_revision=expected_revision, at=at, state=state)
+                tx.commit()
+                return saved
+        except SQLiteUnitOfWorkConflict:
+            raise HTTPException(409, 'reminder_revision_conflict') from None
+
+    def stage_update(self, tx, identity, *, project_id, expected_revision, at=_UNSET, state=_UNSET):
         if type(expected_revision) is not int or expected_revision < 1:
             raise HTTPException(400, 'invalid_expected_revision')
         if at is _UNSET and state is _UNSET:
@@ -115,22 +138,16 @@ class ReminderService:
             at = self._policy()(at, self.now().isoformat(), self.local_timezone, operation='at')
             if at is None:
                 raise HTTPException(400, 'invalid_reminder_at')
-        try:
-            with self.records.begin() as tx:
-                current = self.read(identity, project_id=_project(project_id), reader=tx)
-                if current['revision'] != expected_revision:
-                    raise HTTPException(409, 'reminder_revision_conflict')
-                payload = {key: current[key] for key in
-                           ('project_id', 'scene', 'at', 'text', 'turn_id', 'state')}
-                if at is not _UNSET:
-                    payload['at'] = at
-                if state is not _UNSET:
-                    payload['state'] = state
-                saved = tx.put(COLLECTION, identity, payload, expected_revision=expected_revision)
-                tx.commit()
-                return _view(saved)
-        except SQLiteUnitOfWorkConflict:
-            raise HTTPException(409, 'reminder_revision_conflict') from None
+        current = self.read(identity, project_id=_project(project_id), reader=tx)
+        if current['revision'] != expected_revision:
+            raise HTTPException(409, 'reminder_revision_conflict')
+        payload = {key: current[key] for key in
+                   ('project_id', 'scene', 'at', 'text', 'turn_id', 'state')}
+        if at is not _UNSET:
+            payload['at'] = at
+        if state is not _UNSET:
+            payload['state'] = state
+        return _view(tx.put(COLLECTION, identity, payload, expected_revision=expected_revision))
 
     def due(self, project_id, *, at=None):
         _project(project_id)

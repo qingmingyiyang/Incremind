@@ -61,7 +61,8 @@ class ServerUsers:
         row = self.records.read(USERS, user_id)
         if row is None:
             raise UserError('user_not_found')
-        return _public(row)
+        from .server_credentials import login_public
+        return {**_public(row), **login_public(self.records, user_id)}
 
     def root_for(self, user_id):
         self.get(user_id)
@@ -100,19 +101,31 @@ class ServerUsers:
 
     def list_for(self, actor):
         with self.records.begin() as tx:
+            from .server_credentials import login_public
             self._admin(tx, actor)
-            return [_public(row) for row in tx.list(USERS)]
+            return [{**_public(row), **login_public(tx, row.object_id)} for row in tx.list(USERS)]
 
-    def create(self, actor, *, name):
+    def create(self, actor, *, name, login_name=_UNSET, password=_UNSET):
         if (not isinstance(name, str) or not name.strip() or len(name) > 80
                 or any(ord(char) < 32 for char in name)):
             raise UserError('user_name_invalid')
         name = name.strip()
+        from .server_credentials import prepare_credentials, store_credentials, login_public
+        configured = login_name is not _UNSET or password is not _UNSET
+        credentials = None
+        if configured:
+            if login_name is _UNSET or password is _UNSET:
+                raise UserError('user_request_invalid')
+            with self.records.begin() as tx:
+                self._admin(tx, actor)
+            credentials = prepare_credentials(login_name, password)
         with self.records.begin() as tx:
             self._admin(tx, actor)
             if any(row.payload['name'] == name for row in tx.list(USERS)):
                 raise UserError('user_name_conflict')
             user_id = 'user-' + uuid4().hex
+            if credentials is not None:
+                store_credentials(tx, user_id, *credentials, expected_revision=0)
             root = self.server_root / 'users' / user_id
             root.parent.mkdir(parents=True, exist_ok=True)
             if root.parent.resolve() != self.server_root / 'users':
@@ -124,8 +137,9 @@ class ServerUsers:
             row = tx.put(USERS, user_id, {'user_id': user_id, 'name': name, 'role': 'user',
                 'disabled_at': None, 'storage_limit_mb': None, 'job_minutes_per_day': None,
                 'created_at': self.clock().astimezone(timezone.utc).isoformat()}, expected_revision=0)
+            result = {**_public(row), **login_public(tx, user_id)}
             tx.commit()
-            return _public(row)
+            return result
 
     def update(self, actor, user_id, *, expected_revision, disabled=_UNSET,
                storage_limit_mb=_UNSET, job_minutes_per_day=_UNSET):

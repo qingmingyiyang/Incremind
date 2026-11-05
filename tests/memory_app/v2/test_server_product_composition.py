@@ -77,16 +77,11 @@ with TestClient(application, base_url='http://127.0.0.1:8765',client=('127.0.0.1
         assert result[0]=='synthetic answer'
     assert used==[0,1,2]
     assert len({child.state.recognition_models.secrets._path for child in children})==3
-    import httpx
     requests=[]
-    def no_oauth(request):
-        requests.append(request.method)
-        return httpx.Response(502,json={'error':'synthetic_transport'})
     subscription=children[0].state.recognition_models.subscriptions
-    subscription.client.close()
-    subscription.client=httpx.Client(transport=httpx.MockTransport(no_oauth))
-    denied=client.post('/api/v2/settings/subscriptions/login',headers=headers,json={'expected_revision':0})
-    assert denied.status_code==409 and denied.json()=={'detail':'subscription_login_unavailable_server'}
+    subscription.client.event_hooks['request'].append(lambda request: requests.append(request.method))
+    denied=client.post('/api/v2/settings/subscriptions/login',headers=headers,json={'expected_revision':-1})
+    assert denied.status_code==400 and denied.json()=={'detail':'invalid_subscription_revision'}
     assert requests==[] and subscription._attempts=={}
     assert client.get('/api/v2/settings/subscriptions',headers=headers).status_code==200
     assert len({id(child.state.recognition_models) for child in children})==3

@@ -1,9 +1,10 @@
 """Freeze body-free auxiliary storage selection, without dispatch authority."""
 from copy import deepcopy
+from ..model_binding import public_model_configuration, valid_public_configuration_fields
 
 from backend.shared.llm.openai_responses import ResponsesCompletion
 from ..model_config import ModelConfigurationError, ProviderStoreActivation, _generation_execution_location
-from ..turn_routing import CONFIGURATION_FIELDS, SNAPSHOT_KIND, RecognitionRoutingSnapshot, _revision as _routing_revision
+from ..turn_routing import SNAPSHOT_KIND, RecognitionRoutingSnapshot, _revision as _routing_revision
 from .aux_routing import CHOICES, CHOICE_KIND, ROUTE_KIND
 
 
@@ -27,7 +28,7 @@ def _parent(value):
             or not _revision(value['mode_revision'])):
         _invalid()
     configuration = value['configuration']
-    if (not isinstance(configuration, dict) or set(configuration) != set(CONFIGURATION_FIELDS)
+    if (not isinstance(configuration, dict) or not valid_public_configuration_fields(configuration)
             or configuration['purpose'] != 'generation'
             or any(type(configuration[key]) is not str for key in ('provider', 'base_url', 'model'))
             or any(type(configuration[key]) is not bool for key in ('allow_remote', 'configured', 'has_api_key'))
@@ -252,7 +253,7 @@ def auxiliary_provider_store_activation(models, selected, reader, store, request
         configuration = {**parent['configuration'],
             'model': frozen_choice[1]['model'] or parent['configuration']['model']}
         actual = selected.public()['generation']
-        if ({key: actual.get(key) for key in CONFIGURATION_FIELDS} != configuration
+        if (public_model_configuration(actual) != configuration
                 or not isinstance(frozen_route, dict)
                 or set(frozen_route) != {'payload_ref', 'revision', 'prompt_cache_scope_identity',
                                          'configuration', 'execution_location'}
@@ -305,7 +306,7 @@ def route_provider_store_activation(models, selected, reader, store, request, ro
             _invalid()
         configuration = frozen_binding['configuration']
         actual = selected.public()['generation']
-        if ({key: actual.get(key) for key in CONFIGURATION_FIELDS} != configuration
+        if (public_model_configuration(actual) != configuration
                 or frozen_choice[1]['model'] is None and selected is not models
                 or not isinstance(frozen_route, dict)
                 or set(frozen_route) != {'payload_ref', 'revision', 'prompt_cache_scope_identity',
@@ -348,6 +349,8 @@ def memory_provider_store_call(models, selected, reader, store, request, route_r
             raise ModelConfigurationError('provider_store_binding_changed')
         turn_id = frozen_request['turn_id']
         expected = {field: configuration[field] for field in fields}
+        if configuration.get('server_model_binding') is not None:
+            expected['server_model_binding'] = configuration['server_model_binding']
         actual = selected.public()['generation']
         if (frozen_choice is None or frozen_choice[1] != frozen_binding['auxiliary']
                 or store.get_immutable_payload(turn_id, CHOICE_KIND) != frozen_choice

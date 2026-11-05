@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Library } from '@src/features/library/Library';
 
@@ -79,10 +79,11 @@ it('switches four layers with real counts and filters', async () => {
   fireEvent.click(screen.getByRole('button', { name: '待确认 1' }));
   expect(screen.queryByRole('button', { name: '以证据支持判断' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: '保留具体数字' })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '摘要 1' }));
+  expect(screen.getByRole('button', { name: '摘要 —' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '摘要 —' })); await settle();
   expect(screen.getByRole('button', { name: /一次阅读/ })).toBeInTheDocument();
   expect(screen.queryByRole('group', { name: '认识状态' })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '原件 1' }));
+  fireEvent.click(screen.getByRole('button', { name: '原件 —' })); await settle();
   expect(screen.getByRole('button', { name: '原件标题' })).toBeInTheDocument();
 });
 it('opens breadcrumbs, moves down and reverses to grown insights', async () => {
@@ -95,7 +96,7 @@ it('opens breadcrumbs, moves down and reverses to grown insights', async () => {
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '认识' }));
   expect(screen.getByRole('dialog')).toHaveTextContent('以证据支持判断');
   fireEvent.click(screen.getByRole('button', { name: '关闭' }));
-  fireEvent.click(screen.getByRole('button', { name: '原件 1' }));
+  fireEvent.click(screen.getByRole('button', { name: '原件 —' })); await settle();
   fireEvent.click(screen.getByRole('button', { name: '原件标题' })); await settle();
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '认识' }));
   expect(screen.getByRole('dialog')).toHaveTextContent('长出的认识');
@@ -140,13 +141,13 @@ it('loads scene and search and clears old selection on project change', async ()
   fireEvent.click(screen.getByRole('button', { name: '阅读' })); await settle();
   expect(fetch.mock.calls.some(([url]) => String(url).includes('scene='))).toBe(true);
   fireEvent.change(screen.getByRole('searchbox', { name: '搜索' }), { target: { value: '证据' } }); await settle();
-  expect(fetch.mock.calls.some(([url]) => new URL(String(url), 'http://localhost').searchParams.get('q') === '证据')).toBe(true);
+  await waitFor(() => expect(fetch.mock.calls.some(([url]) => new URL(String(url), 'http://localhost').searchParams.get('q') === '证据')).toBe(true));
   fireEvent.click(screen.getByRole('button', { name: '以证据支持判断' })); await settle();
   view.rerender(<Library projectId="beta" projects={[]}/>);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 it('renders organized Markdown as reading content and submits verification', async () => {
-  mount(); await settle(); fireEvent.click(screen.getByRole('button', { name: '整理稿 1' }));
+  mount(); await settle(); fireEvent.click(screen.getByRole('button', { name: '整理稿 —' })); await settle();
   fireEvent.click(screen.getByRole('button', { name: /一次阅读/ })); await settle();
   const panel = screen.getByRole('dialog', { name: '整理稿' });
   expect(within(panel).getByRole('heading', { name: '一次阅读', level: 1 })).toBeInTheDocument();
@@ -201,13 +202,13 @@ it('counts three note states and forgets/restores without hiding the original', 
     if (path.endsWith('/archive') || path.endsWith('/restore')) {
       archived = path.endsWith('/archive'); value = { document_id: doc.document_id, revision: archived ? 2 : 3 };
     } else if (path.endsWith('/documents-archived')) value = { items: archived ? [{ ...doc, revision: 2 }] : [] };
-    else if (path.endsWith('/notes')) value = { items: [{ ...doc, revision: archived ? 2 : 3 }, { ...doc, document_id: 'checked', title: '核对稿', verified: true }] };
+    else if (path.endsWith('/notes')) value = { items: [{ ...doc, archived, revision: archived ? 2 : 3 }, { ...doc, archived: false, document_id: 'checked', title: '核对稿', verified: true }] };
     else if (path.endsWith('/summaries')) value = { items: archived ? [] : [doc] };
-    else if (path.endsWith('/drill')) value = { ...drill, note: { ...drill.note, revision: archived ? 2 : 3 } };
+    else if (path.endsWith('/drill')) value = { ...drill, note: { ...drill.note, archived, revision: archived ? 2 : 3 } };
     else return base(url, options);
     return { ok: true, json: async () => value };
   });
-  mount(); await settle(); fireEvent.click(screen.getByRole('button', { name: '整理稿 2' }));
+  mount(); await settle(); fireEvent.click(screen.getByRole('button', { name: '整理稿 —' })); await settle();
   expect(screen.getByRole('button', { name: '未核对 1' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '已核对 1' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '已遗忘 0' })).toBeInTheDocument();
@@ -217,14 +218,14 @@ it('counts three note states and forgets/restores without hiding the original', 
   fireEvent.click(screen.getByRole('button', { name: '遗忘' })); await settle();
   expect(screen.getByRole('button', { name: '未核对 0' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '已遗忘 1' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '摘要 0' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '原件 1' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '摘要 —' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '原件 —' })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '已遗忘 1' }));
   fireEvent.click(screen.getByRole('button', { name: '一次阅读' })); await settle();
   expect(screen.queryByRole('button', { name: '核对完成' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '恢复' })); await settle();
   expect(screen.getByRole('button', { name: '已遗忘 0' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '摘要 1' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '摘要 —' })).toBeInTheDocument();
   const calls = fetch.mock.calls.filter(([url]) => /\/(archive|restore)\?/.test(String(url)));
   expect(calls.map(([, options]) => JSON.parse(options.body))).toEqual([{ expected_revision: 3 }, { expected_revision: 2 }]);
 });

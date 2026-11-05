@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "cases": [
+    {"id":"a01","category":"attachments","tags":[],"rationale":"附件比较成果","text":"对比三份的分歧","has_files":true,"parts":[{"intent":"remember","span":"","instruction":null,"depends_on":[]},{"intent":"do","span":"对比三份的分歧","instruction":null,"depends_on":[0]}]},
+    {"id":"a02","category":"attachments","tags":[],"rationale":"录音纪要成果","text":"整理成访谈纪要，列出分歧和待办","has_files":true,"parts":[{"intent":"remember","span":"","instruction":null,"depends_on":[]},{"intent":"do","span":"整理成访谈纪要，列出分歧和待办","instruction":null,"depends_on":[0]}]},
+    {"id":"a03","category":"attachments","tags":[],"rationale":"录音问题","text":"这段录音约定了什么？","has_files":true,"parts":[{"intent":"remember","span":"","instruction":null,"depends_on":[]},{"intent":"ask","span":"这段录音约定了什么？","instruction":null,"depends_on":[0]}]},
+    {"id":"a04","category":"attachments","tags":[],"rationale":"带范围说明","text":"#项目/访谈 汇总三份材料","has_files":true,"parts":[{"intent":"remember","span":"","instruction":null,"depends_on":[]},{"intent":"do","span":"汇总三份材料","instruction":null,"depends_on":[0]}]},
+    {"id":"a05","category":"attachments","tags":[],"rationale":"只有附件","text":"","has_files":true,"parts":[{"intent":"remember","span":"","instruction":null,"depends_on":[]}]},
+    {"id":"a06","category":"attachments","tags":[],"rationale":"明确保存附件","text":"保存附件","has_files":true,"parts":[{"intent":"remember","span":"保存附件","instruction":null,"depends_on":[]}]},
+    {"id":"a07","category":"attachments","tags":[],"rationale":"行动成果","text":"写一份行动清单","has_files":true,"parts":[{"intent":"remember","span":"","instruction":null,"depends_on":[]},{"intent":"do","span":"写一份行动清单","instruction":null,"depends_on":[0]}]},
+    {"id":"a08","category":"attachments","tags":[],"rationale":"图片问题","text":"图中有哪些待办？","has_files":true,"parts":[{"intent":"remember","span":"","instruction":null,"depends_on":[]},{"intent":"ask","span":"图中有哪些待办？","instruction":null,"depends_on":[0]}]},
+    {"id":"a09","category":"attachments","tags":[],"rationale":"预算比较","text":"比较预算和进度","has_files":true,"parts":[{"intent":"remember","span":"","instruction":null,"depends_on":[]},{"intent":"do","span":"比较预算和进度","instruction":null,"depends_on":[0]}]},
+    {"id":"a10","category":"attachments","tags":[],"rationale":"各份结论","text":"附件各自的结论是什么？","has_files":true,"parts":[{"intent":"remember","span":"","instruction":null,"depends_on":[]},{"intent":"ask","span":"附件各自的结论是什么？","instruction":null,"depends_on":[0]}]}
+  ]
+}

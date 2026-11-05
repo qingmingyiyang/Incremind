@@ -1,6 +1,8 @@
 """已准入宿主的内部执行接点；不授予外发或操作权限。"""
 from copy import deepcopy
 import json
+import logging
+import sqlite3
 
 from core.ai_kernel.dispatcher import ToolProviderFailure
 from .external_dispatch import dispatch_external
@@ -12,6 +14,7 @@ from .external_process import ProcessCleanupError
 RESULT_KIND = 'external-task-result-v1'
 RECEIPT_KIND = 'external-task-receipt-v1'
 _TERMINAL = {'completed', 'failed', 'cancelled', 'timed_out', 'output_limit'}
+_LOG = logging.getLogger(__name__)
 
 
 def _bytes(value):
@@ -27,12 +30,13 @@ def _dto(body, payload_ref, receipt_ref):
 
 
 def execute_external(lease, context, *, records, turns, turn_id, owner_id,
-        event_sink=None, output_limit=1048576, before_launch=None):
+        event_sink=None, output_limit=1048576, before_launch=None, external_context=None):
     """借用 caller 管理的 lease；全部进程已关闭后才保存终态。"""
     started = False
     reserved = False
     execution_active = False
     may_have_started = False
+    progress = None
     try:
         if (not isinstance(lease, HostLease) or lease.owner_id != owner_id
                 or type(output_limit) is not int or output_limit < 1
@@ -71,6 +75,12 @@ def execute_external(lease, context, *, records, turns, turn_id, owner_id,
             return _dto(body, payload_ref, receipt_ref)
         reserved = True
         revision = row['revision']
+        from .external_progress import ExternalProgress, ExternalProgressWriteError
+        try:
+            progress = ExternalProgress(records, turns, lease, turn_id=turn_id, owner_id=owner_id,
+                external_context=external_context)
+        except ExternalProgressWriteError:
+            _LOG.warning('external_progress_projection_incomplete')
         chunks = []
         message_bytes = 0
 
@@ -88,6 +98,12 @@ def execute_external(lease, context, *, records, turns, turn_id, owner_id,
                 fragment = encoded[:remaining].decode('utf-8', errors='ignore')
                 chunks.append(fragment)
                 message_bytes += len(fragment.encode('utf-8'))
+            try:
+                if progress is not None:
+                    progress.receive(event)
+            except ExternalProgressWriteError:
+                progress.disable()
+                _LOG.warning('external_progress_projection_incomplete')
             if event_sink is not None:
                 event_sink(deepcopy(event))
 
@@ -122,6 +138,22 @@ def execute_external(lease, context, *, records, turns, turn_id, owner_id,
             'effect_certainty':'confirmed_applied' if result.status=='completed' else 'unknown'
                 if started or may_have_started else 'confirmed_none'}
         receipt_ref = turns.get_or_create_immutable_payload(turn_id, RECEIPT_KIND, proof)
+        from .external_final_text import capture_final_text
+        capture_final_text(lease, result, records=records, turns=turns, turn_id=turn_id, owner_id=owner_id)
+        from .external_task_files import capture_task_files
+        try:
+            capture_task_files(lease, records=records, turns=turns, turn_id=turn_id,
+                owner_id=owner_id, external_context=external_context,
+                result_ref=payload_ref, receipt_ref=receipt_ref)
+        except (sqlite3.Error, OSError):
+            _LOG.warning('external_output_storage_incomplete')
+        try:
+            if progress is not None:
+                progress.finish(result)
+        except ExternalProgressWriteError:
+            progress.disable()
+            # 已保存的真实执行终态不由界面投影改写；产品回执会明确标记缺失的步骤记录。
+            _LOG.warning('external_progress_projection_incomplete')
         if result.status != 'completed':
             raise _failure('external_task_failed', started or may_have_started)
         return _dto(body, payload_ref, receipt_ref)
@@ -144,6 +176,12 @@ def execute_external(lease, context, *, records, turns, turn_id, owner_id,
                      'run_revision':terminal['revision'], 'status':'failed', 'effect_certainty':'unknown'})
 
             lease._retain_cleanup(error._cleanup_owner, complete_cleanup)
+            if progress is not None:
+                try:
+                    progress.observe_usage(cleanup_result)
+                except ExternalProgressWriteError:
+                    progress.disable()
+                    _LOG.warning('external_progress_projection_incomplete')
             raise _failure('external_task_cleanup_incomplete', True) from None
         if reserved and not started and not may_have_started:
             # 确知尚未进入 CLI 时释放本次槽位；回读不完整时仍禁止重启。
@@ -167,5 +205,7 @@ def execute_external(lease, context, *, records, turns, turn_id, owner_id,
         # 两个原存储不能跨库原子提交；不完整材料保留占位，禁止再次执行。
         raise _failure('external_task_execution_failed', started or may_have_started) from None
     finally:
+        if progress is not None:
+            progress.close()
         if execution_active:
             lease._end_execution()

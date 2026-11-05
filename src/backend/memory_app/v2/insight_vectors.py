@@ -1,5 +1,6 @@
 """Meaning-based similarity for published insights through the governed vector path."""
 from dataclasses import replace
+from contextlib import nullcontext
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
@@ -11,6 +12,7 @@ from .contextual_chunk_vectors import ReusedQuestion
 from .embedding_settings import local_vectors_ready
 from .memory_turn import embedding_request
 from .privacy import egress_allowed, is_private_project, privacy_revision
+from .shared_vector_keys import material_vector_namespace
 
 
 def insight_vector_scores(query, project, scope, entries, question) -> dict[str, float]:
@@ -23,7 +25,7 @@ def insight_vector_scores(query, project, scope, entries, question) -> dict[str,
     contextual chunk vectors. Any failure returns {} and never retries.
     """
     public = getattr(query.models, 'public', None)
-    if not callable(public) or not entries:
+    if not callable(public) or not entries or query.offline:
         return {}
     cache = None
     try:
@@ -53,6 +55,7 @@ def insight_vector_scores(query, project, scope, entries, question) -> dict[str,
             return {}
 
         def validate():
+            query.validate_retrieval_origin()
             if (privacy_revision(query.records) != frozen_privacy
                     or (not local_vectors and is_private_project(query.records, project))
                     or (remote and not egress_allowed(query.records, query.models, project, 'embedding'))
@@ -78,18 +81,30 @@ def insight_vector_scores(query, project, scope, entries, question) -> dict[str,
 
         class ObservedTransport:
             def post_json(self, **request):
-                return embedding_request(query.records, query.models, project, materials,
-                    {'namespace': 'insight-recall-v1', 'embedding': request['payload']['input'],
-                     'materials': materials, 'configuration_revision': configured.get('revision'),
-                     **({'mode_revision': configured['mode_revision']} if local_vectors else {})},
-                    validate, original, request)
+                from .shared_rendered_preparation import recognition_wire_input
+                prepared_scope = (recognition_wire_input(query, payload=request['payload'], question=question,
+                    entries=[wire_entries[identity] for identity in wire_batch.missing_ids])
+                    if query.origin_admission is not None else nullcontext(None))
+                with prepared_scope as rendered:
+                    return embedding_request(query.execution_owner.records, query.models, project, materials,
+                        {'namespace': 'insight-recall-v1', 'embedding': request['payload']['input'],
+                         'materials': materials, 'configuration_revision': configured.get('revision'),
+                         **({'mode_revision': configured['mode_revision']} if local_vectors else {})},
+                        validate, original, request, origin_admission=query.origin_admission, rendered_input=rendered)
 
-        provider = ReusedQuestion(replace(provider, client=ObservedTransport()))
+        provider = ReusedQuestion(replace(provider, client=ObservedTransport()),
+            cache_namespace=query.cache_namespace(provider.cache_identity), validate_current=validate)
         # Same text and key the background index writes for an insight.
         projected = [{'id': entry['id'], 'revision': entry['revision'], 'project_id': project,
                       'content': entry['content'], 'source_refs': []}
                      for entry in entries if entry['id'] in snapshots]
-        cache = SQLiteEmbeddingCache(str(query.records.database_path.parent / 'recognition-vectors.sqlite3'))
+        rendered = {item['id']: item['content'] for item in projected}
+        wire_batch = None
+        if query.origin_admission is not None:
+            from .shared_rendered_preparation import RenderedEmbeddingBatch
+            wire_batch = RenderedEmbeddingBatch(projected)
+            wire_entries = {entry['id']: entry for entry in entries if entry['id'] in snapshots}
+        cache = SQLiteEmbeddingCache(str(query.execution_owner.records.database_path.parent / 'recognition-vectors.sqlite3'))
         model_key = provider.cache_identity
         allowed = None
         cached_vectors = {}
@@ -98,7 +113,8 @@ def insight_vector_scores(query, project, scope, entries, question) -> dict[str,
             for item in projected:
                 identity = (project, item['id'], item['revision'])
                 vector = cache.read(model_id=model_key,
-                    entry=SimpleNamespace(project_id=project, id=item['id'], revision=item['revision']))
+                    entry=SimpleNamespace(project_id=material_vector_namespace(query, project, item['content'], model_key),
+                        id=item['id'], revision=item['revision']))
                 if vector is not None:
                     cached_vectors[identity] = vector
             allowed = {identity for _, identity, _ in cached_vectors}
@@ -107,17 +123,26 @@ def insight_vector_scores(query, project, scope, entries, question) -> dict[str,
 
         class ScopedCache:
             def read(self, *, model_id, entry):
+                validate()
                 if local_vectors:
-                    return (cached_vectors.get((entry.project_id, entry.id, entry.revision))
+                    if entry.id not in rendered:
+                        raise RecognitionConflict('insight_vector_cache_snapshot_changed')
+                    value = (cached_vectors.get((entry.project_id, entry.id, entry.revision))
                             if model_id == model_key else None)
-                return cache.read(model_id=model_id, entry=entry)
+                else:
+                    namespace = material_vector_namespace(query, entry.project_id, entry.content, model_id)
+                    value = cache.read(model_id=model_id, entry=replace(entry, project_id=namespace))
+                if wire_batch is not None:
+                    wire_batch.observe(entry, value)
+                return value
 
             def write(self, *, model_id, entry, vector):
                 if local_vectors:
                     # The question turn never becomes background indexing.
                     raise RecognitionConflict('local_vector_foreground_cache_write')
                 validate()
-                cache.write(model_id=model_id, entry=entry, vector=vector)
+                namespace = material_vector_namespace(query, entry.project_id, entry.content, model_id)
+                cache.write(model_id=model_id, entry=replace(entry, project_id=namespace), vector=vector)
 
         result = retrieve(project, question, projected, limit=len(projected),
                           vector_candidate_limit=len(projected), keyword_enabled=False,

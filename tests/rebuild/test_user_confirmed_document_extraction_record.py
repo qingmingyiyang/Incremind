@@ -69,5 +69,5 @@ def test_user_confirmed_document_manual_record_keeps_sensitive_boundaries() -> N
     assert "staging_atoms_written: 0" in record
     assert "memory_publications_written: 0" in record
     assert "pending_review" in record
-    assert "D:\\Users\\Chrip\\Downloads" not in record
+    assert ":/users/" not in record.casefold().replace("\\", "/").replace("//", "/")
     assert "sk-" not in record

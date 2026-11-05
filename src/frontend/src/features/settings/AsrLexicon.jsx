@@ -3,6 +3,7 @@ import { Row } from '../../shared/ui';
 import { userStorageKey } from '../../shared/api/deviceTransport';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
 import { settingsApi } from './settingsApi';
+import { LexiconTermEditor } from './LexiconTermEditor';
 
 const MAX_IMPORT_BYTES = 262144;
 const spaceKey = () => userStorageKey('asr-lexicon');
@@ -88,7 +89,9 @@ export function AsrLexicon({ projectId, api = settingsApi }) {
     <Row readOnly title="热词表" meta={value ? `${value.terms.filter(term => term.status !== 'retired').length} 词` : '—'}/>
     {value && <>
       <Row readOnly title="适用" meta="本机 · 实时语音" sub="Hy-ASR 暂不支持"/>
-      <div className="settings-asr-terms" aria-label="当前热词">{value.terms.filter(term => term.status !== 'retired').map(term => <span key={term.id || term.term}>{term.term} <small title="本机转写仅按权重优先排列">{term.weight}</small></span>)}</div>
+      <div aria-label="当前热词">{value.terms.map(term => <LexiconTermEditor key={term.id}
+        term={term} revision={value.revision} userSpace={userSpace} projectId={projectId} api={api} disabled={busy}
+        onChanged={updated => { setPreview(null); setLoaded({ scope, value: updated }); }}/>)}</div>
       <div className="settings-asr-import">
         <label>格式<select aria-label="热词格式" value={format} disabled={busy} onChange={event => edit(text, event.target.value)}>
           <option value="txt">TXT</option><option value="csv">CSV</option><option value="json">JSON</option>

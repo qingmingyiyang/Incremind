@@ -10,10 +10,15 @@ export async function settingsRequest(path, body, method = 'GET', signal) {
   if (!response.ok) { const error = new Error(response.status === 409 ? '设置已变化 · 刷新' : '操作未完成 · 重试'); error.code = response.status === 409 ? 'revision_conflict' : 'settings_request_failed'; error.status = response.status; error.detail = typeof value?.detail === 'string' ? value.detail : undefined; throw error; }
   return value;
 }
+const receiptQuery = values => new URLSearchParams(Object.entries(values).filter(([, value]) => value !== null && value !== undefined && value !== '')).toString();
 export const settingsApi = {
   loadAsrLexicon: signal => settingsRequest('asr/lexicon', undefined, 'GET', signal),
   importAsrLexicon: (body, signal) => settingsRequest('asr/lexicon/import', body, 'POST', signal),
+  changeAsrLexicon: (body, signal) => settingsRequest('asr/lexicon/changes', body, 'POST', signal),
   integrity: () => settingsRequest('settings/integrity'),
+  inspirations: signal => settingsRequest('settings/inspirations', undefined, 'GET', signal),
+  saveInspirations: ({ enabled, time, expectedRevision }, signal) => settingsRequest('settings/inspirations',
+    { enabled, time, expected_revision: expectedRevision }, 'PATCH', signal),
   signals: () => settingsRequest('settings/signals'),
   saveSignals: (enabled, revision) => settingsRequest('settings/signals', { enabled, expected_revision: revision }, 'PATCH'),
   clearSignals: revision => settingsRequest('settings/signals/clear', { expected_revision: revision }, 'POST'),
@@ -26,9 +31,13 @@ export const settingsApi = {
   snapshot: (body, signal) => settingsRequest('settings/external-agent/snapshot', body, 'POST', signal),
   saveExternalProxy: preferences => settingsRequest('settings/external-proxy', preferences, 'PATCH'),
   privateSources: () => settingsRequest('settings/private-sources'), receipts: () => settingsRequest('settings/egress-receipts?limit=50'),
+  monthlyUsage: ({ month, timezone, scope = 'egress' } = {}, signal) => settingsRequest(`settings/usage-month?${receiptQuery({ month, timezone, scope })}`, undefined, 'GET', signal),
+  receiptHistory: ({ month, timezone, purpose, cursor, limit = 25, scope = 'egress' } = {}, signal) => settingsRequest(`settings/receipt-history?${receiptQuery({ month, timezone, purpose, cursor, limit, scope })}`, undefined, 'GET', signal),
+  receiptDetail: (identity, signal, { month, timezone, scope = 'egress' } = {}) => settingsRequest(`settings/receipt-history/${encodeURIComponent(identity)}?${receiptQuery({ month, timezone, scope })}`, undefined, 'GET', signal),
   saveProject: (row, changes) => settingsRequest(`projects/${encodeURIComponent(row.id)}`, { ...changes, expected_revision: row.revision }, 'PATCH'),
   createProject: name => settingsRequest('projects', { name }, 'POST'),
-  saveModel: args => settingsRequest('settings/model', { purpose: args.purpose, base_url: args.baseUrl,
+  saveModel: args => settingsRequest('settings/model', args.serverManaged ? { purpose: args.purpose,
+    allow_remote: args.allowRemote === true, enabled: args.enabled === true, expected_revision: args.expectedRevision } : { purpose: args.purpose, base_url: args.baseUrl,
     model: args.model, api_key: args.apiKey, allow_remote: args.allowRemote === true,
     enabled: args.enabled === true, expected_revision: args.expectedRevision,
     clear_api_key: args.clearApiKey === true }, 'PUT'),
@@ -55,6 +64,14 @@ export const settingsApi = {
     if (typeof globalThis.electronAPI?.captureCredential !== 'function') throw new Error('desktop_capture_required');
     return globalThis.electronAPI.captureCredential('tokenhub_asr_api_key', 'tokenhub-hy-asr', apiKey, `cmd-${crypto.randomUUID()}`);
   },
+  saveWebAsrKey: (body, signal) => settingsRequest('settings/asr-key', body, 'PUT', signal),
+  asrKeyStatus: (identity, signal) => settingsRequest(`settings/asr-key/operations/${encodeURIComponent(identity)}`, undefined, 'GET', signal),
+  cancelAsrKey: (identity, signal) => settingsRequest(`settings/asr-key/operations/${encodeURIComponent(identity)}/cancel`, {}, 'POST', signal),
+  purposeTestSample: (purpose, signal) => settingsRequest(`settings/purpose-tests/samples/${encodeURIComponent(purpose)}`, undefined, 'GET', signal),
+  runPurposeTest: (body, signal) => settingsRequest('settings/purpose-tests', body, 'POST', signal),
+  purposeTestStatus: (identity, signal) => settingsRequest(`settings/purpose-tests/${encodeURIComponent(identity)}`, undefined, 'GET', signal),
+  cancelPurposeTest: (identity, signal) => settingsRequest(`settings/purpose-tests/${encodeURIComponent(identity)}/cancel`, {}, 'POST', signal),
+  cleanupPurposeTest: (identity, signal) => settingsRequest(`settings/purpose-tests/${encodeURIComponent(identity)}/cleanup`, {}, 'POST', signal),
   disableAsr: revokeCloudAsrEgressConsent,
   enableAsr: async () => { await saveCloudAsrProviderSettings({ enabled: true }); const settings = await loadCloudAsrProviderSettings(); return grantCloudAsrEgressConsent(settings.egress_manifest.manifest_id); },
   toggleSubscription: async (enabled, revision) => {

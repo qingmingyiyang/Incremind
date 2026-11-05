@@ -38,4 +38,19 @@ def install_asr_lexicon_routes(application, *, records, runtime_root):
             status = 409 if error.code == "asr_lexicon_revision_conflict" else 413 if error.code == "asr_lexicon_import_too_large" else 400
             raise HTTPException(status, error.code) from None
 
+    @router.post('/changes')
+    async def change_lexicon(request: Request):
+        try:
+            body = await request.json()
+            if (not isinstance(body, dict) or set(body) != {'operations', 'expected_revision', 'preview', 'confirm'}
+                    or type(body['preview']) is not bool or type(body['confirm']) is not bool
+                    or body['preview'] == body['confirm']):
+                raise AsrLexiconError('invalid_asr_lexicon_changes')
+            return service.change_terms(operations=body['operations'], expected_revision=body['expected_revision'],
+                                        preview=body['preview'])
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise HTTPException(400, 'invalid_asr_lexicon_changes') from None
+        except AsrLexiconError as error:
+            raise HTTPException(409 if error.code == 'asr_lexicon_revision_conflict' else 400, error.code) from None
+
     application.include_router(router)

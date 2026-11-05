@@ -1,17 +1,19 @@
 """Persist product progress around a single governed organization Turn."""
 from datetime import datetime, timezone
+from contextlib import ExitStack
 from functools import wraps
 from uuid import uuid4
 from fastapi import HTTPException
 from core.storage_provider.connection_scope import with_connection_scope
+from core.ai_kernel.product_admission import bundle_to_payload, bundle_from_payload
 
 from starlette.concurrency import run_in_threadpool
 
 from .inspirations import freeze_task_turn, validate_task_inputs
-from .task_divisions import TaskDivisions
+from .task_divisions import TaskDivisions, validate_items
 import json
 from ..workspace_contracts import _now
-from .policies import override
+from .policies import override, version
 from .policies.pipelines import versions_for_turn
 from .outcome_corrections import complete_redos
 from ..transaction_records import TransactionRecords
@@ -20,6 +22,7 @@ from backend.recognition import WorkScope, RecognitionConflict
 from ..source_egress import recognition_service
 from .outcomes import validate_selection, record_outcome, prepare_continuation, validate_continuation
 from .agent_data_tools import AgentDataTools, AgentDataToolError
+from .shared_projects import SharedProjectError
 
 TASK_EXECUTIONS = 'v2_task_executions'
 TERMINAL = {'completed', 'failed', 'cancelled', 'interrupted', 'timed_out',
@@ -44,14 +47,175 @@ class TaskDo:
         self.execution_getter = execution_getter
         self.style_service = service or recognition_service(records)
 
+    def with_source_query(self, query):
+        from .shared_rendered_preparation import _query_current
+        _query_current(query)
+        if query.receipt_records is not self.records or query.models is not self.models:
+            raise RecognitionConflict('shared_task_execution_owner_changed')
+        return TaskDo(self.records, self.models, self.drafts, self.organization, self.reader, self.topology,
+            query, execution_getter=self.execution_getter, service=self.style_service)
+
     def execution(self):
         runtime, runner = self.execution_getter() if self.execution_getter else (None, None)
         if runtime is None or runner is None or getattr(runtime, 'task_continuations', None) is None:
             raise HTTPException(409, 'turn_interrupted')
         return runtime, runner
 
-    def observe(self, turn):
+    def redo_source(self, turn, *, source_kind='execution'):
+        from .shared_task_workbench import redo_query
+        query = redo_query(self.query.answer_turns.application, turn)
+        source = self._redo_source(turn, source_kind=source_kind)
+        if query.origin_admission is not None:
+            from .shared_task_redo import capture_source
+            source['shared_redo'] = capture_source(query, turn.object_id, source_kind=source_kind)
+        return source
+
+    def _redo_source(self, turn, *, source_kind='execution'):
+        from ..kernel.receipt_projection import frozen_task_request
+        project = turn.payload['project_id']
+        receipt = turn.payload.get('receipt', {}).get('do', {})
+        state = self.records.read(TASK_EXECUTIONS, turn.object_id)
+        if (source_kind not in {'sample', 'execution'} or state is None
+                or turn.payload.get('intent') != 'do'
+                or receipt.get('executor') or state.payload.get('executor')
+                or receipt.get('state') not in {'done', 'partial', 'failed'}
+                or receipt.get('interruption') or receipt.get('data_operation')):
+            raise HTTPException(409, 'turn_not_retryable')
+        original = state.payload['request']
+        product_input = json.loads(original['input']['text'])
+        identity = receipt.get('kernel_turn_id')
+        if (state.payload.get('project_id') != project
+                or original.get('turn_id') != identity
+                or original.get('session_id') != 'session-' + turn.object_id
+                or original.get('scope', {}).get('kind') != 'project'
+                or original.get('scope', {}).get('project_id') != project
+                or original.get('desired_outcome') != 'project.task'
+                or state.payload.get('task_text') != turn.payload['user_text']
+                or product_input.get('task') != turn.payload['user_text']
+                or product_input.get('data_operation') is not None
+                or AgentDataTools.explicit_import(original)):
+            raise HTTPException(409, 'turn_not_retryable')
+        sealed = frozen_task_request(self.query.answer_turns.root, identity, project,
+                                     question=original['input']['text'])
+        native = {'agent_binding', 'agent_policy_binding'}
+        if (sealed is None or {k: v for k, v in original.items() if k not in native}
+                != {k: v for k, v in sealed.items() if k not in native}):
+            raise HTTPException(409, 'turn_not_retryable')
+        runtime, _ = self.execution_getter() if self.execution_getter else (None, None)
+        if runtime is None and not self.organization.available():
+            raise HTTPException(409, 'turn_not_retryable')
+        if receipt['state'] == 'failed':
+            if receipt.get('error') not in {'task_execution_failed', 'task_progress_failed', 'outcome_selection_changed'}:
+                raise HTTPException(409, 'turn_not_retryable')
+            result = self.reader(identity, project)
+            if result.get('status') not in {'completed', 'failed', 'timed_out'}:
+                raise HTTPException(409, 'turn_not_retryable')
+        sample = self.records.read('v2_task_divisions', turn.object_id)
+        if source_kind == 'sample':
+            value = self.divisions.read(turn.object_id, project)
+            items, revision = value['items'], value['revision']
+        else:
+            # 成果菜单只复用真实执行输入，已删除样例中的未执行编辑保持停用。
+            items = product_input.get('division_override')
+            if items is None:
+                rows = self.topology(identity, project)
+                from .task_display import product_task_display
+                rows = product_task_display(self.records, project, turn.object_id,
+                    {**receipt, 'division': rows})['division']
+                items = [{key: row[key] for key in ('goal', 'deliverable', 'capabilities', 'depends_on')}
+                         for row in rows if 'goal' in row] or None
+            revision = state.revision
+        if items is not None:
+            try:
+                validate_items(items)
+            except ValueError:
+                raise HTTPException(409, 'turn_not_retryable') from None
+        guard = {'turn_id': turn.object_id, 'turn_revision': turn.revision,
+                 'execution_revision': state.revision,
+                 'sample_revision': sample.revision if sample is not None else None}
+        self.validate_redo_source(self.records, project, guard)
+        return {'source_kind': source_kind, 'revision': revision, 'items': items,
+                'task_text': turn.payload['user_text'], 'scene': state.payload['scene'], 'guard': guard}
+
+    @staticmethod
+    def validate_redo_source(records, project, guard):
+        turn = records.read('v2_turns', guard['turn_id'])
+        execution = records.read(TASK_EXECUTIONS, guard['turn_id'])
+        sample = records.read('v2_task_divisions', guard['turn_id'])
+        if (turn is None or execution is None or turn.payload.get('project_id') != project
+                or execution.payload.get('project_id') != project
+                or sample is not None and sample.payload.get('project_id') != project
+                or turn.revision != guard['turn_revision']
+                or execution.revision != guard['execution_revision']
+                or (sample.revision if sample is not None else None) != guard['sample_revision']):
+            raise HTTPException(409, 'task_division_revision_conflicted')
+
+    def retry_available(self, turn):
+        if turn.payload.get('receipt', {}).get('do', {}).get('state') != 'failed':
+            return False
+        runtime, _ = self.execution_getter() if self.execution_getter else (None, None)
+        # 历史回读只检查已经存在的主人，用户主动重做时才允许初始化。
+        if runtime is None:
+            return False
+        try:
+            self.redo_source(turn)
+        except (HTTPException, RecognitionConflict, ValueError, KeyError):
+            return False
+        return True
+
+    def retry_check_required(self, turn):
+        receipt = turn.payload.get('receipt', {}).get('do', {})
+        runtime, _ = self.execution_getter() if self.execution_getter else (None, None)
+        return (runtime is None and receipt.get('state') == 'failed'
+                and receipt.get('error') in {'task_execution_failed', 'task_progress_failed', 'outcome_selection_changed'}
+                and not receipt.get('executor') and not receipt.get('interruption'))
+
+    def _shared_user_stop(self, turn, execution):
+        request = execution.payload['request']
+        if not any(ref['uri'].startswith('crp://material-origin/') for ref in request['input']['refs']):
+            return None
+        runtime, _ = self.execution_getter() if self.execution_getter else (None, None)
+        if runtime is None or runtime.product_stops is None:
+            return None
+        stops = runtime.product_stops
+        identity, project = request['turn_id'], turn.payload['project_id']
+        stop = stops.current(identity)
+        if stop is None or stop.payload['state'] not in {'requested', 'paused'}:
+            return None
         receipt = turn.payload['receipt']['do']
+        bound = stops.product(identity)
+        if (stops.records is not self.records or stop.object_id != turn.object_id or bound is None
+                or bound[0] != turn.object_id or request['session_id'] != 'session-' + turn.object_id
+                or execution.payload['project_id'] != project or execution.payload['task_text'] != turn.payload['user_text']
+                or any(bound[1].get(field) != request.get(field) for field in (
+                    'turn_id', 'session_id', 'operation_id', 'idempotency_key', 'scope', 'input',
+                    'desired_outcome', 'privacy', 'policy_versions', 'created_at'))):
+            raise RecognitionConflict('task_stop_product_binding_changed')
+        native_status = runtime.receipt_for(identity).status
+        if native_status == 'completed':
+            return None
+        if native_status in {'failed', 'cancelled'}:
+            return {**receipt, 'state': 'failed', 'error': 'task_execution_failed'}
+        if native_status == 'waiting_approval' and stops.state(identity) == 'stopped':
+            binding = runtime.task_continuations.paused(identity, project)
+            if binding is not None and binding[1]['interruption'] == 'stopped':
+                return {**receipt, 'state': 'stopped', 'partial': binding[1]['partial'], 'interruption': 'stopped'}
+        return receipt
+
+    @staticmethod
+    def _save_stop_receipt(tx, turn, receipt):
+        if receipt == turn.payload['receipt']['do']:
+            return
+        saved = tx.put('v2_turns', turn.object_id, {**turn.payload, 'receipt': {'do': receipt},
+            'updated_at': _now()}, expected_revision=turn.revision)
+        if receipt['state'] == 'stopped':
+            from .turn_frames import complete_stream
+            complete_stream(tx, {'thread_id': saved.payload['thread_id'],
+                'turn': {'id': saved.object_id, **saved.payload}})
+
+    def observe(self, turn):
+        from .task_display import product_task_display
+        receipt = product_task_display(self.records, turn.payload['project_id'], turn.object_id, turn.payload['receipt']['do'])
         runtime, _ = self.execution_getter() if self.execution_getter else (None, None)
         if (runtime is not None and receipt.get('interruption') == 'stopped'
                 and runtime.product_stops.continuing(receipt['kernel_turn_id'])):
@@ -141,6 +305,85 @@ class TaskDo:
             raise HTTPException(409, 'turn_interrupted')
         return action
 
+    async def decide_lexicon(self, turn_id, project, key, body):
+        from core.ai_kernel import AIKernelRuntimeError, validate_turn_action
+        from core.ai_kernel.event_store import TurnEventConflict
+        from core.ai_kernel.state_store import TurnStateConflict
+        fields = {'preview_id', 'preview_revision', 'event_id', 'sequence', 'decision'}
+        if (not isinstance(body, dict) or set(body) != fields
+                or not isinstance(body['decision'], str) or body['decision'] not in {'approve', 'cancel'}
+                or type(body['preview_revision']) is not int or body['preview_revision'] < 1
+                or type(body['sequence']) is not int or body['sequence'] < 1
+                or not isinstance(body['preview_id'], str) or not isinstance(body['event_id'], str)):
+            raise HTTPException(400, 'invalid_lexicon_action')
+        state, turn = self.records.read(TASK_EXECUTIONS, turn_id), self.records.read('v2_turns', turn_id)
+        if (state is None or turn is None or turn.payload.get('intent') != 'do'
+                or state.payload['project_id'] != project or turn.payload['project_id'] != project):
+            raise HTTPException(404, 'workbench_not_found')
+        request = state.payload['request']
+        identity = request['turn_id']
+        if turn.payload['receipt']['do'].get('kernel_turn_id') != identity or request['scope']['project_id'] != project:
+            raise HTTPException(409, 'agent_data_user_binding_invalid')
+        runtime, runner = self.execution()
+        tools = getattr(runtime, 'agent_data_tools', None)
+        if tools is None or not tools._maintenance_enabled(request):
+            raise HTTPException(409, 'agent_data_policy_unavailable')
+        tools._binding(identity)
+        expected = {'turn_id': identity, 'type': body['decision'], 'actor': 'user',
+            'target_event_id': body['event_id'] if body['decision'] == 'approve' else None,
+            'reason': ':'.join((body['decision'], body['preview_id'], str(body['preview_revision']), body['event_id'])),
+            'expected_sequence': body['sequence'], 'idempotency_key': key}
+        def accepted_action():
+            prior = tools.turns.get_action(key)
+            if prior is None:
+                return False
+            action, receipt = prior
+            if (any(action.get(name) != value for name, value in expected.items())
+                    or receipt.turn_id != identity or receipt.session_id != request['session_id']
+                    or receipt.operation_id != request['operation_id']
+                    or receipt.current_sequence <= body['sequence']):
+                raise HTTPException(409, 'idempotency_key_conflict')
+            return True
+
+        if not accepted_action():
+            preview = tools.pending_maintenance(request, validate_current=body['decision'] == 'approve')
+            if preview is None or any(preview[name] != body[name]
+                    for name in ('preview_id', 'preview_revision', 'event_id', 'sequence')):
+                raise HTTPException(409, 'agent_data_preview_changed')
+            if body['decision'] == 'approve':
+                validate_task_inputs(self.records, self.models, request, query=self.query)
+            action = validate_turn_action({'schema_version': '1.0.0', 'action_id': 'action-' + uuid4().hex,
+                **expected, 'created_at': _now()})
+            try:
+                await run_in_threadpool(runner.apply_action_and_wait, action)
+            except AIKernelRuntimeError as error:
+                if str(error) != 'AI Turn action is already running':
+                    raise
+                raise HTTPException(409, 'turn_in_progress') from error
+            except (TurnStateConflict, TurnEventConflict):
+                if not accepted_action():
+                    raise HTTPException(409, 'agent_data_preview_changed') from None
+        if body['decision'] == 'cancel':
+            if runtime.receipt_for(identity).status != 'cancelled':
+                raise HTTPException(409, 'asr_lexicon_cancel_not_completed')
+            with self.records.begin() as tx:
+                current = tx.read('v2_turns', turn_id)
+                receipt = current.payload['receipt']['do']
+                if receipt.get('state') != 'cancelled':
+                    preview = receipt.get('lexicon_preview')
+                    if preview is None or preview['preview_id'] != body['preview_id']:
+                        raise HTTPException(409, 'agent_data_preview_changed')
+                    tx.put('v2_turns', turn_id, {**current.payload, 'receipt': {**current.payload['receipt'],
+                        'do': {**receipt, 'state': 'cancelled', 'lexicon_preview': {**preview, 'state': 'cancelled'}}},
+                        'updated_at': _now()}, expected_revision=current.revision)
+                    from .turn_frames import complete_stream
+                    saved = tx.read('v2_turns', turn_id)
+                    complete_stream(tx, {'thread_id': saved.payload['thread_id'],
+                        'turn': {'id': saved.object_id, **saved.payload}})
+                    tx.commit()
+            return
+        await self.advance(turn_id)
+
     async def continue_on_request(self, turn_id, project, key, *, instance=None):
         from core.ai_kernel import validate_turn_action
         state, turn = self.records.read(TASK_EXECUTIONS, turn_id), self.records.read('v2_turns', turn_id)
@@ -204,16 +447,39 @@ class TaskDo:
 
     @_policy_bound_initial
     @with_connection_scope
-    def initial(self, turn_id, project, text, scene, *, division_override=None, situation=None, part_context=None, continuation=None, continuation_version=None):
+    def initial(self, turn_id, project, text, scene, *, division_override=None, situation=None, part_context=None, continuation=None,
+                continuation_version=None, data_operation=None, workbench_identity=None, admission_prepare=None,
+                update_basis=None, shared_redo=None):
+        if data_operation is not None and data_operation not in ('lexicon.read', 'lexicon.maintain'):
+            raise ValueError('agent_data_operation_invalid')
         selected = (validate_selection(self.records, project=project, scene=scene, selection=continuation)
                     if continuation is not None else None)
-        outcome_input = (prepare_continuation(self.records, self.drafts.documents,
-            project=project, scene=scene, selection=selected, policy_version=continuation_version or '@1')
-            if selected is not None and (selected['mode'] == 'continue' or continuation_version is not None) else
-            {'continuation_policy': continuation_version, 'document_id': None} if continuation_version is not None else None)
+        if update_basis is not None and (selected is None or data_operation is not None):
+            raise RecognitionConflict('outcome_update_selection_required')
+        shared = self.query is not None and self.query.origin_admission is not None
+        if shared_redo is not None and not shared:
+            raise RecognitionConflict('shared_task_redo_scope_changed')
+        if shared and division_override is not None and shared_redo is None:
+            raise RecognitionConflict('shared_task_redo_source_proof_unavailable')
+        with ExitStack() as sources:
+            if shared and selected is not None:
+                from .shared_auxiliary import _qualified_commit
+                sources.enter_context(_qualified_commit(self.query.origin_admission))
+            outcome_input = (prepare_continuation(self.records, self.drafts.documents,
+                project=project, scene=scene, selection=selected, policy_version=continuation_version or '@1',
+                update_basis=update_basis, freshness=getattr(self.query, 'outcome_freshness', None))
+                if selected is not None and (selected['mode'] == 'continue' or continuation_version is not None) else
+                {'continuation_policy': continuation_version, 'document_id': None} if continuation_version is not None else None)
+        if shared and outcome_input is not None and update_basis is None:
+            for material in outcome_input.get('materials', []):
+                material['namespace'] = self.query.origin_admission.personal['namespace']
         from .profile import confirmed_profile, freeze_task_profile
         service = self.style_service
-        profile = confirmed_profile(self.records, service)
+        with ExitStack() as sources:
+            if shared:
+                from .shared_auxiliary import _qualified_commit
+                sources.enter_context(_qualified_commit(self.query.origin_admission))
+            profile = confirmed_profile(self.records, service)
         from .policies import version
         from .style_context import confirmed_style, style_input, freeze_task_style
         try:
@@ -222,14 +488,25 @@ class TaskDo:
             if str(error) != 'unknown_policy_interface':
                 raise
             style_version = None
-        style = (confirmed_style(self.records, service, project, scene=scene,
-            version=style_version, scope_version=version('scope')) if style_version is not None else None)
-        query = getattr(self.organization, 'method_query', None)
+        if shared:
+            from .shared_task_context import style_materials
+            style = (style_materials(self.query, project, scene=scene, version=style_version,
+                scope_version=version('scope')) if style_version is not None else None)
+        else:
+            style = (confirmed_style(self.records, service, project, scene=scene,
+                version=style_version, scope_version=version('scope')) if style_version is not None else None)
+        query = self.query if shared else getattr(self.organization, 'method_query', None)
         from .method_context import prepare_methods, freeze_task_methods
         method_plan = prepare_methods(query, project, text, scene) if query is not None else None
         identity = 'turn-' + uuid4().hex
         rows = self.records.read_batch({'v2_task_divisions': None})
-        examples = self.divisions.similar(project,text, rows=rows['v2_task_divisions'])
+        example_materials = []
+        if shared:
+            from .shared_task_context import division_examples
+            examples, example_materials = division_examples(self.query, self.divisions,
+                rows['v2_task_divisions'], project, text)
+        else:
+            examples = self.divisions.similar(project,text, rows=rows['v2_task_divisions'])
         previous_turns = {row.object_id: row for row in self.records.read_batch(
             {'v2_turns': tuple(example['source_turn_id'] for example in examples)})['v2_turns']}
         references = []
@@ -242,6 +519,8 @@ class TaskDo:
                 **({'outcome_selection': selected} if selected is not None else {}),
                 **({'outcome_input': outcome_input} if outcome_input is not None else {}),
                 **({'style_input': style_input(style)} if style is not None else {})}
+        if data_operation is not None:
+            data['data_operation'] = data_operation
         if part_context:
             from .part_context import validate_context
             validate_context(self.records, self.query, part_context)
@@ -259,16 +538,72 @@ class TaskDo:
             # 同一认识可同时作为画像或方法，保留原引用顺序且不重复冻结。
             if material not in materials:
                 materials.append(material)
-        request = freeze_task_turn(records=self.records, models=self.models, query=self.query,
+        material_proof = None
+        if shared:
+            actor_namespace = self.query.origin_admission.personal['namespace']
+            materials = [{'type': 'recognition', 'id': item['id'], 'revision': item['revision'],
+                'project_id': 'me', 'namespace': actor_namespace} for item in profile['items']]
+            materials.extend({'type': 'experience' if row.get('inspiration') else 'recognition',
+                'id': row['id'], 'revision': row['entry']['revision'], 'project_id': row['scope'].project_id,
+                'namespace': row['namespace']} for row in (method_plan or {}).get('chosen', []))
+            materials.extend((outcome_input or {}).get('materials', []))
+            materials.extend(example_materials)
+            materials.extend((part_context or {}).get('shared_materials', []))
+            materials.extend({'type': 'recognition', 'id': item['id'], 'revision': item['revision'],
+                'project_id': item['project_id'], 'namespace': item['namespace']} for item in (style or {}).get('items', []))
+            if any(set(item) != {'type', 'id', 'revision', 'project_id', 'namespace'} for item in materials):
+                raise RecognitionConflict('shared_task_material_namespace_required')
+            unique = []
+            if shared_redo is not None:
+                from .shared_task_redo import validate_source
+                validate_source(self.query, shared_redo, local_only=True)
+                if shared_redo['items'] != division_override or shared_redo['task_text'] != text:
+                    raise RecognitionConflict('shared_task_redo_input_changed')
+                materials.extend(shared_redo['materials'])
+            for item in materials:
+                if item not in unique:
+                    unique.append(item)
+            from .shared_task_materials import freeze_task_request
+            request, material_proof = freeze_task_request(self.query, records=self.records, models=self.models,
+                project_id=project, materials=unique, load_text=lambda item: '', text=prompt,
+                turn_id=identity, session_id='session-'+turn_id, operation_id='op-'+identity,
+                idempotency_key='task-'+turn_id, created_at=_now(), situation=situation, template_version=3)
+        else:
+            request = freeze_task_turn(records=self.records, models=self.models, query=self.query,
             inspirations=[row for row in (method_plan or {}).get('chosen', []) if row.get('inspiration')],
             project_id=project, load_text=lambda item: '', text=prompt, materials=materials,
             turn_id=identity, session_id='session-'+turn_id, operation_id='op-'+identity,
             idempotency_key='task-'+turn_id, created_at=_now(), situation=situation, template_version=3)
-        request['policy_versions']['agent_data'] = '@1'
+        request['policy_versions']['agent_data'] = version('agent_data')
         from .part_context import bind_context
-        bind_context(self.records, request, part_context)
+        from ..part_context_binding import prepare_context_refs
+        prepare_context_refs(request,part_context)
+        binding = None
+        if shared:
+            original_prepare = admission_prepare or self.query.origin_admission.prepare
+            def prepare_shared(request, identity):
+                from .shared_task_materials import task_material_item
+                items = (*original_prepare(request, identity), task_material_item(self.query, request, material_proof))
+                if shared_redo is not None:
+                    from .shared_task_redo import admission_item
+                    items = (*items, admission_item(self.query, request, shared_redo))
+                return items
+            admission_prepare = prepare_shared
+        if (workbench_identity is not None or admission_prepare is not None
+                or getattr(self.query, 'project_constraint_input', None) is not None):
+            from ..workbench_identity_binding import prepare_admission
+            if self.execution_getter is None or self.query is None:
+                raise ValueError('workbench_identity_execution_owner_unavailable')
+            runtime,_ = self.execution_getter()
+            binding = prepare_admission(self.query.answer_turns.application,request,workbench_identity,runtime._state,
+                admission_prepare=admission_prepare)
+        bind_context(self.records,request,part_context)
         if outcome_input is not None:
-            validate_continuation(self.records, request)
+            with ExitStack() as sources:
+                if shared:
+                    from .shared_auxiliary import _qualified_commit
+                    sources.enter_context(_qualified_commit(self.query.origin_admission))
+                validate_continuation(self.records, request, freshness=getattr(self.query, 'outcome_freshness', None))
         freeze_task_profile(self.records, request, profile)
         if style is not None:
             freeze_task_style(self.records, request, style)
@@ -282,14 +617,24 @@ class TaskDo:
                  'progress':{'done':0, 'total':3}},
                 {'project_id':project, 'request':request, 'task_text':text, 'scene':scene, 'started':False,
                  'owner':None, 'claimed_at':None, 'failures':0,
+                 **({'admission_bundle':bundle_to_payload(binding)} if binding is not None else {}),
                  **({'outcome_selection': selected} if selected is not None else {})})
 
     @with_connection_scope
-    async def advance(self, turn_id):
+    async def advance(self, turn_id, *, observe_stop_only=False):
         owner = uuid4().hex
         with self.records.begin() as tx:
             state, turn = tx.read(TASK_EXECUTIONS, turn_id), tx.read('v2_turns', turn_id)
-            if state is None or turn is None or turn.payload['receipt']['do']['state'] in {'done','partial','failed','stopped'}:
+            if state is None or turn is None or turn.payload['receipt']['do']['state'] in {'done','partial','failed','stopped','cancelled'}:
+                tx.rollback()
+                return
+            stopped = self._shared_user_stop(turn, state)
+            if stopped is not None:
+                # 停止只发布 Actor 已有执行事实，无需重新读取共享资料。
+                self._save_stop_receipt(tx, turn, stopped)
+                tx.commit()
+                return
+            if observe_stop_only:
                 tx.rollback()
                 return
             values = state.payload
@@ -302,21 +647,48 @@ class TaskDo:
         receipt = dict(turn.payload['receipt']['do'])
         updates = {}
         delivery = None
+        data_operation = None
         try:
             request, project = values['request'], values['project_id']
-            validate_task_inputs(self.records, self.models, request, query=self.query)
+            from .shared_task_context import task_query
+            query, request = task_query(self.query, request, prepared_bundle=values.get('admission_bundle'))
+            data_operation = AgentDataTools.data_operation(request)
+            validate_task_inputs(self.records, self.models, request, query=query,
+                prepared_bundle=values.get('admission_bundle'))
             if values.get('outcome_selection') is not None:
                 validate_selection(self.records, project=project, scene=values['scene'],
                                    selection=values['outcome_selection'])
             if not values['started']:
-                await run_in_threadpool(self.organization.start, request, agent_turn_mode=True)
+                def start():
+                    binding = None
+                    if values.get('admission_bundle') is not None:
+                        runtime,_ = self.execution_getter()
+                        binding = (runtime._state.restore_admission(request)
+                            if runtime._state.get_request(request['turn_id']) is not None
+                            else bundle_from_payload(values['admission_bundle']))
+                    return self.organization.start(request,agent_turn_mode=True,
+                        **({'admission_bundle':binding} if binding is not None else {}))
+                await run_in_threadpool(start)
                 updates['started'] = True
             result = await run_in_threadpool(self.reader, request['turn_id'], project)
+            tools = None
+            if self.execution_getter:
+                runtime, _ = self.execution_getter()
+                tools = getattr(runtime, 'agent_data_tools', None)
             if result['status'] == 'waiting_approval' and self.execution_getter:
                 runtime, runner = self.execution_getter()
                 tools = getattr(runtime, 'agent_data_tools', None)
                 if tools is not None and await run_in_threadpool(tools.approve_explicit_import, request, runner):
                     result = await run_in_threadpool(self.reader, request['turn_id'], project)
+            if tools is not None:
+                saved_lexicon = await run_in_threadpool(tools.saved_maintenance, request)
+                if saved_lexicon is not None:
+                    receipt['lexicon_result'] = saved_lexicon
+                    receipt.pop('lexicon_preview', None)
+                elif result['status'] == 'waiting_approval':
+                    preview = await run_in_threadpool(tools.pending_maintenance, request)
+                    if preview is not None:
+                        receipt.update(state='waiting_approval', lexicon_preview=preview)
             rows = await run_in_threadpool(self.topology, request['turn_id'], project)
             receipt.update(experts=rows, division=rows,
                 progress={'done':2 if rows and all(row['state'] in {'done','failed'} for row in rows) else 1, 'total':3})
@@ -328,49 +700,65 @@ class TaskDo:
                     if binding[1]['interruption'] != 'stopped' or runtime.product_stops.state(request['turn_id']) == 'stopped':
                         receipt.update(state='stopped' if binding[1]['interruption'] == 'stopped' else 'interrupted',
                             partial=binding[1]['partial'], interruption=binding[1]['interruption'])
-            if result['status'] in TERMINAL:
+            if result['status'] == 'cancelled' and receipt.get('lexicon_preview'):
+                receipt.update(state='cancelled', lexicon_preview={**receipt['lexicon_preview'], 'state': 'cancelled'})
+            elif result['status'] in TERMINAL:
                 summary = result.get('summary','')
                 failed = [row for row in rows if row['state'] == 'failed']
                 if failed:
                     summary += '\n\n未完成：' + '；'.join(row.get('goal',row.get('role','')) for row in failed)
                 if result['status'] == 'completed' and summary.strip():
-                    if AgentDataTools.explicit_import(request):
-                        runtime, _ = self.execution_getter() if self.execution_getter else (None, None)
-                        tools = getattr(runtime, 'agent_data_tools', None)
+                    if data_operation is not None:
                         if tools is None:
                             raise AgentDataToolError('asr_lexicon_update_not_completed')
-                        tools.verify_completion(request)
-                    validate_task_inputs(self.records, self.models, request, query=self.query)
-                    composed = result.get('outcome')
-                    product_input = json.loads(request['input']['text'])
-                    outcome_input = product_input.get('outcome_input')
-                    frozen_style = product_input.get('style_input')
-                    if frozen_style is not None:
-                        from .style_context import frozen_task_style
-                        frozen_task_style(self.records, self.style_service, request)
-                    if outcome_input is not None and outcome_input['document_id'] is not None and composed is None:
-                        raise RecognitionConflict('outcome_composition_unavailable')
-                    if composed is None and not (frozen_style is not None and frozen_style['text']):
-                        # 未固定写法的原首稿与旧重做保留既有交付时序。
-                        output = self.drafts.create(turn_id=request['turn_id'], project=project,
-                            operation='deliver-'+request['turn_id'], title=receipt['title'], markdown=summary)
-                        receipt['document_id'] = output['document_id']
+                        proof = tools.completion_result(request)
+                        receipt.update(state='partial' if failed else 'done', verified=True,
+                            lexicon_result=proof, document_id=None, continues=None)
                     else:
-                        delivery = composed['markdown'] if composed is not None else summary
-                    receipt.update(state='partial' if failed else 'done', verified=False)
-                    if composed is not None:
-                        receipt.update(changes=composed['changes'], fallback_new=composed['fallback_new'])
-                        updates.update(outcome_composition=composed, outcome_composition_turn=turn_id)
-                        if composed['fallback_new']:
-                            receipt['continues'] = None
+                        if tools is not None and tools.requires_verification(request) or AgentDataTools.explicit_import(request):
+                            runtime, _ = self.execution_getter() if self.execution_getter else (None, None)
+                            tools = getattr(runtime, 'agent_data_tools', None)
+                            if tools is None:
+                                raise AgentDataToolError('asr_lexicon_update_not_completed')
+                            tools.verify_completion(request)
+                        validate_task_inputs(self.records, self.models, request, query=query)
+                        composed = result.get('outcome')
+                        product_input = json.loads(request['input']['text'])
+                        outcome_input = product_input.get('outcome_input')
+                        frozen_style = product_input.get('style_input')
+                        if frozen_style is not None:
+                            if query.origin_admission is not None:
+                                from .shared_task_context import frozen_style
+                                frozen_style(self.records, query, request)
+                            else:
+                                from .style_context import frozen_task_style
+                                frozen_task_style(self.records, self.style_service, request)
+                        if outcome_input is not None and outcome_input['document_id'] is not None and composed is None:
+                            raise RecognitionConflict('outcome_composition_unavailable')
+                        if (composed is None and query.origin_admission is None
+                                and not (frozen_style is not None and frozen_style['text'])):
+                            # 文稿继续使用原交付和出生证明，应用数据回执不进入此分支。
+                            output = self.drafts.create(turn_id=request['turn_id'], project=project,
+                                operation='deliver-'+request['turn_id'], title=receipt['title'], markdown=summary,
+                                source_request=request)
+                            receipt['document_id'] = output['document_id']
+                        else:
+                            delivery = composed['markdown'] if composed is not None else summary
+                        receipt.update(state='partial' if failed else 'done', verified=False)
+                        if composed is not None:
+                            receipt.update(changes=composed['changes'], fallback_new=composed['fallback_new'])
+                            updates.update(outcome_composition=composed, outcome_composition_turn=turn_id)
+                            if composed['fallback_new']:
+                                receipt['continues'] = None
                     receipt['progress'] = {'done':3,'total':3}
                 else:
                     receipt.update(state='failed', error='task_execution_failed')
                 items = [{key:row[key] for key in ('goal','deliverable','capabilities','depends_on')}
                          for row in rows if 'goal' in row]
-                if not items:
+                if not items and not self.organization.empty_effective_division(request['turn_id'], project):
                     items = [{'goal':values['task_text'], 'deliverable':'整理稿', 'capabilities':[], 'depends_on':[]}]
-                self.divisions.complete(turn_id, project=project, text=values['task_text'], items=items, outcome=receipt['state'])
+                if data_operation is None and items:
+                    self.divisions.complete(turn_id, project=project, text=values['task_text'], items=items, outcome=receipt['state'])
             updates['failures'] = 0
         except AgentDataToolError as error:
             updates['failures'] = values.get('failures', 0) + 1
@@ -383,22 +771,46 @@ class TaskDo:
                     receipt[key] = [{**row, 'state':'failed'} if row.get('state') not in {'done','failed'} else row
                                     for row in receipt.get(key, [])]
         lineage_error = None
-        with self.records.begin() as tx:
+        freshness = getattr(self.query, 'outcome_freshness', None)
+        source_reads = ExitStack()
+        try:
+            if freshness is not None and delivery is not None:
+                runtime, _ = self.execution()
+                native_request = runtime._state.get_request(values['request']['turn_id'])
+                if native_request is None:
+                    raise RecognitionConflict('outcome_native_request_unavailable')
+                source_reads.enter_context(freshness.source_scope(request=native_request))
+        except (RecognitionConflict, SharedProjectError) as error:
+            lineage_error = error
+        with source_reads, self.records.begin() as tx:
             state, turn = tx.read(TASK_EXECUTIONS,turn_id), tx.read('v2_turns',turn_id)
             if state is None or turn is None or state.payload.get('owner') != owner:
                 tx.rollback()
                 return
-            if delivery is not None:
+            stopped = self._shared_user_stop(turn, state)
+            if stopped is not None:
+                self._save_stop_receipt(tx, turn, stopped)
+                tx.put(TASK_EXECUTIONS, turn_id, {**state.payload, 'owner': None}, expected_revision=state.revision)
+                tx.commit()
+                return
+            if lineage_error is not None:
+                tx.rollback()
+            if lineage_error is None and delivery is not None:
                 try:
-                    validate_task_inputs(TransactionRecords(tx), self.models, values['request'], query=self.query)
+                    validate_task_inputs(TransactionRecords(tx), self.models, request, query=query,
+                        source_owner=self.records)
                     if json.loads(values['request']['input']['text']).get('outcome_input') is not None:
-                        validate_continuation(TransactionRecords(tx), values['request'])
+                        validate_continuation(TransactionRecords(tx), request, freshness=freshness)
                     if json.loads(values['request']['input']['text']).get('style_input') is not None:
-                        from .style_context import frozen_task_style
-                        frozen_task_style(TransactionRecords(tx), self.style_service, values['request'])
+                        if query.origin_admission is not None:
+                            from .shared_task_context import frozen_style
+                            frozen_style(TransactionRecords(tx), query, request)
+                        else:
+                            from .style_context import frozen_task_style
+                            frozen_task_style(TransactionRecords(tx), self.style_service, values['request'])
                     output = self.drafts.create_in_uow(tx, turn_id=values['request']['turn_id'],
                         project=values['project_id'], operation='deliver-'+values['request']['turn_id'],
-                        title=receipt['title'], markdown=delivery)
+                        title=receipt['title'], markdown=delivery, source_request=native_request)
                     receipt['document_id'] = output['document_id']
                 except RecognitionConflict as error:
                     lineage_error = error
@@ -407,7 +819,7 @@ class TaskDo:
                 tx.put(TASK_EXECUTIONS,turn_id,{**state.payload,**updates,'owner':None},expected_revision=state.revision)
                 now = _now()
                 tx.put('v2_turns',turn_id,{**turn.payload,'receipt':{'do':receipt},'updated_at':now},expected_revision=turn.revision)
-            if lineage_error is None and receipt.get('state') == 'done':
+            if lineage_error is None and receipt.get('state') == 'done' and data_operation is None:
                 documents = SQLiteDocumentRepository(TransactionRecords(tx), namespace_id=self.drafts.documents.namespace_id)
                 complete_redos(tx, documents, scope=WorkScope('local-user', values['project_id']), turn_id=turn_id, now=now)
                 try:
@@ -424,12 +836,33 @@ class TaskDo:
                     lineage_error = error
                     tx.rollback()
             if lineage_error is None:
+                if receipt.get('state') == 'done' and data_operation is None:
+                    from .citation_refs import safe_record_outcome_citations
+                    safe_record_outcome_citations(tx, project=values['project_id'], turn_id=turn_id,
+                        evidence_refs=result.get('evidence_refs', []), now=now,
+                        namespace=self.drafts.documents.namespace_id, owner_records=self.records)
+                    freshness = getattr(self.query, 'outcome_freshness', None)
+                    if freshness is not None:
+                        runtime, _ = self.execution()
+                        native_request = runtime._state.get_request(values['request']['turn_id'])
+                        if native_request is None:
+                            raise RecognitionConflict('outcome_native_request_unavailable')
+                        freshness.capture_actual_outcome_inputs(tx, project=values['project_id'],
+                            document_id=receipt['document_id'], public_turn_id=turn_id,
+                            native_request=native_request, evidence_refs=result.get('evidence_refs', []),
+                            basis_refs=freshness.completion_basis_refs(native_request, reader=TransactionRecords(tx)))
+                        freshness.rebuild_fresh_in_uow(tx, project=values['project_id'], document_id=receipt['document_id'])
                 if receipt['state'] in {'done', 'partial', 'interrupted', 'stopped'}:
                     from .turn_frames import complete_stream
                     saved = tx.read('v2_turns', turn_id)
                     complete_stream(tx, {'thread_id': saved.payload['thread_id'],
                         'turn': {'id': saved.object_id, **saved.payload}})
                 tx.commit()
+        if lineage_error is None:
+            learning = getattr(self.records, 'product_steer_learning', None)
+            if learning is not None:
+                public = self.records.read('v2_turns', turn_id)
+                learning.observe_public(public.payload.get('parent_turn_id') or turn_id)
         if lineage_error is not None:
             # 新链资格冲突沿原重试计数收口，公开完成和重做事实已经一并回滚。
             with self.records.begin() as tx:

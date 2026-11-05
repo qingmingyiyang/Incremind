@@ -16,10 +16,9 @@ from urllib.parse import urlsplit
 from core.ai_kernel.contracts import _validate_internal_agent_binding
 
 from .model_config import ModelConfigurationError
+from .model_binding import CONFIGURATION_FIELDS as CONFIGURATION_FIELDS, public_model_configuration
 
 
-CONFIGURATION_FIELDS = ("purpose", "provider", "base_url", "model", "allow_remote",
-                        "revision", "configured", "has_api_key")
 SNAPSHOT_KIND = "recognition-model-routing-snapshot-v1"
 
 
@@ -58,7 +57,7 @@ class RecognitionModelRoutingSnapshotAuthority:
         changing configuration or ownership requires a new confirmed task.
         """
         public = self.models.public()["generation"]
-        configuration = {key: public.get(key) for key in CONFIGURATION_FIELDS}
+        configuration = public_model_configuration(public)
         if (configuration["purpose"] != "generation" or configuration["provider"] != "openai"
                 or configuration["configured"] is not True or configuration["has_api_key"] is not True):
             raise ModelConfigurationError("model_not_configured")

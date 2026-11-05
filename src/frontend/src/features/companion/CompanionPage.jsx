@@ -4,12 +4,19 @@ import { createCompanionApi } from "./companionApi";
 import { userStorageKey } from "../../shared/api/deviceTransport";
 import { readStoredJson, writeStoredJson, removeStoredItem } from "../../shared/lib/browserStorage";
 import { useRequestScope } from "../../shared/lib/useRequestScope";
+import { CompanionReminders } from "./CompanionReminders";
+import { DeliveredReminders } from './DeliveredReminders';
 import "./companionPage.css";
 const MODES = [["chat", "聊聊"], ["review", "回顾"], ["focus", "专注"], ["plan", "安排"]];
-const LINES = { chat: "在呢。", review: "看看这一周。", focus: "我陪你专注一会儿。", plan: "从记住的事开始。" };
-export function CompanionPage({ projectId = "", api: injectedApi, initialMode = "chat", initialPrompt = "", initialMemoryId = "" }) {
+const LINES = { chat: "在呢。", review: "看看这一周。", focus: "我不吵你。", plan: "从记住的事开始。" };
+export function CompanionPage({ projectId = "", api: injectedApi, initialMode = "chat", initialTab, initialPrompt = "", initialMemoryId = "", initialReminderId='', notices, onNavigate }) {
   const api = useMemo(() => injectedApi || createCompanionApi(), [injectedApi]);
-  const [mode, setMode] = useState(initialMode);
+  const [mode, setMode] = useState(() => initialTab === "schedule" ? "plan" : MODES.some(([key]) => key === initialTab) ? initialTab : initialMode);
+  const [focusedReminder,setFocusedReminder]=useState(initialReminderId);
+  useEffect(() => {
+    if (initialTab === "schedule") setMode("plan");
+    else if (MODES.some(([key]) => key === initialTab)) setMode(initialTab);
+  }, [initialTab]);
   const [userScope, setUserScope] = useState(() => userStorageKey("companion-chat"));
   useEffect(() => {
     const changed = () => setUserScope(userStorageKey("companion-chat"));
@@ -23,11 +30,15 @@ export function CompanionPage({ projectId = "", api: injectedApi, initialMode = 
   return <main className="companion-page" aria-label="伙伴">
     <aside className="companion-page-bear"><div className="companion-page-sprite" data-mode={mode} role="img" aria-label="小熊"/><p>{LINES[mode]}</p>{typeof globalThis.electronAPI?.enterCompanionMode === "function" && <button type="button" className="companion-page-pet" onClick={() => globalThis.electronAPI.enterCompanionMode()}>显示桌宠</button>}</aside>
     <section className="companion-page-content"><nav className="companion-page-modes" aria-label="伙伴模式">{MODES.map(([key, label]) => <button key={key} type="button" aria-pressed={mode === key} onClick={() => setMode(key)}>{label}</button>)}</nav>
+    <DeliveredReminders api={api} identity={userScope} notices={notices} expanded={mode==='plan'} onShowAll={() => setMode('plan')} onOpen={notice => {
+      if(notice.project_id===(projectId || 'default')) {setFocusedReminder(notice.event_id);setMode('plan');}
+      else onNavigate?.('companion',{project_id:notice.project_id,tab:'schedule',reminder_id:notice.event_id});
+    }}/>
     <div className="companion-page-mode" hidden={mode !== "chat"} key={`chat:${userScope}:${projectId}`}><Chat api={api} projectId={projectId} cacheKey={`${userScope}:${projectId || "default"}`} initialPrompt={initialPrompt} initialMemoryId={initialMemoryId}/></div>
-    <div className="companion-page-mode" hidden={mode === "chat"} key={`mode:${mode}:${projectId}`}>
+    <div className="companion-page-mode" hidden={mode === "chat"} key={`mode:${mode}:${userScope}:${projectId}`}>
       {mode === "review" && <Review api={api} projectId={projectId}/>}
       {mode === "focus" && <Focus api={api}/>}
-      {mode === "plan" && <Todos api={api} projectId={projectId}/>}
+      {mode === "plan" && <><CompanionReminders api={api} identity={userScope} projectId={projectId || 'default'} focusedReminder={focusedReminder} onNavigate={onNavigate}/><Todos api={api} projectId={projectId}/></>}
     </div></section>
   </main>;
 }
@@ -43,7 +54,7 @@ function Review({ api, projectId }) {
     api.getWeekStats({ projectId, signal: c.signal }).then(value => { if (live) { setStats(value); setError(false); } }).catch(() => { if (live) setError(true); });
     return () => { live = false; c.abort(); };
   }, [api, projectId, attempt]);
-  return <section aria-label="本周回顾"><div className="companion-page-stats">{[["remember", "记住"], ["confirm", "确认"], ["forget", "遗忘"]].map(([key, label]) => <div key={key}><strong>{stats?.[key] ?? "—"}</strong><span>{label}</span></div>)}</div><p className="companion-page-week">本周</p>{error && <Retry onClick={() => setAttempt(x => x + 1)}/>}</section>;
+  return <section aria-label="本周回顾"><div className="companion-page-stats">{[["remember", "记住"], ["confirm", "确认"], ["forget", "遗忘"]].map(([key, label]) => <div key={key}><strong>{stats?.[key] ?? "—"}</strong><span>{label}</span></div>)}</div><p className="companion-page-week">本周{stats?.week_start && <time dateTime={stats.week_start}> · {shanghaiDate(stats.week_start).replaceAll("-", "·")}</time>}</p>{error && <Retry onClick={() => setAttempt(x => x + 1)}/>}</section>;
 }
 function shanghaiDate(value) {
   const date = new Date(value); return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
@@ -224,12 +235,19 @@ function Chat({ api, projectId, cacheKey, initialPrompt, initialMemoryId }) {
 }
 function Focus({ api }) {
   const [session, setSession] = useState(null), [loaded, setLoaded] = useState(false), [busy, setBusy] = useState(false), [failed, setFailed] = useState(false);
+  const [duration, setDuration] = useState(25);
+  const [clock, setClock] = useState(Date.now), observedAt = useRef(Date.now());
   const pending = useRef(false), failedAction = useRef(null), gate = useRequestScope(api), scope = gate.scope;
   useEffect(() => { const c = new AbortController(); let active = true;
     const token = gate.issue("session", scope);
-    api.getFocus({ signal: c.signal }).then(value => { if (active && gate.isCurrent(token)) { setSession(value.session); setLoaded(true); } }).catch(() => { if (active && gate.isCurrent(token)) setFailed(true); });
+    api.getFocus({ signal: c.signal }).then(value => { if (active && gate.isCurrent(token)) { observedAt.current = Date.now(); setClock(observedAt.current); setSession(value.session); setLoaded(true); } }).catch(() => { if (active && gate.isCurrent(token)) setFailed(true); });
     return () => { active = false; c.abort(); };
   }, [api, scope]);
+  useEffect(() => {
+    if (session?.status !== "running") return undefined;
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [session?.status]);
   useEffect(() => {
     if (session?.status !== "running") return undefined;
     const c = new AbortController(); let active = true, polling = false;
@@ -239,7 +257,7 @@ function Focus({ api }) {
       polling = true;
       const desktop = typeof globalThis.electronAPI?.backendBaseUrl === "string";
       (desktop ? api.getFocus({ signal: c.signal }) : api.observeFocus({ signal: c.signal })).then(value => {
-        if (active && gate.isCurrent(token)) setSession(value.session);
+        if (active && gate.isCurrent(token)) { observedAt.current = Date.now(); setClock(observedAt.current); setSession(value.session); }
       }).catch(() => { if (active && gate.isCurrent(token)) setFailed(true); }).finally(() => { polling = false; });
     }, 4000);
     return () => { active = false; clearInterval(timer); c.abort(); };
@@ -253,24 +271,29 @@ function Focus({ api }) {
       if (refresh) {
         const value = await api.getFocus();
         if (!gate.isCurrent(token)) return;
-        current = value.session; setSession(current); setLoaded(true);
+        current = value.session; observedAt.current = Date.now(); setClock(observedAt.current); setSession(current); setLoaded(true);
       }
       const sameSession = (current?.session_id ?? null) === targetSessionId;
       const needsAction = sameSession && (action === "start" ? !["running", "paused"].includes(current?.status)
-        : action === "pause" && current?.status === "running" || action === "resume" && current?.status === "paused");
+        : action === "pause" && current?.status === "running" || action === "resume" && current?.status === "paused"
+          || action === "cancel" && ["running", "paused"].includes(current?.status));
       if (action && (!refresh || needsAction)) {
         const value = action === "start"
-          ? await api.startFocus({ durationMinutes: 25, supervisionEnabled: false, workProcesses: [], distractingProcesses: [] })
+          ? await api.startFocus({ durationMinutes: failedAction.current?.duration ?? duration, supervisionEnabled: false, workProcesses: [], distractingProcesses: [] })
           : await api.actOnFocus({ sessionId: current.session_id, action, expectedRevision: current.revision });
         if (!gate.isCurrent(token)) return;
-        setSession(value.session); setLoaded(true);
+        observedAt.current = Date.now(); setClock(observedAt.current); setSession(value.session); setLoaded(true);
       }
       if (gate.isCurrent(token)) failedAction.current = null;
-    } catch { if (gate.isCurrent(token)) { failedAction.current = action ? { session: current, action } : null; setFailed(true); } }
+    } catch { if (gate.isCurrent(token)) { failedAction.current = action ? { session: current, action, duration } : null; setFailed(true); } }
     finally { pending.current = false; if (gate.isCurrent(token)) setBusy(false); }
   }
   function retry() { return perform(failedAction.current?.session, failedAction.current?.action, true); }
-  const number = Number(session?.remaining_seconds ?? 1500), seconds = Number.isFinite(number) ? Math.max(0, number) : 1500;
+  const activeSession = ["running", "paused"].includes(session?.status);
+  const number = Number(session?.status === "completed" ? 0 : activeSession ? session.remaining_seconds : duration * 60);
+  const elapsed = session?.status === "running" ? Math.max(0, Math.floor((clock - observedAt.current) / 1000)) : 0;
+  const seconds = Number.isFinite(number) ? Math.max(0, Math.floor(number) - elapsed) : 0;
   const action = session?.status === "running" ? "pause" : session?.status === "paused" ? "resume" : "start";
-  return <section className="companion-page-focus" aria-label="专注时钟"><time>{String(Math.floor(seconds / 60)).padStart(2, "0")}:{String(Math.floor(seconds % 60)).padStart(2, "0")}</time><button type="button" disabled={busy || !loaded} onClick={() => perform(session, action)}>{action === "pause" ? "暂停" : action === "resume" ? "继续" : "开始"}</button>{failed && <Retry onClick={retry}/>}</section>;
+  const selectedDuration = activeSession && Number.isFinite(session.target_seconds) ? session.target_seconds / 60 : duration;
+  return <section className="companion-page-focus" aria-label="专注时钟"><time role="timer" aria-label="剩余时间">{String(Math.floor(seconds / 60)).padStart(2, "0")}:{String(seconds % 60).padStart(2, "0")}</time><div className="companion-page-focus-controls"><div className="companion-page-presets" role="radiogroup" aria-label="专注时长">{[25, 45, 90].map(minutes => <button type="button" key={minutes} role="radio" aria-checked={selectedDuration === minutes} disabled={busy || activeSession || Boolean(failedAction.current)} onClick={() => { setDuration(minutes); setSession(null); }}>{minutes} 分</button>)}</div><button type="button" className="companion-page-primary" disabled={busy || !loaded} onClick={() => failedAction.current ? retry() : perform(session, action)}>{action === "pause" ? "暂停" : action === "resume" ? "继续" : "开始"}</button>{activeSession && <button type="button" className="companion-page-icon" aria-label="结束专注" title="结束专注" disabled={busy || Boolean(failedAction.current)} onClick={() => perform(session, "cancel")}><Icon name="review-stop" size={15}/></button>}</div>{failed && <Retry onClick={retry}/>}</section>;
 }

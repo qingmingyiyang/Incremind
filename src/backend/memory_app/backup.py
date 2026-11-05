@@ -38,8 +38,16 @@ def runtime_backup_exclusions(source: Path) -> tuple[Path, ...]:
         parent = source / name
         if parent.is_dir() and not parent.is_symlink():
             candidates.extend(path for path in parent.iterdir() if path.is_dir() and not path.is_symlink())
-    return tuple(runtime_backup_roots(root)[1].parent for root in candidates
-                 if (root / '.rebuild-data').is_dir())
+    return tuple(path for root in candidates if (root / '.rebuild-data').is_dir()
+                 for path in (runtime_backup_roots(root)[1].parent, root / '.chriptmas-vault-recovery.lock'))
+
+
+def fingerprint_runtime_restore_source(source: Path) -> str:
+    """确认凭证覆盖与完整运行根备份相同的资料范围。"""
+    from core.storage_provider.vault_backup_restore import fingerprint_vault_restore_source
+    return fingerprint_vault_restore_source(
+        source, exclude_roots=runtime_backup_exclusions(source), exclude_logs=True,
+    )
 
 
 def backup_runtime(source: Path, backups: Path, *, user: str | None = None, snapshot_id=None, automatic=False, job_id=None):

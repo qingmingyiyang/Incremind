@@ -106,6 +106,11 @@ export const recognitionApi = Object.freeze({
     method: "PATCH",
     body: JSON.stringify({ project_id: projectId, expected_revision: expectedRevision, markdown }),
   }),
+  restoreDocument: ({ documentId, projectId, expectedRevision, restoreRevision, fetchImpl } = {}) => request(`/api/v2/library/documents/${encodeURIComponent(documentId)}`, {
+    fetchImpl,
+    method: 'PATCH',
+    body: JSON.stringify({ project_id: projectId, expected_revision: expectedRevision, restore_revision: restoreRevision }),
+  }),
   retainTaskExperience: ({ taskId, projectId, fetchImpl } = {}) => request(`${API_PREFIX}/tasks/${encodeURIComponent(taskId)}/experience`, {
     fetchImpl,
     method: "POST",

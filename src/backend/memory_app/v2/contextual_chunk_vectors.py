@@ -1,7 +1,7 @@
 """Derived chunk vectors using the existing cache and governed embedding Turn."""
 from dataclasses import replace
 from types import SimpleNamespace
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
 from functools import wraps
@@ -16,6 +16,7 @@ from ..workspace_contracts import _COLLECTION
 from .embedding_settings import local_vectors_ready
 from .memory_turn import embedding_request
 from .privacy import egress_allowed, is_private_project, privacy_revision
+from .shared_vector_keys import material_vector_namespace, rendered_chunk_text
 
 
 _INPUT_VALIDATION = ContextVar('embedding_input_validation', default=None)
@@ -43,11 +44,14 @@ class ReusedQuestion:
     A reused vector sends nothing, so it needs no turn or receipt. Requests
     that also carry material text still go through the governed provider.
     """
-    def __init__(self, provider):
+    def __init__(self, provider, *, cache_namespace=None, validate_current=None):
         self.provider = provider
-        self.cache_identity = provider.cache_identity
+        self.cache_identity = provider.cache_identity if cache_namespace is None else cache_namespace
+        self.validate_current = validate_current
 
     def embed(self, texts):
+        if self.validate_current is not None:
+            self.validate_current()
         memory = _QUESTION_VECTORS.get()
         if memory is None or not texts:
             return self.provider.embed(texts)
@@ -55,6 +59,8 @@ class ReusedQuestion:
         if len(texts) == 1 and key in memory:
             return (memory[key],)
         vectors = self.provider.embed(texts)
+        if self.validate_current is not None:
+            self.validate_current()
         memory[key] = vectors[0]
         return vectors
 
@@ -79,7 +85,7 @@ def chunk_vector_scores(query, project, entry, scope, snapshot, chunks, *,
     path. The caller retains its separately authorized lexical path.
     """
     public = getattr(query.models, 'public', None)
-    if not callable(public) or snapshot is None or not chunks:
+    if not callable(public) or snapshot is None or not chunks or query.offline:
         return {}
     cache = None
     input_validation = _INPUT_VALIDATION.get()
@@ -103,6 +109,7 @@ def chunk_vector_scores(query, project, entry, scope, snapshot, chunks, *,
         prefix = str(summary)[:120]
 
         def validate():
+            query.validate_retrieval_origin()
             if (scope.project_id != project or (not local_vectors and is_private_project(query.records, project))
                     or privacy_revision(query.records) != frozen_privacy
                     or (remote and not egress_allowed(query.records, query.models, project, 'embedding'))
@@ -146,43 +153,61 @@ def chunk_vector_scores(query, project, entry, scope, snapshot, chunks, *,
             def post_json(self, **request):
                 # 原 MemoryTurn 保存 key 前核对提供方实际准备发送的输入。
                 validate_input(request['payload']['input'])
-                return embedding_request(query.records, query.models, project, materials,
-                    {'namespace': 'contextual-chunks-v1', 'embedding': request['payload']['input'],
-                     'materials': materials, 'configuration_revision': configured.get('revision'),
-                     **({'mode_revision': configured['mode_revision']} if local_vectors else {})},
-                    validate, original, request)
+                from .shared_rendered_preparation import chunk_wire_input
+                prepared_scope = (chunk_wire_input(query, payload=request['payload'], question=question, entry=entry,
+                    scope=scope, snapshot=snapshot, layer=layer, span_start=span_start, summary=summary,
+                    chunks=[chunks[indexes[identity]] for identity in wire_batch.missing_ids])
+                    if query.origin_admission is not None else nullcontext(None))
+                with prepared_scope as rendered:
+                    return embedding_request(query.execution_owner.records, query.models, project, materials,
+                        {'namespace': 'contextual-chunks-v1', 'embedding': request['payload']['input'],
+                         'materials': materials, 'configuration_revision': configured.get('revision'),
+                         **({'mode_revision': configured['mode_revision']} if local_vectors else {})},
+                        validate, original, request, origin_admission=query.origin_admission, rendered_input=rendered)
 
-        provider = ReusedQuestion(replace(provider, client=ObservedTransport()))
-        namespace = chunk_cache_namespace(project, entry)
+        provider = ReusedQuestion(replace(provider, client=ObservedTransport()),
+            cache_namespace=query.cache_namespace(provider.cache_identity), validate_current=validate)
+        namespace = query.cache_namespace(chunk_cache_namespace(project, entry))
         def chunk_id(own_layer, own_slot, index):
             return chunk_cache_id(entry, own_layer, own_slot, index)
 
         # Same text the background index embeds (T12.1): title + summary[:120] + block.
         projected = [{'id': chunk_id(layer, span_slot, index),
                       'project_id': project, 'revision': entry['revision'], 'source_refs': [],
-                      'content': entry['title'] + '\n' + prefix + '\n' + chunk.text}
+                      'content': rendered_chunk_text(entry, summary, chunk.text)}
                      for index, chunk in enumerate(chunks)]
         # 先核原全文片段和问题，再打开派生缓存；不修改原资料。
         validate_input(projected)
         validate_input(question)
-        cache = SQLiteEmbeddingCache(str(query.records.database_path.parent / 'recognition-vectors.sqlite3'))
+        cache = SQLiteEmbeddingCache(str(query.execution_owner.records.database_path.parent / 'recognition-vectors.sqlite3'))
         indexes = {item['id']: index for index, item in enumerate(projected)}
+        wire_batch = None
+        if query.origin_admission is not None:
+            from .shared_rendered_preparation import RenderedEmbeddingBatch
+            wire_batch = RenderedEmbeddingBatch(projected)
         # 本机前台只消费后台已经写入的四键缓存，缺失条目留给关键词路径。
         model_key = provider.cache_identity
         cached_vectors = {}
         if local_vectors:
             cached_vectors = {item['id']: cache.read(model_id=model_key,
-                entry=SimpleNamespace(project_id=namespace, id=item['id'], revision=entry['revision']))
+                entry=SimpleNamespace(project_id=material_vector_namespace(query, namespace, item['content'], model_key),
+                    id=item['id'], revision=entry['revision']))
                 for item in projected}
         cached_ids = {identity for identity, vector in cached_vectors.items() if vector is not None}
         class ScopedCache:
             def read(self, *, model_id, entry):
+                validate()
                 if local_vectors:
                     if (model_id != model_key or entry.project_id != project
                             or entry.revision != projected[0]['revision'] or entry.id not in cached_ids):
                         raise RecognitionConflict('chunk_vector_cache_snapshot_changed')
-                    return cached_vectors[entry.id]
-                return cache.read(model_id=model_id, entry=replace(entry, project_id=namespace))
+                    value = cached_vectors[entry.id]
+                else:
+                    qualified = material_vector_namespace(query, namespace, entry.content, model_id)
+                    value = cache.read(model_id=model_id, entry=replace(entry, project_id=qualified))
+                if wire_batch is not None:
+                    wire_batch.observe(entry, value)
+                return value
 
             def write(self, *, model_id, entry, vector):
                 if local_vectors:
@@ -190,7 +215,8 @@ def chunk_vector_scores(query, project, entry, scope, snapshot, chunks, *,
                     raise RecognitionConflict('local_vector_foreground_cache_write')
                 validate()
                 validate_input(projected)
-                cache.write(model_id=model_id, entry=replace(entry, project_id=namespace), vector=vector)
+                qualified = material_vector_namespace(query, namespace, entry.content, model_id)
+                cache.write(model_id=model_id, entry=replace(entry, project_id=qualified), vector=vector)
 
         result = retrieve(project, question, projected, limit=len(projected),
                           vector_candidate_limit=len(projected), keyword_enabled=False,

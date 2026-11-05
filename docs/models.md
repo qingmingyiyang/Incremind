@@ -13,10 +13,22 @@
 
 - 推荐先接 DeepSeek：接口地址 `https://api.deepseek.com`，模型名按 DeepSeek 控制台填写。没有设置推理强度时，系统会关闭 DeepSeek 默认的"思考"，避免后台短任务被截断。
 - 密钥在 Windows 上用 DPAPI 加密，存在数据根的 `secrets.json`，绑定当前 Windows 用户；保存后界面上读不回来。
+- 独立 Hy-ASR 配置可在网页的转写设置保存密钥，沿原加密存储处理。保存结果未知时先回读原操作，保留本次输入；保存成功或切换用户空间后清除输入。该操作保留当前启用与外发设置。
+- 转写词表支持逐词改名、调整权重、停用及恢复，每次先预览，再明确确认。修订冲突保留草稿，核对当前词语后重新预览。
 - 本机小模型 `qwen2.5-1.5b-instruct` 需要先在设置里启用并选择，模型文件放在数据根的 `data/models/`。
 - **ChatGPT 订阅**：在设置的模型组里登录，浏览器完成授权后选择可用模型，再按需打开外发开关，不需要 API Key。账号变化后需要重选模型；退出或认证失效时不会自动切换到 API。依据 OpenAI 官方的 [Sign in with ChatGPT](https://developers.openai.com/cookbook/articles/sign-in-with-chatgpt)。
 
 ## 外发规则
+
+### SoMark OXR-1.0
+
+在设置的识图行选择外接，使用官方免费服务时地址填写 `https://free-oxr.somark.cn/api/v1`，也可使用官方 `.ai` 域名。同机部署后使用 `http://127.0.0.1:8000/v1`。模型填写 `OXR-1.0`，密钥填写占位值 `dummy`，保存并按需启用识图外发。[SoMark OXR 同机部署](oxr-server.md)
+
+图片、多图与 PDF 上传使用 `/parse/sync`，保留表格 Markdown 与公式 LaTeX。图片按上传顺序识别，每张图片单独写调用回执，共用整组期限，失败后停止发送后续图片。PDF 在处理时发送完整原件，每份文件对应一次调用，返回的整篇 Markdown 进入既有整理和证据定位流程，原件继续保留。文本 PDF 与扫描 PDF 均可使用，密码保护及损坏文件在上传时拒绝。
+
+服务未报告 token 时用量保持未知。私密资料和关闭外发时，图片沿用本机识别，PDF 使用本机文本提取；扫描 PDF 缺少可提取文字时明确报告失败。PDF 远程解析仅支持上述 OXR 配置，其他识图模型保持原有图片输入流程。
+
+官方免费服务需要排队且不保证稳定性。[官方说明](https://github.com/SoMarkAI/OXR)。本项目独立适配 HTTP 协议，不包含模型权重或上游实现。
 
 "外发"指把你的内容发给外部模型服务。
 
@@ -79,3 +91,15 @@ LiteLLM 包装丢失字段时，只从相同 HTTP 状态的原始官方 SDK 异�
 | OpenRouter 账号目录与价格、其他 provider 修复 | 现有模型配置没有导入这些目录或 pi-ai 的原生适配；自动费率继续限于已核验的 DeepSeek，未知费用保持未知。 |
 
 订阅登录、模型选择、外发和私密判断继续复用既有服务与回执。
+
+### 2026-11-04 OpenAI SDK 与 Terra
+
+生成与识图配置使用 `https://api.openai.com/v1` 和 `gpt-6.1-terra` 时，现有网关通过官方 Python OpenAI SDK 的 Responses API 发送。Python SDK 显式依赖为 `openai>=2.38.0,<3`；同步和异步调用共用请求转换、终态校验及实际用量投影。此路由只依据精确官方地址与已核验模型启用，其他现有配置继续使用各自已登记的协议。
+
+依据 [Terra 模型说明](https://developers.openai.com/api/docs/models/gpt-6.1-terra)、[GPT-6 接入指南](https://developers.openai.com/api/docs/guides/latest-model)及[官方 SDK 文档](https://developers.openai.com/api/docs/libraries)，Terra 的推理强度支持 `none`、`low`、`medium`、`high`、`xhigh` 和 `max`，服务默认 `medium`。明确的 `none` 保留到请求；其余强度及默认强度不发送 `temperature`、`top_p`、`top_logprobs` 或 `logprobs`。结构化格式转换为 Responses 的 `text.format`，图片转换为 `input_image`，完整返回仍由原领域模型校验。
+
+SDK 客户端设置 `max_retries=0`，每个既有 wire attempt 只发送一次 POST。普通请求固定 `store=false`、`stream=true`，同步沿原独占 HTTP、取消及总期限处理，异步使用独占异步连接和覆盖响应头、正文的总期限。默认客户端沿原 API 的环境代理与证书配置，显式独占客户端工厂优先；均禁止跟随重定向。明确启用的后台响应恢复继续使用原 provider-store 接点。外发资格、私密判断、来源复验和回执均由原调用链执行。
+
+远程向量和重排请求复用同一证书配置及可信启动环境的代理。`localhost`、`127.0.0.1` 和 `::1` 始终直连，保留本机模型的私密及外发许可规则；这些请求不会交给环境代理。请求仍禁止重定向，响应最多8 MiB，并在发送前后核验当前来源和模型配置。共享模型按管理员明确配置的用途价格结算，提供方未报告的用量和费用保持未知。
+
+本轮 pi-ai 核对范围为 `482c1381a00d8d00bc81697e4a980c593db6803e` 至 `0a730c8a765f84444312eaaefa9a9329c665913d`，`packages/ai` 版本为 1.5.0，上游 TypeScript OpenAI SDK 为 7.19.0。同步其 Business workspace 限额代码 `subscription_sharing_workplace_individual_usage_limit_exceeded` 的永久额度分类，避免按普通 429 重试。Responses 用量只保留服务明确报告的计数，保留显式零值、部分字段及缓存和推理明细；缺失计数继续未知，费用按既有人工配置或未知处理。

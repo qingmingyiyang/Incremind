@@ -37,6 +37,20 @@ def test_multi_parent_inherits_privacy_only(env):
         with pytest.raises(RecognitionConflict): egress.require(private, purpose)
 
 
+def test_asr_consumer_reuses_binary_privacy_without_changing_saved_purpose_format(env):
+    records, service, egress, scope = env
+    identity = _experience(service, scope)
+    material = [{'type': 'experience', 'id': identity, 'revision': 1}]
+    snapshot = egress.snapshot(scope, material)
+    egress.require(snapshot, 'asr')
+    assert snapshot['nodes'][0]['effective_purposes'] == ['embedding', 'generation', 'rerank']
+    private = egress.set_policy(scope, 'experience', identity, 1, 0, [])
+    assert private['allowed_purposes'] == []
+    with pytest.raises(RecognitionConflict):
+        egress.require(egress.snapshot(scope, material), 'asr')
+    assert records.list('source_egress_experience_policies')[0].payload['allowed_purposes'] == []
+
+
 def test_child_policy_cannot_broaden_parent(env):
     _, service, egress, scope = env
     source = _experience(service, scope)
