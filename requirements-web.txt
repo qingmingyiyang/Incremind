@@ -19,6 +19,9 @@ langgraph-checkpoint>=4.2,<5
 langchain-core>=1.6.4,<2
 blake3==1.0.9
 Pillow>=10,<13
+# 固定语音试用样本在网页服务中重采样并转换为数组。
+av>=14,<20
+numpy>=1.26,<3
 python-docx>=1.1,<2
 pypdf>=4.0,<6
 markdown-it-py>=4.2,<5
