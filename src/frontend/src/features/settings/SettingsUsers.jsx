@@ -11,13 +11,14 @@ import { LOGIN_NAME_PATTERN, validLogin } from './loginRules';
 import { ServerModelProfiles, UserModelAllocation, UserModelBalance } from './ServerModelSettings';
 import './SettingsSupport.css';
 
-export function SettingsUsers({ projectId }) {
+export function SettingsUsers({ projectId, androidInvites = false }) {
   const [value, setValue] = useState(null), [audit, setAudit] = useState([]), [open, setOpen] = useState(null);
   const [showAudit, setShowAudit] = useState(false), [name, setName] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [qr,setQr] = useState(null), [refresh,setRefresh] = useState(0);
   const [loginName, setLoginName] = useState(''), [password, setPassword] = useState('');
   const [auditDetails, setAuditDetails] = useState({});
   const auditRequests = useRef(new Set());
+  const panelRevision = useRef(0);
   const gate = useRequestScope(userStorageKey(projectId)), scope = gate.scope;
   useEffect(() => {
     const token = gate.issue('load', scope);
@@ -81,16 +82,35 @@ export function SettingsUsers({ projectId }) {
       throw reason;
     }
   });
+  function toggleUser(userId) {
+    panelRevision.current += 1;
+    setOpen(old => old === userId ? null : userId);
+    setQr(null);
+  }
+  function createAndroidInvite(user) {
+    const panel = panelRevision.current;
+    return run(async token => {
+      setQr(null);
+      const invite = await usersApi.inviteAndroid(user);
+      if (gate.isCurrent(token) && panel === panelRevision.current) {
+        if (!/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(invite?.qr) || !Number.isFinite(Date.parse(invite?.expires_at))) {
+          throw new Error('mobile_invitation_invalid');
+        }
+        // 仅保留当前面板展示所需数据。
+        setQr({ android: true, user_id: user.user_id, expires_at: invite.expires_at, qr: invite.qr });
+      }
+    });
+  }
   return <section className="settings-users settings-users-revised" aria-label="用户管理">{error && <p role="alert">{error} <button type="button" onClick={()=>setRefresh(value=>value+1)}>刷新</button></p>}
     {value?.caller?.role === 'admin' && <>
       <h2>用户 <span>{value.items?.length || 0}</span><button type="button" disabled={busy} aria-label="刷新用户管理" onClick={() => setRefresh(old => old + 1)}>刷新</button></h2>
       <div className="settings-card"><div className="settings-user-columns" aria-hidden="true"><span>姓名</span><span>角色 · 状态 · 设备 · 空间</span><span>操作</span></div>
       {(value.items || []).map(user => <div key={user.user_id}>
-        <Row className="settings-user-row" dot={<span className="settings-user-avatar" aria-hidden="true">{Array.from(user.name || '')[0]}</span>} title={user.name} sub={user.login_name || undefined} expanded={open === user.user_id} onOpen={() => { setOpen(open === user.user_id ? null : user.user_id); setQr(null); }}
+        <Row className="settings-user-row" dot={<span className="settings-user-avatar" aria-hidden="true">{Array.from(user.name || '')[0]}</span>} title={user.name} sub={user.login_name || undefined} expanded={open === user.user_id} onOpen={() => toggleUser(user.user_id)}
           meta={<span className="settings-user-facts"><span className="settings-support-tag">{user.role === 'admin' ? '管理员' : '用户'}</span><span>{user.deletion_pending ? '清理中' : user.disabled_at ? '已停用' : '启用'}</span><span>{user.device_count || 0} 台</span><span className="settings-user-storage">{Number.isFinite(user.storage_limit_mb) && user.storage_limit_mb > 0 && Number.isFinite(user.storage_bytes) && <meter min="0" max={user.storage_limit_mb * 1024 * 1024} value={Math.min(user.storage_bytes, user.storage_limit_mb * 1024 * 1024)} aria-label={`${user.name}存储用量`}/>}{formatBytes(user.storage_bytes)}{Number.isFinite(user.storage_limit_mb) && user.storage_limit_mb > 0 ? ` / ${formatBytes(user.storage_limit_mb * 1024 * 1024)}` : ''}</span></span>}
           trailing={<div className="settings-user-actions"><button type="button" disabled={busy || user.deletion_pending} onClick={() => selectUserSpace(user)} aria-label={`进入${user.name}的空间`}>进入空间</button>
             <button type="button" aria-label={`管理${user.name}`} aria-expanded={open === user.user_id} disabled={busy}
-              onClick={() => { setOpen(open === user.user_id ? null : user.user_id); setQr(null); }}>管理</button></div>}/>
+              onClick={() => toggleUser(user.user_id)}>管理</button></div>}/>
         {open === user.user_id && <div className="settings-expand">
           <LoginForm key={`${scope}:${user.user_id}:login`} user={user} disabled={busy || user.deletion_pending} onSave={(account, secret) => run(async token => {
             const result = await usersApi.login(user, account, secret);
@@ -102,8 +122,10 @@ export function SettingsUsers({ projectId }) {
           <div className="settings-device-pair"><button type="button" aria-label={`给${user.name}添加设备`} disabled={busy || Boolean(user.disabled_at)} onClick={()=>run(async token=>{
             setQr(null); const issued=await usersApi.pair(user);
             if (gate.isCurrent(token)) setQr({...issued,user_id:user.user_id});
-          })}>{qr?.user_id===user.user_id ? '重新生成' : '添加设备'}</button>
-            <DevicePairing value={qr?.user_id===user.user_id ? qr : null}/></div>
+          })}>{qr?.user_id===user.user_id && !qr.android ? '重新生成' : '添加设备'}</button>
+            {androidInvites && user.role === 'user' && !user.disabled_at && !user.deletion_pending && <button type="button" disabled={busy}
+              aria-label={`给${user.name}生成 Android 邀请`} onClick={() => createAndroidInvite(user)}>生成 Android 邀请</button>}
+            <DevicePairing value={qr?.user_id===user.user_id ? qr : null} android={qr?.android === true}/></div>
           {user.disabled_at && user.role === 'user' && user.user_id !== value.caller.user_id && <DeleteConfirmation key={`${user.user_id}:${user.revision}`} name={user.name}
             label={`删除${user.name}的账号和空间`} consequence={`将永久删除 ${user.name} 的账号、空间资料、设备和访问记录。`} disabled={busy}
             onConfirm={() => remove(user)}/>}

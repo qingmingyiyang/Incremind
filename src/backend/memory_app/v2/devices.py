@@ -243,6 +243,8 @@ class DeviceRegistry:
                 login = tx.read(LOGIN_DEVICES, device_id)
                 if login is not None:
                     tx.delete(LOGIN_DEVICES, device_id, expected_revision=login.revision)
+                from .android_mobile import delete_mobile_device_related
+                delete_mobile_device_related(tx, device_id)
                 tx.delete(DEVICES, device_id, expected_revision=expected_revision)
                 tx.commit()
             return {'device_id': device_id, 'deleted': True}
@@ -305,7 +307,13 @@ def install_device_routes(application, *, registry):
         if mode == 'desktop':
             items.insert(0, {'device_id': 'desktop', 'user_id': 'local-user', 'name': '这台电脑',
                 'created_at': None, 'last_seen_at': None, 'revoked_at': None, 'revision': 0})
-        return _response(200, {'mode': mode, 'device_id': actor, 'items': items})
+        result = {'mode': mode, 'device_id': actor, 'items': items}
+        if mode == 'server' and getattr(application.state, 'android_mobile', None) is not None:
+            result['mobile_available'] = True
+            mobile = request.scope.get('state', {}).get('android_mobile_identity')
+            if mobile is not None:
+                result['mobile_session'] = {'user_id': mobile.user_id, 'device_id': mobile.device_id}
+        return _response(200, result)
 
     @router.post('/pair')
     async def pairing(request: Request):

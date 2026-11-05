@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Row, Switch, Icon, StatusDot } from '../../shared/ui';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
-import { deviceIdentity, isDeviceIdentity, readUserSpace } from '../../shared/api/deviceTransport';
+import { deviceIdentity, isDeviceIdentity, readDeviceCredential, readUserSpace } from '../../shared/api/deviceTransport';
 import { formatLocalShortDate } from '../../shared/lib/time';
 import { desktopFileAccessNotice, readExecutorPlugins } from '../workbench/ExternalExecutorPicker';
 import { EXTERNAL_CLIENTS, readExternalConnection, externalReadiness, clientConnectionText, harnessAuthenticationText, proxyClientConfiguration, proxyConfigurationMessage } from './externalAgentConnection';
@@ -223,6 +223,6 @@ export function ExternalAgentSettings({ projectId, value, proxy, expanded, onOpe
       })}
     </div>}</section>}
     {copyError && <p role="alert" className="external-agent-copy-error">{copyError}</p>}
-    {expanded && <ExternalMemoryAccess projectId={projectId}/>}
+    {expanded && !readDeviceCredential()?.mobile && <ExternalMemoryAccess projectId={projectId}/>}
   </section>;
 }

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/ic_launcher_background"
+    android:clickable="true"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:paddingHorizontal="24dp"
+        android:paddingVertical="32dp">
+
+        <ImageView
+            android:layout_width="96dp"
+            android:layout_height="96dp"
+            android:background="@drawable/login_bear_plate"
+            android:importantForAccessibility="no"
+            android:padding="14dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_launcher_bear" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.10"
+            android:text="@string/login_brand"
+            android:textColor="@color/login_red"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:accessibilityHeading="true"
+            android:fontFamily="serif"
+            android:gravity="center"
+            android:text="@string/login_heading"
+            android:textColor="@color/login_ink"
+            android:textSize="32sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/login_status"
+            style="@style/LoginMessage"
+            android:layout_marginTop="10dp" />
+
+        <TextView
+            android:id="@+id/login_notice"
+            style="@style/LoginMessage"
+            android:layout_marginTop="8dp"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/login_primary"
+            style="@style/LoginAction"
+            android:layout_marginTop="24dp"
+            android:background="@drawable/login_primary_background"
+            android:minHeight="52dp"
+            android:minWidth="264dp"
+            android:textColor="@color/login_panel" />
+
+        <Button
+            android:id="@+id/login_rescan"
+            style="@style/LoginSecondaryAction"
+            android:layout_marginTop="4dp"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/login_previous_device"
+            style="@style/LoginSecondaryAction"
+            android:text="@string/login_previous_device"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/login_history"
+            style="@style/LoginSecondaryAction"
+            android:layout_marginTop="4dp"
+            android:text="@string/login_share_history" />
+    </LinearLayout>
+</ScrollView>

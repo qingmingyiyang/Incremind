@@ -12,7 +12,7 @@ import { readSharedCommands, saveSharedCommand, clearSharedCommand } from '../sh
 const labels = { generation: '生成', vision: '识图', asr: '转写', embedding: '向量', rerank: '重排', search: '搜索' };
 const conflict = () => Object.assign(new Error('设置已变化 · 重新预览'), { status: 409 });
 
-function changeOf(text, value, projects) {
+function changeOf(text, value, projects, showAgentTools) {
   const phrase = text.trim();
   if (!phrase) return null;
   const addition = parseQuickAddition(phrase, projects);
@@ -45,7 +45,10 @@ function changeOf(text, value, projects) {
   const off = /关闭|关掉|停止|禁止|不外发|不允许|不要|停用/.test(phrase), on = /开启|打开|允许|启用/.test(phrase);
   if (off === on) return { error: '写明开启或关闭及用途 · 重新输入' };
   const enabled = on;
-  if (/外部\s*agent/i.test(phrase) && /外发/.test(phrase)) return { kind: 'agent', label: '外部 agent · 外发', from: value.external_agent.allow_remote, to: enabled, revision: value.external_agent.revision };
+  if (/外部\s*agent/i.test(phrase) && /外发/.test(phrase)) {
+    if (!showAgentTools) return { error: '外部 Agent 设置请使用网页版' };
+    return { kind: 'agent', label: '外部 agent · 外发', from: value.external_agent.allow_remote, to: enabled, revision: value.external_agent.revision };
+  }
   if (purposeMatches.length !== 1 || !/外发/.test(phrase)) return { error: '写明一个用途及外发操作 · 重新输入' };
   const [purpose, label] = purposeMatches[0], row = value.model[purpose];
   if (purpose === 'asr') return { error: '转写授权在模型中设置 · 打开模型' };
@@ -55,7 +58,7 @@ function changeOf(text, value, projects) {
 
 const stateLabel = value => typeof value === 'boolean' ? value ? '开' : '关' : { local: '本机', remote: '外接', api: 'API', system: '跟随系统', light: '浅色', dark: '深色' }[value] || value;
 
-export function QuickSettings({ value, projects, api, run, busy, onBackupScheduleChange }) {
+export function QuickSettings({ value, projects, api, run, busy, onBackupScheduleChange, showAgentTools = true }) {
   const [text, setText] = useState(''), [preview, setPreview] = useState(null), [saved, setSaved] = useState('');
   const [epoch, setEpoch] = useState(0), [working, setWorking] = useState(false), [error, setError] = useState('');
   const [pending, setPending] = useState(null);
@@ -95,7 +98,7 @@ export function QuickSettings({ value, projects, api, run, busy, onBackupSchedul
     if (!token || !isDeviceIdentity(actor)) return;
     setError(''); setSaved(''); setPreview(null); setWorking(true);
     try {
-      let change = parseQuickAddition(input) || changeOf(input, value, projects);
+      let change = parseQuickAddition(input) || changeOf(input, value, projects, showAgentTools);
       if (change?.kind === 'constraint') {
         const prior = readConstraintPending();
         if (prior) { updatePending(prior); throw new Error('上次约束保存待核对'); }

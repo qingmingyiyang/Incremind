@@ -1,0 +1,15 @@
+[Unit]
+Description=Refresh Incremind Android hardware attestation revocations
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/chriptmas/android-mobile/client-ca.pem
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/incremind/android-mobile.py refresh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/etc/chriptmas/android-mobile
+TimeoutStartSec=45s

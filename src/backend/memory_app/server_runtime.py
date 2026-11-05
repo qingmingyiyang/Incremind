@@ -35,7 +35,7 @@ LOGGER = logging.getLogger(__name__)
 _SERVER_JOB_SUBJECT = ContextVar('server_job_subject', default=None)
 _SERVER_REQUEST_SUBJECT = ContextVar('server_request_subject', default=None)
 _DOWNLOAD_ROUTE = re.compile(r'/api/(?:asr/faster-whisper/models|rag/models)/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}/download\Z')
-_CONTROL_USER_ROUTE = re.compile(r'/api/v2/server/users/([A-Za-z0-9][A-Za-z0-9._~-]{0,127})(?:/pair|/login|/model-allocation|/model-balance(?:/adjust|/attempts(?:/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}/reconcile)?)?)?\Z')
+_CONTROL_USER_ROUTE = re.compile(r'/api/v2/server/users/([A-Za-z0-9][A-Za-z0-9._~-]{0,127})(?:/pair|/mobile-invites|/login|/model-allocation|/model-balance(?:/adjust|/attempts(?:/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}/reconcile)?)?)?\Z')
 
 
 def authorize_host_resource(users, access, method, path):
@@ -123,7 +123,8 @@ class _UserDispatcher:
                         raise UserError('user_forbidden')
                     return await self._invoke(self.application, self.app, scope, receive, send, access)
                 control = not internal and (scope['path'].startswith('/api/v2/server/')
-                    or scope['path'] == '/api/v2/server/users' or scope['path'].startswith('/api/v2/devices'))
+                    or scope['path'] in {'/api/v2/server/users', '/api/v2/mobile/renew'}
+                    or scope['path'].startswith('/api/v2/devices'))
                 if control:
                     targets = {target}
                     audit_access = access
@@ -360,6 +361,12 @@ def create_server_application(layout, *, child_factory, port=8001, concurrency=1
     from .v2.native_mcp import NativeRuntime
     context.native_mcp = NativeRuntime(registry)
     application.state.server_related_owners = (context.native_mcp.related_owner,)
+    from .v2.android_mobile import AndroidMobile, AndroidMobileRelatedOwner
+    from .v2.android_mobile_routes import install_android_mobile_routes
+    application.state.android_mobile = AndroidMobile.configured(users, registry)
+    application.state.server_related_owners += (AndroidMobileRelatedOwner(),)
+    if application.state.android_mobile is not None:
+        install_android_mobile_routes(application, application.state.android_mobile)
     context.restores.install(application)
     from .v2.server_control import install_server_routes
     from .v2.server_accounts import ServerAccounts, install_account_routes

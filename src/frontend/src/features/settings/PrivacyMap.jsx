@@ -2,7 +2,9 @@ import { Switch } from '../../shared/ui';
 import { REMOTE_PROCESSING_HINT, PRIVATE_MATERIAL_HINT } from '../../shared/lib/privacyMessages';
 
 export function PrivacyMap({ model, externalAgent, privacy, projects, api, run, busy }) {
-  const uses = [['generation', '生成'], ['vision', '识图'], ['asr', '转写'], ['embedding', '向量'], ['rerank', '重排'], ['search', '搜索'], ['agent', '外部 agent']].map(([purpose, name]) => {
+  const purposes = [['generation', '生成'], ['vision', '识图'], ['asr', '转写'], ['embedding', '向量'], ['rerank', '重排'], ['search', '搜索']];
+  if (externalAgent) purposes.push(['agent', '外部 agent']);
+  const uses = purposes.map(([purpose, name]) => {
     const row = purpose === 'agent' ? externalAgent : model[purpose] || {};
     const local = purpose === 'generation' && model.generation_mode.mode === 'local' || ['vision', 'embedding'].includes(purpose) && row.mode === 'local';
     const enabled = purpose === 'asr' ? row.enabled === true && row.egress_manifest?.consented === true : row.allow_remote === true;

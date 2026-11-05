@@ -48,14 +48,14 @@ export function SettingsDevices({ projectId }) {
           if (gate.isCurrent(token)) setValue(old => ({ ...old, items: old.items.filter(row => row.device_id !== device.device_id) }));
         })}/></div>}
     </div>)}
-    <div className="settings-device-pair"><button type="button" disabled={busy || !value} onClick={() => run(async token => {
+    {!value?.mobile_session && <div className="settings-device-pair"><button type="button" disabled={busy || !value} onClick={() => run(async token => {
       setQr(null); const result = await devicesApi.pair();
       if (gate.isCurrent(token)) setQr(result);
     })}>{qr ? '重新生成' : '添加设备'}</button>
       <DevicePairing value={qr}/>
-    </div></div>
+    </div>}</div>
     </section>
-    {value?.mode === 'server' && <SettingsUsers projectId={projectId}/>}
-    {value?.mode === 'server' && <ExternalMemoryAccess projectId={projectId}/>}
+    {value?.mode === 'server' && <SettingsUsers projectId={projectId} androidInvites={value.mobile_available === true && !value.mobile_session}/>}
+    {value?.mode === 'server' && !value.mobile_session && <ExternalMemoryAccess projectId={projectId}/>}
   </section>;
 }

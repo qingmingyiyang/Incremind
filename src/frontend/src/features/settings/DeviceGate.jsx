@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
-import { saveDeviceCredential, readUserSpace, selectUserSpace, userStorageKey, deviceIdentity, isDeviceIdentity, forgetDeviceCredential } from '../../shared/api/deviceTransport';
+import { saveDeviceCredential, saveMobileDeviceSession, isAndroidWorkbench, readUserSpace, selectUserSpace, userStorageKey, deviceIdentity, isDeviceIdentity, forgetDeviceCredential } from '../../shared/api/deviceTransport';
 import { devicesApi } from './devicesApi';
 import { usersApi } from './usersApi';
 import './Settings.css';
@@ -19,6 +19,7 @@ function takeCode() {
 }
 
 export function DeviceGate({ children }) {
+  const [mobile, setMobile] = useState(isAndroidWorkbench);
   const [code, setCode] = useState(takeCode), [name, setName] = useState('');
   const [pairing, setPairing] = useState(() => location.pathname === '/pair');
   const [loginName, setLoginName] = useState(''), [password, setPassword] = useState('');
@@ -39,8 +40,24 @@ export function DeviceGate({ children }) {
   useEffect(() => {
     if (globalThis.electronAPI?.backendBaseUrl) return;
     const token = gate.issue('probe', scope);
-    devicesApi.list().then(value => { if (gate.isCurrent(token)) { setServer(value.mode === 'server'); setState('ready'); } })
-      .catch(reason => { if (gate.isCurrent(token)) { const pairing = reason.status === 401; setState(pairing ? 'pair' : 'error'); setError(pairing ? '' : '读取未完成 · 重试'); } });
+    devicesApi.list().then(value => {
+      if (!gate.isCurrent(token)) return;
+      if (value.mobile_session) {
+        saveMobileDeviceSession(value.mobile_session);
+        setMobile(true);
+      } else if (mobile) {
+        setState('mobile-required');
+        return;
+      }
+      setServer(value.mode === 'server'); setState('ready');
+    }).catch(reason => {
+      if (!gate.isCurrent(token)) return;
+      if (reason.status === 401 || mobile && reason.status === 403) {
+        setState(mobile ? 'mobile-required' : 'pair'); setError('');
+      } else {
+        setState('error'); setError('读取未完成 · 重试');
+      }
+    });
     return () => gate.invalidate('probe');
   }, [retry]);
   useEffect(() => {
@@ -50,10 +67,10 @@ export function DeviceGate({ children }) {
     return () => gate.invalidate('caller');
   }, [state, server]);
   useEffect(() => {
-    const required = () => { gate.invalidate('probe'); gate.invalidate('exchange'); gate.invalidate('login'); gate.invalidate('logout'); gate.invalidate('caller'); setCaller(null); setSpace(null); setState('pair'); setBusy(false); setPassword(''); setError(''); };
+    const required = () => { gate.invalidate('probe'); gate.invalidate('exchange'); gate.invalidate('login'); gate.invalidate('logout'); gate.invalidate('caller'); setCaller(null); setSpace(null); setState(mobile ? 'mobile-required' : 'pair'); setBusy(false); setPassword(''); setError(''); };
     window.addEventListener('chriptmas-device-required', required);
     return () => window.removeEventListener('chriptmas-device-required', required);
-  }, []);
+  }, [mobile]);
   async function exchange(event) {
     event.preventDefault(); if (busy || !code.trim() || !name.trim()) return;
     const token = gate.issue('exchange', scope), identity = deviceIdentity();
@@ -109,8 +126,9 @@ export function DeviceGate({ children }) {
     <Fragment key={userStorageKey('view')}>{children}</Fragment>
   </UserSpaceHeader.Provider>;
   return <div className="device-pair-page"><main className="settings-page"><section>
-    <h1>{pairing ? '设备配对' : '登录'}</h1>{state === 'checking' ? <span role="status">读取中</span> : state === 'error'
+    <h1>{mobile ? 'Android 设备' : pairing ? '设备配对' : '登录'}</h1>{state === 'checking' ? <span role="status">读取中</span> : state === 'error'
       ? <p role="alert">{error} <button type="button" onClick={() => { setState('checking'); setRetry(value => value + 1); }}>重试</button></p>
+      : mobile ? <p role="status">请在 App 内扫描邀请二维码</p>
       : pairing ? <form onSubmit={exchange}><label>配对码<input aria-label="配对码" type="password" autoComplete="off" value={code} onChange={event => setCode(event.target.value)} disabled={busy}/></label>
         <label>名称<input aria-label="设备名称" maxLength={80} value={name} onChange={event => setName(event.target.value)} disabled={busy}/></label>
         {error && <p role="alert">{error}</p>}<button type="submit" disabled={busy || !code.trim() || !name.trim()}>配对</button>

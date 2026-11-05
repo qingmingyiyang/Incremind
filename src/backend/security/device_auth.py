@@ -87,6 +87,24 @@ class DeviceAuthenticationMiddleware:
         if scope.get('state', {}).get('server_dispatch_authority') is self.auth:
             return await self.app(scope, receive, send)
         path, method = scope['path'], scope.get('method')
+        mobile = getattr(self.application.state, 'android_mobile', None)
+        mobile_identity = None
+        if mobile is not None:
+            try:
+                mobile_identity = mobile.identity(scope)
+            except PermissionError:
+                if scope['type'] == 'websocket':
+                    return await send({'type': 'websocket.close', 'code': 4401})
+                return await JSONResponse({'detail': 'mobile_device_unauthorized'}, status_code=401,
+                    headers={'Cache-Control': 'no-store'})(scope, receive, send)
+            if mobile_identity is not None:
+                connection = HTTPConnection(scope)
+                if not mobile.permits(path, method):
+                    if scope['type'] == 'websocket':
+                        return await send({'type': 'websocket.close', 'code': 4403})
+                    return await JSONResponse({'detail': 'mobile_device_scope_forbidden'}, status_code=403,
+                        headers={'Cache-Control': 'no-store'})(scope, receive, send)
+                scope.setdefault('state', {})['android_mobile_identity'] = mobile_identity
         if scope['type'] == 'websocket':
             if not same_origin(connection):
                 return await send({'type': 'websocket.close', 'code': 4403})
@@ -99,6 +117,8 @@ class DeviceAuthenticationMiddleware:
                 or path in getattr(self.application.state, 'server_static_paths', ()))
             public = public or method == 'POST' and path == '/api/v2/devices/exchange'
             public = public or method == 'POST' and path == '/api/v2/auth/login'
+            if mobile is not None:
+                public = public or method == 'POST' and path in mobile.bootstrap_paths
             if method in {'POST', 'PUT', 'PATCH', 'DELETE'} and not same_origin(connection):
                 return await JSONResponse({'detail': 'same_origin_required'}, status_code=403)(scope, receive, send)
             if public:
@@ -108,7 +128,7 @@ class DeviceAuthenticationMiddleware:
                 scope.setdefault('state', {})['server_internal_model'] = True
                 scope['state']['server_internal_target'] = self.auth.internal_target(connection)
                 return await self.app(scope, receive, send)
-        identity = self.registry.authenticate(_bearer(connection))
+        identity = mobile_identity if mobile_identity is not None else self.registry.authenticate(_bearer(connection))
         if identity is None and scope['type'] == 'websocket':
             consume = getattr(self.application.state, 'server_realtime_ticket_consumer', None)
             if scope['path'] == '/api/rebuild/workbench/realtime-asr/ws' and consume is not None:

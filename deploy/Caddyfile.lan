@@ -3,6 +3,8 @@
 https://chriptmas.lan {
     tls internal
     reverse_proxy 127.0.0.1:8001 {
+        header_up -X-Incremind-Mobile-Proxy
+        header_up -X-Incremind-Client-Cert
         flush_interval -1
     }
 }

@@ -24,5 +24,6 @@ export const usersApi = {
   }),
   update: (user, changes) => request('/users/' + encodeURIComponent(user.user_id), 'PATCH', { expected_revision: user.revision, ...changes }),
   pair: user => request('/users/' + encodeURIComponent(user.user_id) + '/pair', 'POST', {}),
+  inviteAndroid: user => request('/users/' + encodeURIComponent(user.user_id) + '/mobile-invites', 'POST', {}),
   remove: user => request('/users/' + encodeURIComponent(user.user_id), 'DELETE', { expected_revision: user.revision, confirmation: user.user_id }, 200),
 };

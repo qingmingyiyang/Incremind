@@ -20,7 +20,7 @@ import { SkillExportPanel } from './SkillExportPanel';
 import { CitationUsage } from './CitationUsage';
 import { InspirationDetails, InspirationExtraction } from './InspirationExtraction';
 import { AutomaticInspirations } from './AutomaticInspirations';
-import { deviceIdentity, isDeviceIdentity } from '../../shared/api/deviceTransport';
+import { deviceIdentity, isDeviceIdentity, readDeviceCredential } from '../../shared/api/deviceTransport';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
 import { formatLocalDate } from '../../shared/lib/time';
 import { workbenchApi } from '../workbench/workbenchApi';
@@ -58,6 +58,7 @@ export function Library(props) {
 }
 
 function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 'insight', initialFilter = null, documentId, sourceId, insightId, inspirationJobId, onNavigationBlocked, onNavigate, onProjectCreated, serverConversationShares }) {
+  const showAgentTools = !readDeviceCredential()?.mobile;
   const [layer, setLayer] = useState(layers.includes(initialLayer) ? initialLayer : 'insight'), [scene, setScene] = useState(''), [q, setQ] = useState('');
   const [composing, setComposing] = useState(false), [search, setSearch] = useState({ project: projectId, q: '' });
   const [filter, setFilter] = useState(initialFilter), [loaded, setLoaded] = useState(null), [refresh, setRefresh] = useState(0);
@@ -587,7 +588,7 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
             {insight.kind === 'recognition' && <button ref={insightMoreTrigger} type="button" aria-expanded={more} onClick={()=>setMore(value=>!value)}>更多</button>}
           </div>}
           {more && <div className="library-actions">{[['split','拆分'],['merge','合并'],['versions','版本'],['erase','永久删除']].filter(([key])=>!['split','merge'].includes(key)||insight.state==='active').map(([key,name])=><button key={key} type="button" onClick={()=>{drillGate.invalidate('detail');setMaintenance(key);setMore(false);if(key==='versions')insightMoreTrigger.current?.focus();}}>{name}</button>)}
-            {!readonlySource && insight.kind === 'recognition' && insight.state === 'active' && insight.conditions?.length > 0 && <button type="button" onClick={() => { setSkillExport({ scope, projectId: detailProject, scene: insight.scene, sourceId: insight.id }); setMore(false); }}>导出为 skill</button>}
+            {showAgentTools && !readonlySource && insight.kind === 'recognition' && insight.state === 'active' && insight.conditions?.length > 0 && <button type="button" onClick={() => { setSkillExport({ scope, projectId: detailProject, scene: insight.scene, sourceId: insight.id }); setMore(false); }}>导出为 skill</button>}
           </div>}
           {maintenance && <InsightMaintenance key={`${scope}:${filter}:${userEpoch}:${detailProject}:${insight.id}:${maintenance}`} projectId={detailProject} insight={insight} insights={visible?.insight?.items || []} action={maintenance} onReload={reloadMaintenance} onDone={()=>{setSelection(null);setMore(false);setMaintenance(null);setRefresh(value=>value+1);}}/>}
           {insight.kind === 'recognition' && <InsightLinks key={`${detailProject}:${insight.id}`} projectId={detailProject} insightId={insight.id} namespace={chosen.data.namespace} insights={visible?.insight?.items || []} readonly={chosen.readonly} onOpen={(row, ownerProjectId, originMeta) => {
@@ -630,7 +631,7 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
         entries={chosen.data.used_by} onOpen={onNavigate ? openCitationUsage : undefined}/>
       {layers.indexOf(chosen.layer) < 3 && (chosen.data[layers[layers.indexOf(chosen.layer) + 1]] || (chosen.layer === 'insight' && chosen.data.documents?.length > 1) || (chosen.layer === 'note' && chosen.data.sources?.length > 1)) && <button type="button" className="library-down" aria-label="下一层" onClick={() => jump(layers[layers.indexOf(chosen.layer) + 1])}>↓</button>}
     </FocusPanel>}
-    {chosen && skillExport?.scope === scope && skillExport.sourceId === chosen.data.insight?.id && <SkillExportPanel key={`${scope}:${detailProject}:${skillExport.sourceId}`} projectId={skillExport.projectId} scene={skillExport.scene} sourceId={skillExport.sourceId} onClose={() => setSkillExport(null)}/>}
+    {showAgentTools && chosen && skillExport?.scope === scope && skillExport.sourceId === chosen.data.insight?.id && <SkillExportPanel key={`${scope}:${detailProject}:${skillExport.sourceId}`} projectId={skillExport.projectId} scene={skillExport.scene} sourceId={skillExport.sourceId} onClose={() => setSkillExport(null)}/>}
   </div>;
 }
 export default Library;

@@ -359,6 +359,8 @@
 
 - 手机分享（2026-10-12）：`v2/share_capture.install_share_capture` 复用 `WorkspaceIntake` 与 `TurnExecutionService`，以旁路提交编号记录附件及回执，保留原件修订；`share_url` 同时供工作台与系统分享抽取平台网址。前端 `captureQueue`、`capture-store.js` 与 `CaptureEntry` 负责绑定用户设备的本地队列、同编号重试及回执定位，`share-worker.js` 在解析表单前拒绝跨源网页提交。使用与验收边界见 [手机分享](docs/mobile-share.md)。
 
+- Android 系统分享（2026-11-05）：`apps/mobile` 复用服务器工作台和 `share_capture`。`v2/android_mobile` 将硬件证明通过的手机证书绑定原设备和普通账号，WebView 和原生队列共用该证书。原生队列保留设备编号与提交编号，收到回执后清除本地正文和附件。私有部署见 [Android 安装与授权](docs/android-mobile.md)。
+
 - 对话引用分离：候选 `policies.material_analysis_dialogue@4` 继承@3，仅扩充analysis提示词和引用解析；旧exact唯一引用优先。仅将相邻完整 `[id] Speaker: body` 单行正文的唯一精确拼接拆为真实body spans，不跳空行/记录头/说明/其他发言，不改内部文字与空白，重复体、半句、改写和歧义拒绝。重点段须包含完整身份头与正文；坐标支持原文回查说话人，不证明claim主体语义正确。正常/压缩分支、实际发布和只读owner按冻结@4重建，extract6继续核真实各span；旧1–3及ACTIVE保持，无额外模型调用、无预算放宽，默认未启用。
 
 - 无时间原词事件合同：候选 `policies.material_analysis_nullable@3` 继承 `material_analysis@2` 的统一文本准备、预算、回查及跨段审阅，仅扩充时间提示词与解析。`expression=null` 必须同时无锚且角色unknown，保留事件状态与真实原文坐标，时间unknown、无计算资格；有表达事件完全委托旧解析。有限守卫拒绝明确直接时间遗漏，跳过记录头、历史引语及修饰资料的日期，未命中不证明时间不存在。`v2.material_analysis` 的真实发布与只读重建按冻结版本分流，旧@1/@2消息和回放不变；可读取已有@2发布。已注册但未默认启用，无core/security/extract6改动。

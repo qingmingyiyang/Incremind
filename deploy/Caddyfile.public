@@ -2,6 +2,8 @@
 # Remote access requires the device authorization implemented by T15.3.
 chriptmas.example.com {
     reverse_proxy 127.0.0.1:8001 {
+        header_up -X-Incremind-Mobile-Proxy
+        header_up -X-Incremind-Client-Cert
         flush_interval -1
     }
 }

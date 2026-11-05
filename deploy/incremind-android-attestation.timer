@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Android attestation revocations twice daily
+
+[Timer]
+OnCalendar=*-*-* 00,12:00:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

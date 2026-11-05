@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="login_panel">#FFFDF9</color>
+    <color name="login_ink">#1C1A17</color>
+    <color name="login_ink_secondary">#4E4A44</color>
+    <color name="login_line">#D2CABC</color>
+    <color name="login_red">#C0282F</color>
+
+    <string name="login_brand">Incremind</string>
+    <string name="login_heading">登录工作台</string>
+    <string name="login_previous_device">连接原设备</string>
+    <string name="login_share_history">分享记录</string>
+
+    <style name="LoginMessage" parent="@android:style/Widget.Material.Light.TextView">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:accessibilityLiveRegion">polite</item>
+        <item name="android:gravity">center</item>
+        <item name="android:lineSpacingExtra">3dp</item>
+        <item name="android:maxWidth">320dp</item>
+        <item name="android:textColor">@color/login_ink_secondary</item>
+        <item name="android:textSize">15sp</item>
+    </style>
+
+    <style name="LoginAction" parent="@android:style/Widget.Material.Light.Button">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:maxWidth">320dp</item>
+        <item name="android:paddingHorizontal">24dp</item>
+        <item name="android:paddingVertical">12dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <style name="LoginSecondaryAction" parent="LoginAction">
+        <item name="android:background">?android:attr/selectableItemBackground</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textColor">@color/login_ink_secondary</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+</resources>

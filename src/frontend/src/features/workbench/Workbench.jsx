@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Composer, Receipt, InsightChip, ProgressDots, StatusDot, CitedAnswer, LayerBadges, FocusPanel, ConversationSharePreview, MarkdownBody, Icon } from '../../shared/ui';
 import { readStoredJson, writeStoredJson, removeStoredItem } from '../../shared/lib/browserStorage';
 import { OutcomeFreshness } from '../../shared/ui/OutcomeFreshness';
-import { userStorageKey, deviceIdentity, isDeviceIdentity } from '../../shared/api/deviceTransport';
+import { userStorageKey, deviceIdentity, isDeviceIdentity, readDeviceCredential } from '../../shared/api/deviceTransport';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
 import { answerWithoutCitationMarks } from '../../shared/ui/CitedAnswer';
 import { createConversationSnapshot } from '../../shared/lib/conversationSnapshot';
@@ -287,7 +287,8 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
   const isShared = scopeKind === 'shared';
   const projectScope = !scopeError && currentProjectScope?.id === projectId && currentProjectScope.membership === 'active'
     ? currentProjectScope : null;
-  const externalExecutor = useExternalExecutor(projectId, { enabled: !isShared });
+  const allowExternalExecutor = !isShared && !readDeviceCredential()?.mobile;
+  const externalExecutor = useExternalExecutor(projectId, { enabled: allowExternalExecutor });
   const gate = useWorkbenchScope(`${scopeKind}:${projectId}:${threadId || ''}:${turnId || ''}`), scope = gate.scope;
   const [session, setSession] = useState({ scope: threadId || turnId ? null : scope, project: projectId, threads: [], id: null, turns: [] });
   const sessionReady = session.scope === scope && session.project === projectId;
@@ -707,7 +708,7 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
     const acceptance = () => acceptedFiles.length ? (acceptedFiles.length === files.length ? true : { acceptedFiles }) : acceptedText;
     const originalThread = visible.id, originalIdentity = userStorageKey('workbench-send');
     try {
-      const executor = !isShared && !preparedUpdate && continuation?.scope !== scope && !files.length && (!intent || intent === 'do') ? await externalExecutor.validate(controller.signal) : 'builtin';
+      const executor = allowExternalExecutor && !preparedUpdate && continuation?.scope !== scope && !files.length && (!intent || intent === 'do') ? await externalExecutor.validate(controller.signal) : 'builtin';
       if (!gate.isCurrent(request)) return false;
       if (executor !== 'builtin') intent = 'do';
       const defaultProject = continuation?.scope === scope && !files.length && intent === 'do'
@@ -1357,13 +1358,13 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
       {!isShared && [...visible.turns.filter(turn => turn.id !== currentStream?.id), ...(currentStream ? [currentStream] : [])].map(turn => <Interventions key={`${userStorageKey('steer')}:${projectId}:${turn.id}`} projectId={currentStream?.id === turn.id ? streamProject : projectId} threadId={currentStream?.id === turn.id ? currentStream.threadId || visible.id : visible.id} turn={turn} active={currentStream?.id === turn.id || busyReceipt(turn.receipt)} onNewRound={(text, accept) => setInterventionDraft({ scope, text, accept: () => { accept(); setInterventionDraft(null); } })}/>)}
       <Composer key={`${projectId}:${composerRevision}`} fixedIntent={sharedIntents?.length === 1 ? sharedIntents[0] : undefined}
         allowedIntents={sharedIntents}
-        allowFiles={!isShared} interventionDraft={interventionDraft?.scope === scope ? interventionDraft : null} resetContinuation={continuationReset} draft={draft} onDraft={onDraft} handoff={isShared ? undefined : handoff} onHandoff={onHandoff} projects={isShared ? [] : projects} onExecutor={!isShared && continuation?.scope !== scope ? openExecutor : undefined} executorIntent={continuation?.scope !== scope && externalExecutor.value !== 'builtin' ? 'do' : null} onAutomatic={externalExecutor.reset} onRemind={isShared ? undefined : () => onNavigate?.('companion', { tab: 'schedule' })}
+        allowFiles={!isShared} interventionDraft={interventionDraft?.scope === scope ? interventionDraft : null} resetContinuation={continuationReset} draft={draft} onDraft={onDraft} handoff={isShared ? undefined : handoff} onHandoff={onHandoff} projects={isShared ? [] : projects} onExecutor={allowExternalExecutor && continuation?.scope !== scope ? openExecutor : undefined} executorIntent={allowExternalExecutor && continuation?.scope !== scope && externalExecutor.value !== 'builtin' ? 'do' : null} onAutomatic={externalExecutor.reset} onRemind={isShared ? undefined : () => onNavigate?.('companion', { tab: 'schedule' })}
         projectTag={isShared ? projectScope?.name || projectId : projects.find(project => project.id === composerProject)?.name || ({ default: '日常', inbox: '收件箱', me: '我' })[composerProject] || '项目'} onSend={send}
-        tools={isShared ? undefined : ({ intent, files }) => <ExternalExecutorButton value={continuation?.scope !== scope && !files.length && (!intent || intent === 'do') ? externalExecutor.value : 'builtin'} onOpen={openExecutor} unavailable={continuation?.scope !== scope && !files.length && (!intent || intent === 'do') && externalExecutor.unavailable} disabled={busy || !sessionReady || continuation?.scope === scope || !!files.length || (!!intent && intent !== 'do')}/>}
+        tools={allowExternalExecutor ? ({ intent, files }) => <ExternalExecutorButton value={continuation?.scope !== scope && !files.length && (!intent || intent === 'do') ? externalExecutor.value : 'builtin'} onOpen={openExecutor} unavailable={continuation?.scope !== scope && !files.length && (!intent || intent === 'do') && externalExecutor.unavailable} disabled={busy || !sessionReady || continuation?.scope === scope || !!files.length || (!!intent && intent !== 'do')}/> : undefined}
         prefill={continuation?.scope === scope ? continuation : proposedInput || (example?.scope === scope ? example : null)} onPrefill={id => { if (id === inputProposal?.id) onInputProposalHandled?.(); }} onRecord={isShared ? undefined : record} recording={recording} sendDisabled={busy || isShared && (!projectScope || retrying || sharedInspirations.working || sharedRemember.working)} disabled={!sessionReady || isShared && !sharedInspirations.ready}/>
     </div>
     {empty && sessionReady && !isShared && <WorkbenchHome projectId={projectId} projects={projects} threads={visible.threads} onNavigate={onNavigate} onProjectCreated={onProjectCreated} hasDraft={Boolean(draft?.text)} onSample={value => setExample({ ...value, scope, id: `example-${++continuationSequence.current}` })}/>}
-  </main>{continuation?.scope !== scope && externalExecutor.open && <ExternalExecutorPicker {...externalExecutor} onSettings={() => onNavigate?.('settings', { section: 'connect' })}/>}
+  </main>{allowExternalExecutor && continuation?.scope !== scope && externalExecutor.open && <ExternalExecutorPicker {...externalExecutor} onSettings={() => onNavigate?.('settings', { section: 'connect' })}/>}
   {sharePanel?.scope === scope && (!isShared || serverConversationShares) && (sharePanel.remote && sharePanel.source && serverConversationShares
     ? <RemoteConversationShare source={sharePanel.source} onClose={closeShare} onNavigate={onNavigate} onLocal={!isShared
       ? () => setSharePanel(current => current?.scope === scope ? { ...current, remote: false } : current) : undefined}/>

@@ -23,7 +23,9 @@ from .platform_sessions import PlatformSessionError, parse_cookies
 
 
 _PLATFORM = 'xiaohongshu'
-_ENTRY = 'https://www.xiaohongshu.com/explore'
+_ENTRY_HOST = 'www.xiaohongshu.com'
+# 官方推荐页可能把访客重定向到登录页。直接打开登录页，保留禁止跟随重定向的规则。
+_ENTRY = f'https://{_ENTRY_HOST}/login'
 _TTL = 180
 _POLL_AFTER = 3
 _CAPACITY = BoundedSemaphore(2)
@@ -38,8 +40,10 @@ _HOSTS = _API_HOSTS | frozenset({
     'sns-video-qc.xhscdn.com', 'sns-video-qn.xhscdn.com',
 })
 _CREATE = '/api/sns/web/v1/login/qrcode/create'
+_ACTIVATE = '/api/sns/web/v1/login/activate'
 _USERINFO = '/api/qrcode/userinfo'
 _STATUS = '/api/sns/web/v1/login/qrcode/status'
+_LOGIN_PATHS = frozenset({_ACTIVATE, _CREATE, _USERINFO, _STATUS})
 _ERROR_CODES = frozenset({
     'platform_login_browser_unavailable', 'platform_login_dependency_missing',
     'platform_login_runtime_unavailable', 'platform_login_unavailable',
@@ -370,10 +374,13 @@ class XiaohongshuBrowserLogin:
         response = None
         try:
             parsed = urlsplit(request.url)
+            navigation = request.is_navigation_request()
             allowed = (parsed.scheme == 'https' and parsed.hostname in _HOSTS
                        and parsed.port in {None, 443} and not parsed.username and not parsed.password)
-            if request.is_navigation_request():
-                allowed = allowed and parsed.hostname == 'www.xiaohongshu.com' and parsed.path == '/explore'
+            if navigation:
+                allowed = (allowed and parsed.hostname == _ENTRY_HOST and request.method == 'GET'
+                           and request.frame == attempt.page.main_frame
+                           and (parsed.path == '/login' or attempt.authenticated and parsed.path == '/explore'))
             # 首页的视频和图片与扫码无关；不下载内容，不打开用户指定链接。
             allowed = allowed and request.resource_type not in {'media', 'image', 'font'}
             remaining = min(5000, (attempt.network_deadline - monotonic()) * 1000)
@@ -393,7 +400,7 @@ class XiaohongshuBrowserLogin:
                     max_redirects=0, max_retries=0, timeout=remaining,
                 )
             if 300 <= response.status < 400:
-                if request.is_navigation_request() or parsed.path in {_CREATE, _USERINFO, _STATUS}:
+                if navigation or parsed.path in _LOGIN_PATHS:
                     attempt.error = 'platform_login_unavailable'
                 route.abort()
                 return
@@ -433,13 +440,18 @@ class XiaohongshuBrowserLogin:
             return
         try:
             parsed = urlsplit(response.url)
-            if parsed.hostname not in _API_HOSTS or parsed.path not in {_CREATE, _USERINFO, _STATUS}:
+            if parsed.hostname not in _API_HOSTS or parsed.path not in _LOGIN_PATHS:
+                return
+            if response.status in {461, 471}:
+                attempt.error = 'platform_login_verification_required'
+                return
+            if parsed.path == _ACTIVATE:
                 return
             payload = response.json()
             if not isinstance(payload, dict):
                 attempt.error = 'platform_login_unavailable'
                 return
-            if response.status in {461, 471} or payload.get('code') in {461, 471, -13002, -13020}:
+            if payload.get('code') in {461, 471, -13002, -13020}:
                 attempt.error = 'platform_login_verification_required'
                 return
             if response.status < 200 or response.status >= 300:

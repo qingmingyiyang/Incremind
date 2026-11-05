@@ -5,9 +5,10 @@ import "./styles.css";
 import "katex/dist/katex.min.css";
 import { bootstrapThemeAndPerformance } from "./features/rebuild/themeBootstrap";
 import { syncCaptureOwner } from './features/capture/captureQueue';
+import { isAndroidWorkbench } from './shared/api/deviceTransport';
 
 // Electron 的 file:// 入口沿用原启动；网页仅安装分享接收 worker。
-if (['https:', 'http:'].includes(location.protocol) && !globalThis.electronAPI?.backendBaseUrl && 'serviceWorker' in navigator) {
+if (['https:', 'http:'].includes(location.protocol) && !globalThis.electronAPI?.backendBaseUrl && !isAndroidWorkbench() && 'serviceWorker' in navigator) {
   navigator.serviceWorker.register('/share-worker.js').catch(() => {});
   syncCaptureOwner().catch(() => {});
   window.addEventListener('chriptmas-user-space', () => { syncCaptureOwner().catch(() => {}); });

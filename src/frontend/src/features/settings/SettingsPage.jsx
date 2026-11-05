@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Row, Switch, StatusDot, Icon } from '../../shared/ui';
 import { ChatGPTSubscriptionSettings } from '../../shared/ui/ChatGPTSubscriptionSettings';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
-import { userStorageKey } from '../../shared/api/deviceTransport';
+import { readDeviceCredential, userStorageKey } from '../../shared/api/deviceTransport';
 import { beginCredentialDraft, completeCredentialDraft, editCredentialDraft, receiveCredentialDraft, reviewCredentialDraft, submitCredentialDraft } from './credentialDraft';
 import { REMOTE_PROCESSING_HINT, PRIVATE_MATERIAL_HINT, LOCAL_GENERATION_HINT, LOCAL_VECTOR_HINT } from '../../shared/lib/privacyMessages';
 import { settingsApi } from './settingsApi';
@@ -89,6 +89,7 @@ function ModelPanel({ children, row, purpose, modeRevision, modeSelection, api, 
   </form></PanelSaveContext.Provider>;
 }
 export default function SettingsPage({ projectId = 'default', initialSection = 'model', initialPurpose, expandProject, api = settingsApi }) {
+  const showAgentTools = !readDeviceCredential()?.mobile;
   const [section, setSection] = useState(initialSection === 'websites' ? 'connect' : initialSection in groups ? initialSection : 'model');
   const [modelFocus, setModelFocus] = useState(initialPurpose || null);
   useEffect(() => { setSection(initialSection === 'websites' ? 'connect' : initialSection in groups ? initialSection : 'model'); }, [initialSection]);
@@ -138,20 +139,20 @@ export default function SettingsPage({ projectId = 'default', initialSection = '
     <div role="group" aria-label="主题" className="settings-theme">{[['light', '浅色', 'sun'], ['system', '跟随系统', 'settings'], ['dark', '深色', 'moon']].map(([key, label, icon]) =>
       <button type="button" key={key} aria-label={label} title={label} aria-pressed={theme === key} onClick={() => setTheme(applyTheme(key))}><Icon name={icon} size={16}/></button>)}</div></nav>
     <main>{error && <p role="alert">{error} <button type="button" onClick={() => { setError(''); setRefresh(old => old + 1); }}>重试</button></p>}{!value ? <span role="status">读取中</span> : <>
-      <QuickSettings key={`quick:${projectId}`} value={value} projects={projects} api={api} run={run} busy={busy}
+      <QuickSettings key={`quick:${projectId}`} value={value} projects={projects} api={api} run={run} busy={busy} showAgentTools={showAgentTools}
         onBackupScheduleChange={() => setScheduleRefresh(value => value + 1)}/>
       {section === 'model' && <ModelRows key={`${projectId}:${JSON.stringify(Object.values(value.model).map(row => row?.server_model_binding))}`} projectId={projectId} model={value.model} focus={modelFocus} onRecords={() => setSection('privacy')} api={api} busy={busy} run={run} reload={() => setRefresh(old => old + 1)}/>}
-      {section === 'connect' && <ConnectionRows key={projectId} projectId={projectId} value={value} api={api} run={run} busy={busy} onConfigureGeneration={() => { setSection('model'); setModelFocus('generation'); }}/>}
-      {section === 'privacy' && <PrivacyRows key={projectId} model={value.model} externalAgent={value.external_agent} privacy={value.privacy} projects={projects} api={api} run={run} busy={busy}/>}
-      {section === 'project' && <><ProjectRows key={projectId} projectId={projectId} projects={projects} expandProject={expandProject} api={api} run={run} busy={busy}/><SharedProjectManagement/></>}
+      {section === 'connect' && <ConnectionRows key={projectId} projectId={projectId} value={value} api={api} run={run} busy={busy} showAgentTools={showAgentTools} onConfigureGeneration={() => { setSection('model'); setModelFocus('generation'); }}/>}
+      {section === 'privacy' && <PrivacyRows key={projectId} model={value.model} externalAgent={showAgentTools ? value.external_agent || { allow_remote: false, clients: {} } : null} privacy={value.privacy} projects={projects} api={api} run={run} busy={busy}/>}
+      {section === 'project' && <><ProjectRows key={projectId} projectId={projectId} projects={projects} expandProject={expandProject} api={api} run={run} busy={busy} showAgentTools={showAgentTools}/><SharedProjectManagement/></>}
       {section === 'data' && <SettingsData projectId={projectId} scheduleRefresh={scheduleRefresh}/>}
       {section === 'devices' && <SettingsDevices key={projectId} projectId={projectId}/>}
     </>}</main></div>;
 }
 
-function ConnectionRows({ projectId, value, api, run, busy, onConfigureGeneration }) {
+function ConnectionRows({ projectId, value, api, run, busy, showAgentTools, onConfigureGeneration }) {
   const [open, setOpen] = useState(true);
-  return <div className="settings-connections">{value.external_agent && <><h2 className="settings-caption">外部 agent</h2><div className="settings-card"><ExternalAgentSettings projectId={projectId} value={value.external_agent} proxy={value.external_proxy} expanded={open} onOpen={() => setOpen(old => !old)} onConfigureGeneration={onConfigureGeneration} api={api} run={run} busy={busy}/></div></>}<h2 className="settings-caption">网站</h2><PlatformSessionSettings/></div>;
+  return <div className="settings-connections">{showAgentTools && value.external_agent && <><h2 className="settings-caption">外部 agent</h2><div className="settings-card"><ExternalAgentSettings projectId={projectId} value={value.external_agent} proxy={value.external_proxy} expanded={open} onOpen={() => setOpen(old => !old)} onConfigureGeneration={onConfigureGeneration} api={api} run={run} busy={busy}/></div></>}<h2 className="settings-caption">网站</h2><PlatformSessionSettings/></div>;
 }
 
 function ModelRows({ projectId, model, focus, onRecords, api, run, busy, reload }) {
@@ -371,9 +372,9 @@ function PrivacyRows({ model, externalAgent, privacy, projects, api, run, busy }
   return <>
     <div className="settings-card settings-stats"><div><strong>{usage.data?.receipt_count ?? '—'}</strong><span>本月外发记录</span></div><div><strong>{formatReceiptCost(usage.data?.cost)}</strong><span>本月花费</span></div><div><strong>{privacy.private_projects.length} · {sources?.length ?? '—'}</strong><span>私密项目 · 资料数</span></div></div>
     <ReceiptScopeNote summary={usage.data}/>
-    {usage.data && <p className="settings-support-empty">已登记模型调用 {usage.data.model_call_count} 次 · 外部记忆交付 {usage.data.external_delivery_count} 次</p>}
+    {usage.data && <p className="settings-support-empty">已登记模型调用 {usage.data.model_call_count} 次{externalAgent && <> · 外部记忆交付 {usage.data.external_delivery_count} 次</>}</p>}
     {usage.error && <p role="alert">本月记录未读取 · <button type="button" onClick={usage.refresh}>重试</button></p>}
-    <PrivacyMap model={model} externalAgent={externalAgent || { allow_remote: false, clients: {} }} privacy={privacy} projects={projects} api={api} run={run} busy={busy}/>
+    <PrivacyMap model={model} externalAgent={externalAgent} privacy={privacy} projects={projects} api={api} run={run} busy={busy}/>
     {readError && <p role="alert">读取未完成 · 重试 <button type="button" onClick={() => setRefresh(old => old + 1)}>重试</button></p>}
     <h2 className="settings-caption">范围</h2><div className="settings-card">
     <Row dot={<SettingsGlyph name="library"/>} readOnly title={<span title={PRIVATE_MATERIAL_HINT}>私密项目</span>}/>
@@ -385,7 +386,7 @@ function PrivacyRows({ model, externalAgent, privacy, projects, api, run, busy }
     </div><ReceiptInspection api={api} timezone={usage.timezone} month={usage.month} scopeKey={scope.key}/>
   </>;
 }
-function ProjectRows({ projectId, projects, expandProject, api, run, busy }) {
+function ProjectRows({ projectId, projects, expandProject, api, run, busy, showAgentTools }) {
   const [open, setOpen] = useState(expandProject || projectId || null), [newName, setNewName] = useState('');
   const [template, setTemplate] = useState('blank');
   const templates = [{ id: 'blank', name: '空白', scenes: [] }, { id: 'work', name: '工作', scenes: ['会议', '周报', '计划'] }, { id: 'study', name: '学习', scenes: ['阅读', '笔记', '复习'] }, { id: 'writing', name: '写作', scenes: ['选题', '素材', '草稿'] }, { id: 'life', name: '生活', scenes: ['日常', '旅行', '安排'] }];
@@ -405,7 +406,7 @@ function ProjectRows({ projectId, projects, expandProject, api, run, busy }) {
       {row.id !== 'me' && <ProjectFields key={`fields:${row.id}`} row={row} run={run} api={api} busy={busy}/>}
       {row.id !== 'inbox' && <ProjectConstraints key={row.id} projectId={row.id} api={api} onChanged={() => setRefresh(old => old + 1)}/>}
       <SettingsQuestion key={`question:${row.id}`} projectId={row.id} scenes={row.scenes || []}/>
-      {row.id !== 'inbox' && <SkillExports key={`skills:${row.id}`} projectId={row.id} scenes={row.scenes || []}/>}
+      {showAgentTools && row.id !== 'inbox' && <SkillExports key={`skills:${row.id}`} projectId={row.id} scenes={row.scenes || []}/>}
     </section>}
   </section>)}</div></>;
 }
