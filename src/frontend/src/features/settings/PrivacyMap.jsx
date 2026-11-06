@@ -1,7 +1,9 @@
-import { Switch } from '../../shared/ui';
+import { useId } from 'react';
 import { REMOTE_PROCESSING_HINT, PRIVATE_MATERIAL_HINT } from '../../shared/lib/privacyMessages';
+import { EgressSwitch } from './EgressSwitch';
 
 export function PrivacyMap({ model, externalAgent, privacy, projects, api, run, busy }) {
+  const hintId = useId();
   const purposes = [['generation', '生成'], ['vision', '识图'], ['asr', '转写'], ['embedding', '向量'], ['rerank', '重排'], ['search', '搜索']];
   if (externalAgent) purposes.push(['agent', '外部 agent']);
   const uses = purposes.map(([purpose, name]) => {
@@ -17,10 +19,11 @@ export function PrivacyMap({ model, externalAgent, privacy, projects, api, run, 
     }
     return { purpose, name, row, local, enabled, target, toggle };
   });
-  return <section aria-label="外发地图"><h2 className="settings-caption">外发地图<span className="settings-map-legend">● 会外发 · ○ 本机 · × 私密 · — 关闭</span></h2><div className="settings-card settings-map-scroll"><table className="settings-egress-map"><thead><tr><th scope="col">用途</th><th scope="col">去处</th>{projects.map(project => {
+  return <section aria-label="外发地图"><h2 className="settings-caption">外发地图</h2><p className="settings-egress-note" id={hintId}>普通资料按用途外发。私密项目和单独设为私密的资料继续受保护。</p><p className="settings-egress-note">● 会外发 · ○ 本机 · × 私密 · — 关闭</p><div className="settings-card settings-map-scroll"><table className="settings-egress-map"><thead><tr><th scope="col">用途</th><th scope="col">去处</th>{projects.map(project => {
     const privateProject = privacy.private_projects.includes(project.id) || project.private;
-    return <th key={project.id} scope="col"><button type="button" disabled={busy || ['me', 'inbox'].includes(project.id)} aria-pressed={Boolean(privateProject)} title={PRIVATE_MATERIAL_HINT} onClick={() => run(() => api.savePrivacy(privateProject ? privacy.private_projects.filter(id => id !== project.id) : [...privacy.private_projects, project.id], privacy.revision))}>{project.name}<small>{privateProject ? '私密' : '普通'}</small></button></th>;
-  })}</tr></thead><tbody>{uses.map(use => <tr key={use.purpose}><th scope="row"><Switch label={`${use.name}地图外发`} title={use.local ? '本机处理' : REMOTE_PROCESSING_HINT} checked={!use.local && use.enabled} disabled={busy || use.local || use.purpose === 'agent' && !Number.isInteger(use.row.revision) || use.purpose === 'asr' && use.row.server_managed && !use.enabled} onChange={use.toggle}/><span>{use.name}</span></th><td>{use.target}</td>{projects.map(project => {
+    const action = privateProject ? '取消私密' : '设为私密';
+    return <th key={project.id} scope="col"><span className="settings-map-project">{project.name} · {privateProject ? '私密' : '普通'}</span>{!['me', 'inbox'].includes(project.id) && <button type="button" disabled={busy} aria-label={`${action} · ${project.name} · 外发地图`} aria-describedby={hintId} title={PRIVATE_MATERIAL_HINT} onClick={() => run(() => api.savePrivacy(privateProject ? privacy.private_projects.filter(id => id !== project.id) : [...privacy.private_projects, project.id], privacy.revision))}>{action}</button>}</th>;
+  })}</tr></thead><tbody>{uses.map(use => <tr key={use.purpose}><th scope="row"><span className="settings-map-purpose">{use.name}</span><EgressSwitch label={`${use.name}地图外发`} aria-describedby={hintId} title={use.local ? '本机处理' : REMOTE_PROCESSING_HINT} checked={!use.local && use.enabled} disabled={busy || use.local || use.purpose === 'agent' && !Number.isInteger(use.row.revision) || use.purpose === 'asr' && use.row.server_managed && !use.enabled} onChange={use.toggle}/></th><td>{use.target}</td>{projects.map(project => {
     const privateProject = privacy.private_projects.includes(project.id) || project.private;
     const state = use.local ? '本机' : !use.enabled ? '关闭' : privateProject ? '私密拦下' : '会外发';
     return <td key={project.id}><span className={`settings-map-cell ${state === '会外发' ? 'is-remote' : ''}`} title={`${project.name} · ${use.name} · ${state}`} aria-label={`${project.name}${use.name}${state}`}>{use.local ? '○' : !use.enabled ? '—' : privateProject ? '×' : '●'}</span></td>;

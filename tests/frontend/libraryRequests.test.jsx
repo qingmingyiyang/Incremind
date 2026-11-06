@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, act } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, act, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
@@ -93,4 +93,47 @@ it('discards a slow original-list response after switching the current layer', a
   expect(screen.getByRole('button', { name: '整理稿 0' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('button', { name: '原件 —' })).toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+it('keeps the inbox search scope when moving to originals, and returns from full text to the matched passage', async () => {
+  render(<Library projectId="alpha" projects={[{ id: 'alpha', name: '工作', scenes: [] }]}/>);
+  fireEvent.click(await screen.findByRole('button', { name: '收件箱 0' }));
+  expect(screen.getByRole('combobox', { name: '归入目标' })).toHaveValue('alpha');
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: '独有正文' } });
+  fireEvent.click(await screen.findByRole('button', { name: '搜原件' }));
+  const result = await screen.findByRole('button', { name: '收件箱原件' });
+  expect(result).toHaveAccessibleDescription(/收件箱\s*独有正文/);
+  expect(screen.getByRole('button', { name: '收件箱 0' })).toHaveAttribute('aria-pressed', 'true');
+  expect(lists().filter(row => row.path.endsWith('/sources')).at(-1).query.project_id).toBe('inbox');
+  fireEvent.click(result);
+  const open = await screen.findByRole('button', { name: '展开全文' });
+  fireEvent.click(open);
+  expect(screen.getByLabelText('原句')).toHaveTextContent('独有正文');
+  const heading = await screen.findByRole('heading', { name: '全文' });
+  await waitFor(() => expect(heading).toHaveFocus());
+  fireEvent.click(screen.getByRole('button', { name: '回到原句' }));
+  expect(screen.getByLabelText('原句')).toHaveFocus();
+  expect(screen.queryByRole('heading', { name: '全文' })).not.toBeInTheDocument();
+});
+
+it('opens the review queue directly, stores edited conditions, and defers without dropping the recognition', async () => {
+  render(<Library projectId="ui-review" projects={[{ id: 'ui-review', name: '复盘' }]} initialReview/>);
+  expect(await screen.findByRole('heading', { name: '逐条确认' })).toBeInTheDocument();
+  const card = await screen.findByRole('article', { name: '当前待确认认识' });
+  expect(await within(card).findByText('项目已经结束')).toBeInTheDocument();
+  expect(within(card).getByText('确认后在 复盘 生效')).toBeInTheDocument();
+  fireEvent.keyDown(within(card).getByText('复盘保留原始数据'), { key: 'd' });
+  fireEvent.click(within(card).getByRole('button', { name: '编辑' }));
+  fireEvent.change(within(card).getByRole('textbox', { name: '适用条件' }), { target: { value: '资料已核对' } });
+  const detailReads = () => requests().filter(row => row.path.endsWith('/drill') && row.query.project_id === 'ui-review').length;
+  const beforeSave = detailReads();
+  fireEvent.click(within(card).getByRole('button', { name: '保存' }));
+  expect(await within(card).findByRole('listitem')).toHaveTextContent('资料已核对');
+  const defer = within(card).getByRole('button', { name: '暂缓' });
+  await waitFor(() => expect(defer).toBeEnabled());
+  expect(detailReads()).toBe(beforeSave + 1);
+  fireEvent.click(defer);
+  expect(await screen.findByText('1 条暂缓')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '继续审核' }));
+  expect(await screen.findByText('资料已核对')).toBeInTheDocument();
 });

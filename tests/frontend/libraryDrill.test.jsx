@@ -88,12 +88,13 @@ const deferDrill = matches => {
     : base(url, options));
   return () => act(async () => { await finish(); });
 };
-it('applies a document choice after navigating to its summary while the read is pending', async () => {
+it('opens the summary only after the selected document is readable', async () => {
   const finish = deferDrill(url => url.pathname.endsWith('/drill') && url.searchParams.get('document_id') === 'd2');
   await open();
   fireEvent.click(within(panel()).getByRole('button', { name: '第二稿' }));
-  jump('摘要');
+  expect(within(panel()).queryByRole('button', { name: '摘要', exact: true })).not.toBeInTheDocument();
   await finish();
+  jump('摘要');
   expect(panel()).toHaveAccessibleName('摘要');
   expect(panel()).toHaveTextContent('d2摘要');
   expect(within(panel()).getByRole('button', { name: '第二稿' })).toHaveAttribute('aria-pressed', 'true');

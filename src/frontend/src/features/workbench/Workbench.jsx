@@ -11,6 +11,7 @@ import { displayScopedText, formatScopeTag, scopedText } from '../../shared/lib/
 import { sendSignal, signalEpoch } from '../../shared/signalsApi';
 import { recognitionApi } from '../../shared/api/recognitionApi';
 import { remoteRestriction } from '../../shared/lib/privacyMessages';
+import { settingsApi } from '../settings/settingsApi';
 import { SharedWorkbenchHistory, SharedHistoryReceipt, canStopSharedReceipt } from '../shared-projects/SharedWorkbenchHistory';
 import { sharedAskRequest, sharedInspirationRequest, sharedRememberRequest, sharedTaskRequest, sharedTaskRedoRevision, sharedTaskTextTooLong } from './workbenchScope';
 import { sharedRememberResult, useSharedRemember } from '../shared-projects/useSharedRemember';
@@ -33,6 +34,7 @@ import { LexiconChangeReceipt } from './LexiconChangeReceipt';
 import { RouteCorrectionPanel } from './RouteCorrectionPanel';
 import { GroupedRememberReceipt } from './GroupedRememberReceipt';
 import { WorkbenchHome } from './WorkbenchHome';
+import { WorkbenchHistory } from './WorkbenchHistory';
 import { ExternalExecutorButton, ExternalExecutorPicker, useExternalExecutor, EXECUTOR_LABELS } from './ExternalExecutorPicker';
 import { DocumentPlacement } from '../library/DocumentPlacement';
 import { InboxFiling } from '../library/InboxFiling';
@@ -63,12 +65,6 @@ function RetryCountdown({ status }) {
   return valid ? <span className="workbench-retry-status" title={retryReasons[retry.reason]}>重试 {retry.used}/{retry.limit} · {seconds}s</span> : null;
 }
 
-function contextPercent(context) {
- const parts=context?.parts, window=context?.window;
- if (!Array.isArray(parts) || !parts.length || !Number.isFinite(window) || window<=0
-   || parts.some(part=>!Number.isFinite(part.tokens) || part.tokens<0)) return '—';
- return `${Math.round(parts.reduce((sum,part)=>sum+part.tokens,0)/window*1000)/10}%`;
-}
 function targetProject(text, intent, projectId, projects) {
   const tag = scopedText(text).project;
   if (!tag) return intent === 'inspiration' || (!intent && /^\s*灵感/.test(text)) ? 'inbox' : projectId;
@@ -86,10 +82,23 @@ function targetProject(text, intent, projectId, projects) {
   return ids[0];
 }
 const REDO_LABELS = { remember: '换成记住', ask: '换成问', do: '换成干活' };
+const ACTION_LABELS = { remember: '记住', ask: '问', do: '干活', inspiration: '灵感', multi: '分段处理' };
+const TASK_STATES = { researching: '研究资料', preparing: '准备任务', running: '正在执行', waiting_approval: '待批准',
+  done: '已完成', partial: '部分完成', failed: '执行失败', interrupted: '执行中断', stopped: '已停止', cancelled: '已取消' };
+function taskPhase(task) {
+  if (task.kernel_turn_id && ['preparing', 'running'].includes(task.state)) {
+    const phase = ['正在拆活', '执行分工', '正在汇总'][task.progress?.done];
+    if (phase) return phase;
+  }
+  return TASK_STATES[task.state];
+}
 // 多部分回合里，任一部分还没结束就继续轮询。
 const busyReceipt = receipt => receipt.remember?.state === 'processing'
   || ['researching', 'preparing', 'running'].includes(receipt.do?.state)
   || (receipt.parts || []).some(part => ['waiting', 'running'].includes(part.state) || busyReceipt(part.receipt || {}));
+const failedOriginal = receipt => Boolean(receipt.remember?.item_id && !receipt.remember.document_id
+  && receipt.remember.state === 'failed' && receipt.remember.error === 'processing_failed')
+  || (receipt.parts || []).some(part => failedOriginal(part.receipt || {}));
 function receiptTurn(turns, id) {
   for (const turn of turns) {
     if (turn.id === id) return turn;
@@ -151,10 +160,10 @@ function TaskRetryAction({ task, turn, projectId, scope, disabled, onRetry, shar
   return <><button type="button" disabled={disabled || busy} onClick={ready ? onRetry : check}>{ready ? '重试' : busy ? '检查中' : '检查重试'}</button>
     <WorkbenchError error={error} projectId={projectId}/></>;
 }
-const WorkbenchTurn = memo(function WorkbenchTurn({ turn, turnId, projectId, errorProjectId = projectId, shareQuestion = turn.user_text, displayOwner, scope, reviewing, continuing, streamText, streamStatus, streamProgress, actions }) {
+const WorkbenchTurn = memo(function WorkbenchTurn({ turn, turnId, projectId, errorProjectId = projectId, shareQuestion = turn.user_text, displayOwner, scope, reviewing, continuing, streamText, streamStatus, streamProgress, actions, interventionThread, onInterventionDraft }) {
   const { review, retry, continueTurn, openOutput, openCitation, openShare, redoOutput, chooseOutput, closeOutput, closeCitation,
     setTracePanel, setDraftPanel, setSession, onNavigate, openSettings, askElsewhere, projects, sending, refreshPlacement, setError, stopTurn, stops,
-    saveAnswerOutcome, savingOutcome, openCorrection } = actions;
+    saveAnswerOutcome, savingOutcome, openCorrection, generationMissing } = actions;
   const [copied, setCopied] = useState(false), copyTimer = useRef(null), currentScope = useRef(scope), alive = useRef(true);
   const [more, setMore] = useState(false), moreButton = useRef(null);
   currentScope.current = scope;
@@ -177,6 +186,8 @@ const WorkbenchTurn = memo(function WorkbenchTurn({ turn, turnId, projectId, err
     return <SharedHistoryReceipt turn={turn} turnId={turnId} rememberActions={actions.rememberActions} shareAction={shareAction} stopAction={stopAction}
       taskActions={actions.taskActions} streamText={streamText} streamFeedback={streamStatus && <RetryCountdown status={streamStatus}/>}/>;
   }
+  const interventions = interventionThread && <Interventions key={`${userStorageKey('steer')}:${projectId}:${turn.id}`}
+    projectId={projectId} threadId={interventionThread} turn={turn} active={false} onNewRound={onInterventionDraft}/>;
   const recordCopy = (epoch = signalEpoch()) => sendSignal({ kind: 'copy', project_id: projectId, turn_id: turn.id }, epoch);
   async function copyAnswer() {
     const epoch = signalEpoch(), capturedScope = scope;
@@ -192,22 +203,23 @@ const WorkbenchTurn = memo(function WorkbenchTurn({ turn, turnId, projectId, err
       const moreMenu = items => <div className="ui-conversation-menu" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setMore(false); }} onKeyDown={event => {
         if (event.key === 'Escape') { event.stopPropagation(); setMore(false); moreButton.current?.focus(); }
       }}><button ref={moreButton} type="button" aria-label="更多" title="更多" aria-haspopup="menu" aria-expanded={more} onClick={() => setMore(value => !value)}><Icon name="more" size={16}/></button>
-        {more && <div role="menu" aria-label="对话动作">{items}{turn.intent !== 'multi' && correctionAction}</div>}
+        {more && <div role="menu" aria-label="对话动作">{items}</div>}
       </div>;
       const correctionAction = typeof turn.user_text === 'string' && !turn.receipt.reminder && !busyReceipt(turn.receipt)
         && (turn.intent !== 'multi' || turn.receipt.parts?.length > 0)
-        ? <button type="button" role="menuitem" disabled={sending} onClick={() => { setMore(false); moreButton.current?.focus(); openCorrection(turn, projectId); }}>纠正分段</button> : null;
+        ? <button type="button" disabled={sending} onClick={() => openCorrection(turn, projectId)}>纠正分段</button> : null;
       const replacement = typeof turn.user_text === 'string' && turn.route_correction
         ? <span className="ui-count" aria-label="原结果已替换">已替换</span> : null;
       if (turn.intent === 'multi') {
         const parts = turn.receipt.parts || [];
         return <article key={turn.id} id={`workbench-${turn.id}`} tabIndex={-1} className={turn.id === turnId ? 'is-target' : ''}>{turn.user_text && <div className="workbench-bubble">{displayScopedText(turn.user_text)}</div>}
-          <div className="workbench-parts" aria-label="拆分">{parts.map(part => <span key={part.index} title={part.span}><Icon name={part.intent} size={12}/>{part.span.length > 12 ? part.span.slice(0, 12) + '…' : part.span}</span>)}{!parts.length && <span role="status">已移除全部部分</span>}{replacement}{(correctionAction || !!redoItems.length) && moreMenu(<>{correctionAction}{redoItems}</>)}</div>
+          <div className="workbench-parts" aria-label="拆分">{parts.map(part => <span key={part.index} title={part.span}><Icon name={part.intent} size={12}/>{ACTION_LABELS[part.intent]} · {part.span.length > 12 ? part.span.slice(0, 12) + '…' : part.span}</span>)}{!parts.length && <span role="status">已移除全部部分</span>}{replacement}{correctionAction && <span className="workbench-turn-route">{correctionAction}</span>}{!!redoItems.length && moreMenu(redoItems)}</div>
           {parts.map(part => part.receipt?.remember?.items
             ? <GroupedRememberReceipt key={part.index} value={part.receipt.remember} renderRemember={(id, receipt, item) => <WorkbenchTurn turn={{ ...turn, id, intent: 'remember', user_text: null, receipt: { remember: receipt } }} displayOwner={turn.id} shareQuestion={part.span} turnId={turnId} projectId={item.project_id || part.project_id || projectId} scope={scope} reviewing={reviewing} continuing={continuing} actions={actions}/>}/>
             : part.turn_id && part.receipt && Object.keys(part.receipt).length
             ? <WorkbenchTurn key={part.index} turn={{ ...turn, id: part.turn_id, intent: part.intent, user_text: null, receipt: part.receipt }} displayOwner={part.source_members?.some(member => member.turn_id === part.turn_id) ? turn.id : undefined} shareQuestion={part.span} turnId={turnId} projectId={part.project_id || projectId} errorProjectId={part.project_id || errorProjectId} scope={scope} reviewing={reviewing} continuing={continuing} actions={actions}/>
             : <Receipt key={part.index} kind={part.intent}><StatusDot state={['failed', 'not_started', 'interrupted'].includes(part.state) ? 'failed' : part.state === 'running' ? 'processing' : 'pending'}/>{part.error && <WorkbenchError error={part.error} projectId={part.project_id || errorProjectId} onSettings={openSettings}/>}</Receipt>)}
+          {interventions}
         </article>;
       }
       const memory = turn.receipt.remember, inspiration = turn.receipt.inspiration, ask = turn.receipt.ask;
@@ -226,28 +238,51 @@ const WorkbenchTurn = memo(function WorkbenchTurn({ turn, turnId, projectId, err
       const hint = ask?.elsewhere, hintName = hint && (projects.find(project => project.id === hint.project_id)?.name || hint.project_id);
       const hintScene = hint?.scene;
       const hintLabel = hint && `#${hintName}${hintScene ? '/' + hintScene : ''}`;
+      const suggestedQuestion = hint && typeof shareQuestion === 'string' && scopedText(shareQuestion).text;
+      const taskHasOutcome = ['done', 'partial'].includes(task?.state) && task.document_id;
+      const memorySaved = Boolean(memory?.item_id);
+      const memoryFailed = memory?.state === 'failed';
+      const modelMissing = memory?.error === 'model_not_configured';
+      const currentModelMissing = generationMissing && failedOriginal(turn.receipt);
+      const openOriginal = () => {
+        closeOutput(); closeCitation(); setTracePanel(null); setDraftPanel({ scope, projectId, itemId: memory.item_id });
+      };
       const shareable = typeof ask?.answer === 'string' || typeof inspiration?.insight?.text === 'string'
         || Boolean(memory?.state === 'done' && memory.document_id)
         || Boolean(['done', 'partial'].includes(task?.state) && task.document_id);
       const canSaveOutcome = turn.intent === 'ask' && typeof ask?.answer === 'string' && Boolean(ask.answer.trim())
         && !ask.error && !ask.interruption;
       const savingThisOutcome = savingOutcome?.project === projectId && savingOutcome.turnId === turn.id;
-      const shareMenu = moreMenu(<>{memory?.item_id && !memory.document_id && <button type="button" role="menuitem" aria-label="打开原件" onClick={() => { setMore(false); moreButton.current?.focus(); closeOutput(); closeCitation(); setTracePanel(null); setDraftPanel({ scope, projectId, itemId: memory.item_id }); }}><Icon name="arrow-up-right" size={14}/>原件</button>}<button type="button" role="menuitem" disabled={!shareable} title={shareable ? undefined : '完成后分享'} onClick={() => { setMore(false); moreButton.current?.focus(); openShare({ ...turn, user_text: shareQuestion }, projectId); }}>分享</button>{canSaveOutcome && <button type="button" role="menuitem" disabled={sending || continuing || Boolean(savingOutcome)} onClick={() => { setMore(false); moreButton.current?.focus(); saveAnswerOutcome(turn, projectId); }}>{savingThisOutcome ? '保存中' : '存为成果'}</button>}{redoItems}</>);
+      const shareMenu = moreMenu(<><button type="button" role="menuitem" disabled={!shareable} title={shareable ? undefined : '完成后分享'} onClick={() => { setMore(false); moreButton.current?.focus(); openShare({ ...turn, user_text: shareQuestion }, projectId); }}>分享</button>{canSaveOutcome && <button type="button" role="menuitem" disabled={sending || continuing || Boolean(savingOutcome)} onClick={() => { setMore(false); moreButton.current?.focus(); saveAnswerOutcome(turn, projectId); }}>{savingThisOutcome ? '保存中' : '存为成果'}</button>}{redoItems}</>);
       return <article key={turn.id} id={`workbench-${displayOwner ? displayOwner + '-' : ''}${turn.id}`} tabIndex={-1} className={turn.id === turnId ? 'is-target' : ''}>
         {turn.user_text && <div className="workbench-bubble">{displayScopedText(turn.user_text)}</div>}
         <Receipt kind={turn.intent} reminder={turn.receipt.reminder} onNavigate={onNavigate}>
+        {turn.user_text && <div className="workbench-turn-route"><span>{turn.receipt.reminder ? '提醒' : ACTION_LABELS[turn.intent]}</span>{correctionAction}</div>}
         {task && !externalTask && <LexiconChangeReceipt projectId={projectId} turnId={turn.id} task={task}
           onUpdated={updated => setSession(current => current.project === projectId
             ? { ...current, turns: replaceReceiptTurn(current.turns, updated) } : current)}/>}
         {memory ? <>
-          <div className="workbench-receipt-title"><StatusDot state={memory.state}/><span className="workbench-memory-title" title={memory.title}>{memory.title}</span><ProgressDots {...memory.progress} running={memory.state === 'processing'} title="原件 · 正文 · 整理 · 入库"/>{memory.document_id && <button type="button" aria-label="打开整理稿" onClick={() => { closeOutput(); closeCitation(); setTracePanel(null); setDraftPanel({ scope, documentId: memory.document_id, itemId: memory.item_id }); }}>↗</button>}{memory.state === 'failed' && <><button type="button" disabled={sending || continuing} onClick={() => retry(turn, projectId)}>重试</button>{memory.item_id && <button type="button" aria-label="打开原件" onClick={() => { closeOutput(); closeCitation(); setTracePanel(null); setDraftPanel({ scope, projectId, itemId: memory.item_id }); }}>↗</button>}</>}</div>
+          <div className="workbench-receipt-title"><StatusDot state={memory.state}/><span className="workbench-memory-title" title={memory.title}>{memory.title}</span><ProgressDots {...memory.progress} running={memory.state === 'processing'} title="原件 · 正文 · 整理 · 入库"/>{memory.document_id && <button type="button" aria-label="打开整理稿" onClick={() => { closeOutput(); closeCitation(); setTracePanel(null); setDraftPanel({ scope, projectId, documentId: memory.document_id, itemId: memory.item_id }); }}>整理稿 ↗</button>}</div>
+          {memorySaved && !memory.document_id && <div className="workbench-original-status"><span role="status">原件已保存</span><button type="button" onClick={openOriginal}>打开原件</button></div>}
+          {memoryFailed && <div className="workbench-original-status">
+            {modelMissing ? <><span role="alert">整理待配置</span><button type="button" onClick={() => openSettings('model', errorProjectId)}>配置模型</button></>
+              : <><WorkbenchError error={memory.error || 'processing_failed'} fallback={memory.document_id ? '处理未完成' : '整理未完成'} projectId={errorProjectId} onSettings={openSettings}/><button type="button" disabled={sending || continuing} onClick={() => retry(turn, projectId)}>{memory.document_id ? '重试' : '重试整理'}</button>
+                {currentModelMissing && <><span>当前模型未配置</span><button type="button" onClick={() => openSettings('model', errorProjectId)}>配置模型</button></>}</>}
+          </div>}
           <DocumentPlacement projectId={projectId} projects={projects} row={{...memory,revision:memory.document_revision}}
-            allowShared={actions.allowSharedFiling} onNavigate={onNavigate} onChanged={refreshPlacement} onError={setError}/><div className="workbench-insights">{memory.insights.map(insight => chip(insight, memory.filing?.state === 'filed' && memory.filing.target_scope_kind !== 'shared' ? memory.filing.target_project_id : undefined))}{!!memory.related.length && <span className="workbench-related-count" title={memory.related.map(entry => entry.text).join('\n')}>∞ {memory.related.length}</span>}</div><WorkbenchError error={memory.error} fallback="整理未完成 · 重试" projectId={errorProjectId} onSettings={openSettings}/>
+            allowShared={actions.allowSharedFiling} onNavigate={onNavigate} onChanged={refreshPlacement} onError={setError}/><div className="workbench-insights">{memory.insights.map(insight => chip(insight, memory.filing?.state === 'filed' && memory.filing.target_scope_kind !== 'shared' ? memory.filing.target_project_id : undefined))}{!!memory.related.length && <span className="workbench-related-count" title={memory.related.map(entry => entry.text).join('\n')}>∞ {memory.related.length}</span>}</div>
         </> : ask ? <>
           {stopControl && <div className="workbench-receipt-title">{stopControl}</div>}
-          <CitedAnswer answer={ask.answer ?? ask.partial ?? ''} citations={ask.citations} unverifiedSpans={ask.unverified_claim_spans} onOpenCitation={openCitation} citationHref="#workbench-citation" onCopyAnswer={() => recordCopy()}/><div className="workbench-ask-layers"><LayerBadges layers={ask.layers} onOpenTrace={() => { closeOutput(); closeCitation(); setTracePanel({ scope, projectId, ask }); }}/>{hint && <span className="ui-layer-badges workbench-elsewhere"><button type="button" title={`在 ${hintLabel} 里问`} aria-label={`在 ${hintLabel} 里问`} disabled={sending} onClick={() => askElsewhere(turn, hint)}>→ {hintLabel}</button></span>}<button type="button" className="workbench-answer-copy" aria-label="复制回答" title="复制" onClick={copyAnswer}><Icon name={copied ? 'check' : 'copy'} size={14}/></button></div>
+          <CitedAnswer answer={ask.answer ?? ask.partial ?? ''} citations={ask.citations} unverifiedSpans={ask.unverified_claim_spans} onOpenCitation={openCitation} citationHref="#workbench-citation" onCopyAnswer={() => recordCopy()}/><div className="workbench-ask-layers"><LayerBadges layers={ask.layers} onOpenTrace={activeLayer => { closeOutput(); closeCitation(); setTracePanel({ scope, projectId, ask, activeLayer }); }}/>{suggestedQuestion && <span className="ui-layer-badges workbench-elsewhere"><button type="button" disabled={sending} onClick={() => askElsewhere(suggestedQuestion, hint)}>带到 {hintLabel} 提问</button></span>}<button type="button" className="workbench-answer-copy" aria-label="复制回答" title="复制" onClick={copyAnswer}><Icon name={copied ? 'check' : 'copy'} size={14}/></button></div>
         </> : task ? <>
-          <div className="workbench-receipt-title"><StatusDot state={['researching', 'preparing', 'running'].includes(task.state) ? 'processing' : task.state === 'waiting_approval' ? 'pending' : task.state}/><span className="workbench-memory-title" title={task.title}>{task.title}</span><button type="button" className="workbench-context-open" aria-label="本次上下文" onClick={() => { closeOutput(); closeCitation(); setTracePanel({ scope, projectId, ask: task, kind: 'do' }); }}>◯ {contextPercent(task.context)}</button>{!externalTask && <ProgressDots {...task.progress} running={['researching', 'preparing', 'running'].includes(task.state)} title={task.kernel_turn_id ? '拆活 · 干活 · 汇总' : task.research_turn_id ? '研究 · 准备 · 批准 · 成果' : '准备 · 批准 · 成果'}/>}<OutcomeVersion version={task.continues?.version}/>{task.executor && task.executor !== 'builtin' && EXECUTOR_LABELS[task.executor] && <span className="workbench-executor-source">来自 {EXECUTOR_LABELS[task.executor]}</span>}{task.fallback_new && <span className="ui-count" aria-label="已新写一篇">新写一篇</span>}{!externalTask && ['done','partial'].includes(task.state) && task.document_id && <OutcomeReceiptChoices turn={turn} onNew={() => redoOutput(turn, null)} onOther={() => chooseOutput(turn)}/>}{['done','partial'].includes(task.state) && task.document_id && <button type="button" aria-label="打开成果" onClick={() => openOutput(task)}>↗</button>}{stopControl}</div>
+          <div className="workbench-receipt-title workbench-task-title"><StatusDot state={['researching', 'preparing', 'running'].includes(task.state) ? 'processing' : task.state === 'waiting_approval' ? 'pending' : task.state}/>
+            <span className="workbench-memory-title" title={task.title}>{task.title}</span>{taskHasOutcome && <button type="button" className="workbench-primary" onClick={() => openOutput(task, projectId)}>打开成果</button>}{stopControl}</div>
+          <div className="workbench-task-meta"><span role="status">{taskPhase(task)}</span><OutcomeVersion version={task.continues?.version}/>
+            {externalTask && EXECUTOR_LABELS[task.executor] && <span>来自 {EXECUTOR_LABELS[task.executor]}</span>}
+            {task.fallback_new && <span className="ui-count">新写一篇</span>}
+            <button type="button" className="workbench-context-open" onClick={() => { closeOutput(); closeCitation(); setTracePanel({ scope, projectId, ask: task, kind: 'do' }); }}>本次上下文</button>
+            {!externalTask && taskHasOutcome && <OutcomeReceiptChoices turn={turn} onNew={() => redoOutput(turn, null)} onOther={() => chooseOutput(turn)}/>}
+          </div>
           {!externalTask && task.kernel_turn_id && <TaskDivision key={`${projectId}:${turn.id}`} project={projectId} turnId={turn.id} task={task} onReference={reference => onNavigate?.('workbench', reference)} onRedo={result => setSession(current => current.project === projectId ? { ...current, id: result.thread_id, turns: current.turns.some(row => row.id === result.turn.id) ? current.turns : [...current.turns, result.turn] } : current)}/>}{!task.kernel_turn_id && !!task.experts?.length && <div className="workbench-experts">{task.experts.map((expert, index) => <span key={index} role="img" aria-label={expert.role} title={expert.role}><StatusDot aria-hidden="true" state={expert.state === 'running' ? 'processing' : expert.state}/></span>)}</div>}
           {externalTask && <ExternalTaskProgress receipt={task}/>}
           <OutcomeFreshness stale={task.stale} freshCount={task.fresh_count} verified={task.changes_verified}/>
@@ -256,7 +291,7 @@ const WorkbenchTurn = memo(function WorkbenchTurn({ turn, turnId, projectId, err
           {!externalTask && task?.state === 'failed' && <TaskRetryAction task={task} turn={turn} projectId={projectId} scope={scope} disabled={sending || actions.retrying} onRetry={() => redoOutput(turn)}/>}
           {task && interrupted && <>{interruption !== 'stopped' && <RetryCountdown status={streamStatus}/>}<CitedAnswer answer={interruption === 'stopped' ? task.partial || '' : streamText ?? task.partial ?? ''}/></>}
           {interrupted && <div className="workbench-interrupted"><span>{interruption === 'stopped' ? '已停止' : interruption === 'sleep' ? '电脑休眠' : '连接中断'}</span>{canContinue && <><span aria-hidden="true">·</span><button type="button" disabled={continuing || stopping} onClick={() => continueTurn(turn, projectId)}>继续</button></>}</div>}
-        </Receipt>{replacement}{shareMenu}
+        </Receipt>{replacement}{shareMenu}{interventions}
       </article>;
 });
 
@@ -294,6 +329,22 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
   const [session, setSession] = useState({ scope: threadId || turnId ? null : scope, project: projectId, threads: [], id: null, turns: [] });
   const sessionReady = session.scope === scope && session.project === projectId;
   const visible = sessionReady ? session : { threads: [], id: null, turns: [] };
+  const hasFailedOriginal = !isShared && visible.turns.some(turn => failedOriginal(turn.receipt));
+  const [generationCheck, setGenerationCheck] = useState(null);
+  useEffect(() => {
+    if (!hasFailedOriginal) return;
+    const request = gate.issue('generation-check', scope);
+    settingsApi.load().then(settings => {
+      if (!gate.isCurrent(request)) return;
+      const mode = settings.model?.generation_mode, generation = settings.model?.generation;
+      const missing = mode?.mode === 'local'
+        ? mode.local_enabled === false || mode.local_model_installed === false
+        : generation?.configured === false && !generation.server_managed;
+      setGenerationCheck({ scope, missing });
+    }).catch(() => {});
+    return () => gate.invalidate('generation-check');
+  }, [gate, scope, hasFailedOriginal]);
+  const generationMissing = generationCheck?.scope === scope && generationCheck.missing;
   const selectedThread = useRef(visible.id);
   selectedThread.current = visible.id;
   const [threadReadFailure, setThreadReadFailure] = useState(null), [threadReadRetry, setThreadReadRetry] = useState(0);
@@ -319,7 +370,8 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
   const [citationPanel, setCitationPanel] = useState(null);
   const [outputPanel, setOutputPanel] = useState(null);
   const [continuation, setContinuation] = useState(null), [choicePanel, setChoicePanel] = useState(null);
-  const [example, setExample] = useState(null);
+  const [firstInput, setFirstInput] = useState(null);
+  const [historyScope, setHistoryScope] = useState(null);
   const continuationSequence = useRef(0);
   const outcomeRedoPending = useRef(null);
   const [draftPanel, setDraftPanel] = useState(null);
@@ -410,7 +462,7 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
             if (candidate.turns.some(turn => turn.id === turnId)) { id = thread.id; detail = candidate; break; }
           }
         }
-        setSession({ scope, project: projectId, threads, id, turns: detail.turns });
+        setSession({ scope, project: projectId, threads, threadsRead: true, id, turns: detail.turns });
         setThreadReadFailure(null);
         if (id) writeStoredJson(cacheKey, id);
       } catch (failure) { if (gate.isCurrent(request)) { setError(failure); setThreadReadFailure(scope); } }
@@ -830,10 +882,10 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
     } return acceptance(); }
     finally { if (streamController.current === controller) streamController.current = null; if (gate.isCurrent(request)) { setBusy(false); setStreaming(null); } }
   }
-  const askElsewhere = useCallback((turn, hint) => {
+  const askElsewhere = useCallback((text, hint) => {
     if (isShared || !gate.isScopeCurrent(scope)) return;
-    return send({ text: `${formatScopeTag(hint.project_id, hint.scene || null)}\n${scopedText(turn.user_text).text}`, files: [], intent: 'ask' });
-  }, [busy, sessionReady, gate, scope, projectId, projects, visible.id, onNavigate, isShared]);
+    onNavigate?.('workbench', { project_id: hint.project_id, compose: { intent: 'ask', text, scene: hint.scene || null } });
+  }, [gate, scope, onNavigate, isShared]);
   async function createUnknownProject() {
     if (!unknownProject || unknownProject.scope !== scope || creatingProject.current || busy) return;
     const retained = unknownProject, request = gate.issue('project', scope);
@@ -1210,6 +1262,7 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
     });
   }, [refreshPlacement]);
   const turnActions = useMemo(() => ({ readOnly: isShared, review, retry, continueTurn, openOutput, openCitation,
+    generationMissing,
     allowSharedFiling: serverConversationShares,
     openShare: isShared && !serverConversationShares ? undefined : openShare, redoOutput, chooseOutput, closeOutput, closeCitation, saveAnswerOutcome, savingOutcome, openCorrection,
     rememberActions: isShared ? { projectId, canRead: projectScope?.can_read_sources === true,
@@ -1223,10 +1276,16 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
     setTracePanel: value => { if (value) { closeShare(); closeChoices(); } setTracePanel(value); },
     setDraftPanel: value => { if (value) { closeShare(); closeChoices(); } setDraftPanel(value); },
     setSession, onNavigate, openSettings, askElsewhere, projects, refreshPlacement, setError, stopTurn, stops, retrying, sending: busy || !sessionReady }),
-  [review, retry, continueTurn, openOutput, openCitation, openShare, redoOutput, adoptSharedRedo, chooseOutput, closeOutput, closeCitation, closeShare, closeChoices, onNavigate, openSettings, askElsewhere, projects, refreshPlacement, setError, stopTurn, stops, retrying, busy, sessionReady, saveAnswerOutcome, savingOutcome, openCorrection, isShared, serverConversationShares, scope, projectId, projectScope?.can_read_sources, projectScope?.can_write, projectScope?.can_do, sharedRemember.working, sharedInspirations.working]);
+  [review, retry, continueTurn, openOutput, openCitation, openShare, redoOutput, adoptSharedRedo, chooseOutput, closeOutput, closeCitation, closeShare, closeChoices, onNavigate, openSettings, askElsewhere, projects, refreshPlacement, setError, stopTurn, stops, retrying, busy, sessionReady, saveAnswerOutcome, savingOutcome, openCorrection, isShared, serverConversationShares, scope, projectId, projectScope?.can_read_sources, projectScope?.can_write, projectScope?.can_do, sharedRemember.working, sharedInspirations.working, generationMissing]);
   const currentStream = streaming?.scope === scope && !stoppedTurn(receiptTurn(visible.turns, streaming.id))
     && !receiptTurn(visible.turns, streaming.id)?.receipt?.ask?.error ? streaming : null;
   const streamProject = currentStream?.project || projectId;
+  const activeIntervention = !isShared && (currentStream && ['ask', 'do', 'multi'].includes(currentStream.intent) ? currentStream
+    : visible.turns.findLast(turn => ['ask', 'do', 'multi'].includes(turn.intent)
+      && (busyReceipt(turn.receipt) || turn.receipt.ask?.answer === null && !turn.receipt.ask?.error && !turn.receipt.ask?.interruption)));
+  const onInterventionDraft = useCallback((text, accept) => setInterventionDraft({ scope, text, accept: () => {
+    accept(); setInterventionDraft(null);
+  } }), [scope]);
   const streamStopping = Boolean(currentStream && stops[`${streamProject}:${currentStream.id}`]);
   const canStopStream = currentStream && (!isShared || currentStream.scope_kind === 'shared' && streamProject === projectId)
     && ['ask', 'do'].includes(currentStream.intent)
@@ -1277,24 +1336,34 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
     setSession(current => ({ ...current, id: null, turns: [] }));
     onNavigate?.('workbench', { project_id: projectId, scope_kind: scopeKind });
   }
+  function openHistory() {
+    setTracePanel(null); closeCitation(); closeOutput(); closeShare(); setDraftPanel(null); closeChoices();
+    setHistoryScope(scope);
+  }
+  useEffect(() => {
+    if ([sharePanel, draftPanel, tracePanel, citationPanel, outputPanel, choicePanel, correctionPanel].some(panel => panel?.scope === scope))
+      setHistoryScope(null);
+  }, [sharePanel, draftPanel, tracePanel, citationPanel, outputPanel, choicePanel, correctionPanel, scope]);
   useEffect(() => {
     if (externalExecutor.open && [sharePanel, draftPanel, tracePanel, citationPanel, outputPanel, choicePanel].some(panel => panel?.scope === scope)) externalExecutor.onClose();
   }, [externalExecutor.open, sharePanel, draftPanel, tracePanel, citationPanel, outputPanel, choicePanel, scope]);
   return <div className="workbench-layout"><main className={`workbench ${empty ? 'is-empty' : ''}`} aria-label="工作台">
-    {!!visible.threads.length && <div className="workbench-history"><select aria-label="对话" value={visible.id || ''} onChange={event => {
+    {!!visible.threads.length && (isShared || !empty) && <div className="workbench-history">{isShared ? <select aria-label="对话" value={visible.id || ''} onChange={event => {
       const target = event.target.value;
       if (isShared && onNavigate && target !== visible.id) {
         for (const channel of ['remember-adopt', 'outcome-redo', 'send', 'retry']) gate.invalidate(channel);
         streamController.current?.abort();
       }
       onNavigate?.('workbench', { thread_id: target });
-    }}>{!visible.id && <option value="">新对话</option>}{visible.threads.map(thread => <option key={thread.id} value={thread.id}>{displayScopedText(thread.title)}</option>)}</select><button type="button" aria-label="新对话" title="新对话" disabled={busy || Boolean(reviewing) || retrying || sharedRemember.working || sharedInspirations.working || !sessionReady} onClick={startConversation}>＋</button></div>}
+    }}>{!visible.id && <option value="">新对话</option>}{visible.threads.map(thread => <option key={thread.id} value={thread.id}>{displayScopedText(thread.title)}</option>)}</select>
+      : <button type="button" onClick={openHistory}>全部对话</button>}
+      <button type="button" disabled={busy || Boolean(reviewing) || retrying || sharedRemember.working || sharedInspirations.working || !sessionReady} onClick={startConversation}>新对话</button></div>}
     {isShared && <p role="status">{projectScope ? (projectScope.can_write ? '共享项目' : '共享 · 只看') : '共享资格已失效 · 本人对话保留'}</p>}
     {empty ? <h1>{isShared ? '想问共享项目里的什么？' : '今天想记住什么？'}</h1> : <div className="workbench-thread">
-      {visible.turns.filter(turn => !(currentStream?.id === turn.id && turn.intent === 'ask')).map(turn => <WorkbenchTurn key={turn.id} turn={turn} turnId={turnId} projectId={projectId} scope={scope} reviewing={reviewing} continuing={busy || retrying || Boolean(reviewing)} streamText={currentStream?.id === turn.id && turn.intent === 'do' ? currentStream.answer : undefined} streamStatus={currentStream?.id === turn.id ? currentStream.status : null} streamProgress={currentStream?.id === turn.id ? currentStream.external_progress : null} actions={turnActions}/>)}
+      {visible.turns.filter(turn => !(currentStream?.id === turn.id && turn.intent === 'ask')).map(turn => <WorkbenchTurn key={turn.id} turn={turn} turnId={turnId} projectId={projectId} scope={scope} reviewing={reviewing} continuing={busy || retrying || Boolean(reviewing)} streamText={currentStream?.id === turn.id && turn.intent === 'do' ? currentStream.answer : undefined} streamStatus={currentStream?.id === turn.id ? currentStream.status : null} streamProgress={currentStream?.id === turn.id ? currentStream.external_progress : null} actions={turnActions} interventionThread={activeIntervention?.id !== turn.id ? visible.id : undefined} onInterventionDraft={onInterventionDraft}/>)}
       {currentStream && !visible.turns.some(turn => turn.id === currentStream.id && turn.intent === 'do') && <article aria-busy="true">
         {currentStream.user_text && <div className="workbench-bubble">{displayScopedText(currentStream.user_text)}</div>}
-        <Receipt kind={currentStream.intent || 'ask'}><div className="workbench-receipt-title"><StatusDot state="processing"/>
+        <Receipt kind={currentStream.intent || 'ask'}><div className="workbench-receipt-title"><StatusDot state="processing"/><span>{ACTION_LABELS[currentStream.intent] || '处理中'}</span>
           {canStopStream && <StopButton disabled={streamStopping} onClick={() => stopTurn(currentStream, streamProject)}/>}
         </div><RetryCountdown status={currentStream.status}/>{currentStream.executor && currentStream.executor !== 'builtin' && <ExternalTaskProgress receipt={{ executor: currentStream.executor, external_progress: currentStream.external_progress, external_usage: currentStream.external_usage }}/>} {currentStream.intent !== 'multi' && <CitedAnswer answer={currentStream.answer}/>}</Receipt>
         {currentStream.intent === 'multi' && (currentStream.parts || currentStream.receipt?.parts || []).filter(part => part.intent === 'ask').map(part => <section key={part.index} aria-label={`第${part.index + 1}部分回答`}><Receipt kind="ask">
@@ -1342,15 +1411,23 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
         {sharedRemember.visible.status === 'failed' && !sharedRemember.visible.canResume && <button type="button"
           onClick={() => sharedRemember.settle(sharedRemember.visible.command)}>关闭</button>}
       </div>}
-      {!isShared && [...visible.turns.filter(turn => turn.id !== currentStream?.id), ...(currentStream ? [currentStream] : [])].map(turn => <Interventions key={`${userStorageKey('steer')}:${projectId}:${turn.id}`} projectId={currentStream?.id === turn.id ? streamProject : projectId} threadId={currentStream?.id === turn.id ? currentStream.threadId || visible.id : visible.id} turn={turn} active={currentStream?.id === turn.id || busyReceipt(turn.receipt)} onNewRound={(text, accept) => setInterventionDraft({ scope, text, accept: () => { accept(); setInterventionDraft(null); } })}/>)}
+       {activeIntervention && <Interventions key={`${userStorageKey('steer')}:${projectId}:${activeIntervention.id}`}
+         projectId={activeIntervention === currentStream ? streamProject : projectId}
+         threadId={activeIntervention === currentStream ? currentStream.threadId || visible.id : visible.id}
+         turn={activeIntervention} active onNewRound={onInterventionDraft}/>}
       <Composer key={`${projectId}:${composerRevision}`} fixedIntent={sharedIntents?.length === 1 ? sharedIntents[0] : undefined}
         allowedIntents={sharedIntents}
         allowFiles={!isShared} interventionDraft={interventionDraft?.scope === scope ? interventionDraft : null} resetContinuation={continuationReset} draft={draft} onDraft={onDraft} handoff={isShared ? undefined : handoff} onHandoff={onHandoff} projects={isShared ? [] : projects} onExecutor={allowExternalExecutor && continuation?.scope !== scope ? openExecutor : undefined} executorIntent={allowExternalExecutor && continuation?.scope !== scope && externalExecutor.value !== 'builtin' ? 'do' : null} onAutomatic={externalExecutor.reset} onRemind={isShared ? undefined : () => onNavigate?.('companion', { tab: 'schedule' })}
         projectTag={isShared ? projectScope?.name || projectId : projects.find(project => project.id === composerProject)?.name || ({ default: '日常', inbox: '收件箱', me: '我' })[composerProject] || '项目'} onSend={send}
         tools={allowExternalExecutor ? ({ intent, files }) => <ExternalExecutorButton value={continuation?.scope !== scope && !files.length && (!intent || intent === 'do') ? externalExecutor.value : 'builtin'} onOpen={openExecutor} unavailable={continuation?.scope !== scope && !files.length && (!intent || intent === 'do') && externalExecutor.unavailable} disabled={busy || !sessionReady || continuation?.scope === scope || !!files.length || (!!intent && intent !== 'do')}/> : undefined}
-        prefill={continuation?.scope === scope ? continuation : proposedInput || (example?.scope === scope ? example : null)} onPrefill={id => { if (id === inputProposal?.id) onInputProposalHandled?.(); }} onRecord={isShared ? undefined : record} recording={recording} sendDisabled={busy || isShared && (!projectScope || retrying || sharedInspirations.working || sharedRemember.working)} disabled={!sessionReady || isShared && !sharedInspirations.ready}/>
+         prefill={continuation?.scope === scope ? continuation : proposedInput || (firstInput?.scope === scope ? firstInput : null)} onPrefill={id => {
+           if (id === inputProposal?.id) onInputProposalHandled?.(id);
+           if (id === firstInput?.id) setFirstInput(null);
+         }} onRecord={isShared ? undefined : record} recording={recording} sendDisabled={busy || isShared && (!projectScope || retrying || sharedInspirations.working || sharedRemember.working)} disabled={!sessionReady || isShared && !sharedInspirations.ready}/>
     </div>
-    {empty && sessionReady && !isShared && <WorkbenchHome projectId={projectId} projects={projects} threads={visible.threads} onNavigate={onNavigate} onProjectCreated={onProjectCreated} hasDraft={Boolean(draft?.text)} onSample={value => setExample({ ...value, scope, id: `example-${++continuationSequence.current}` })}/>}
+    {empty && sessionReady && !isShared && <WorkbenchHome projectId={projectId} projects={projects} threads={visible.threads} threadListReady={visible.threadsRead}
+      onNavigate={onNavigate} onHistory={openHistory} hasDraft={Boolean(draft?.text)} onFirstInput={() => setFirstInput({ scope, intent: 'remember', preserveDraft: true,
+        id: `first-input-${++continuationSequence.current}` })}/>}
   </main>{allowExternalExecutor && continuation?.scope !== scope && externalExecutor.open && <ExternalExecutorPicker {...externalExecutor} onSettings={() => onNavigate?.('settings', { section: 'connect' })}/>}
   {sharePanel?.scope === scope && (!isShared || serverConversationShares) && (sharePanel.remote && sharePanel.source && serverConversationShares
     ? <RemoteConversationShare source={sharePanel.source} onClose={closeShare} onNavigate={onNavigate} onLocal={!isShared
@@ -1363,8 +1440,10 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
     ? <WorkbenchDraftPanel key={`${draftPanel.projectId || projectId}:${draftPanel.documentId}`} projectId={draftPanel.projectId || projectId} documentId={draftPanel.documentId} itemId={draftPanel.itemId} navigation={panelNavigation('draft')} onClose={() => setDraftPanel(null)}/>
     : <WorkbenchOriginalPanel key={`${draftPanel.projectId}:${draftPanel.itemId}`} projectId={draftPanel.projectId} itemId={draftPanel.itemId} onClose={() => setDraftPanel(null)}/>)}
     {outputPanel?.scope === scope && <WorkbenchOutcomePanel projectId={outputPanel.project || projectId} documentId={outputPanel.documentId} document={outputPanel.document} loading={outputPanel.loading} error={outputPanel.error} task={outputPanel.task} qualified={outputPanel.qualified} previous={outputPanel.previous} onRetryPrevious={reloadOutputPrevious} onContinue={continueOutput} onUpdate={updateOutcome} updateDisabled={busy || retrying || Boolean(reviewing)} hasPendingUpdate={Boolean(readStoredJson(userStorageKey(`outcome-update:${outputPanel.project || projectId}:${outputPanel.documentId}`)).value)} onSourcesChanged={refreshPlacement} onRestore={task => openOutput(task, outputPanel.project || projectId)} navigation={panelNavigation('outcome')} onClose={closeOutput}/>}
-    {tracePanel?.scope === scope && citationPanel?.scope !== scope && <ContextPanel kind={tracePanel.kind || "ask"} receipt={tracePanel.ask} onClose={() => setTracePanel(null)} onOpenCitation={citation => openCitation({ ...citation, project: citation.project || tracePanel.projectId || projectId }, 'context')} navigation={panelNavigation('context')} onSettings={section => openSettings(section, tracePanel.projectId || projectId)} projectName={projects.find(project => project.id === (tracePanel.projectId || projectId))?.name || tracePanel.projectId || projectId}/>}
+    {tracePanel?.scope === scope && citationPanel?.scope !== scope && <ContextPanel kind={tracePanel.kind || "ask"} receipt={tracePanel.ask} activeLayer={tracePanel.activeLayer} onClose={() => setTracePanel(null)} onOpenCitation={citation => openCitation({ ...citation, project: citation.project || tracePanel.projectId || projectId }, 'context')} navigation={panelNavigation('context')} onSettings={section => openSettings(section, tracePanel.projectId || projectId)} projectName={projects.find(project => project.id === (tracePanel.projectId || projectId))?.name || tracePanel.projectId || projectId}/>}
     {citationPanel?.scope === scope && <ContextCitation panel={citationPanel} onClose={closeCitation} onRetry={() => openCitation(citationPanel.citation, citationPanel.origin)}/>}
+    {historyScope === scope && <WorkbenchHistory projectId={projectId} threads={visible.threads} onClose={() => setHistoryScope(null)}
+      onOpen={id => { setHistoryScope(null); onNavigate?.('workbench', { thread_id: id }); }}/>}
     {choicePanel?.scope === scope && <FocusPanel title="成果" onClose={() => { gate.invalidate('outcome-choices'); setChoicePanel(null); }}>{choicePanel.loading ? <StatusDot state="processing"/> : choicePanel.error ? <button type="button" onClick={() => chooseOutput(choicePanel.turn)}>读取未完成 · 重试</button> : (choicePanel.items ?? []).map(row => <Row key={row.document_id} title={row.title} meta={`v${row.version}`} onOpen={() => redoOutput(choicePanel.turn, row.document_id)}/>)}</FocusPanel>}
     {correctionPanel?.scope === scope && <FocusPanel title="纠正分段" onClose={() => setCorrectionPanel(null)}>
       <RouteCorrectionPanel turnId={correctionPanel.turnId} projectId={correctionPanel.projectId} initialIntent={correctionPanel.initialIntent} onCompleted={correctionCompleted}
@@ -1377,15 +1456,16 @@ function ContextCitation({ panel, onClose, onRetry }) {
   const labels = { insight: '认识', summary: '整理稿', note: '整理稿', source: '原件', inspiration: '灵感' };
   const entry = panel.layer === 'source' ? panel.original : panel.data?.[panel.layer === 'summary' ? 'note' : panel.layer];
   const snippet = panel.data?.source?.window;
+  const quote = panel.citation.quote && <blockquote className="workbench-citation-quote">{panel.citation.quote}</blockquote>;
   return <FocusPanel title={labels[panel.layer]} onClose={onClose}>
     <section id="workbench-citation">
-      {panel.loading ? <StatusDot state="processing"/> : panel.layer === 'source' && !entry ? <>
+      {panel.loading ? <>{quote}<StatusDot state="processing"/></> : panel.layer === 'source' && !entry ? <>
+        {quote}
         <p role="alert">全文未读取 <button type="button" onClick={onRetry}>重试</button></p>
-        {panel.citation.quote && <blockquote className="workbench-citation-quote">{panel.citation.quote}</blockquote>}
         {snippet && <p>{snippet.pre}{snippet.quote}{snippet.post}</p>}
-      </> : panel.error || !entry ? <p role="alert">读取未完成 <button type="button" onClick={onRetry}>重试</button></p> : <>
+      </> : panel.error || !entry ? <>{quote}<p role="alert">读取未完成 <button type="button" onClick={onRetry}>重试</button></p></> : <>
         {entry.title && <h3>{entry.title}</h3>}
-        {panel.layer === 'insight' ? <p>{entry.text}</p> : <CitationBody text={['source', 'inspiration'].includes(panel.layer) ? entry.text : entry.markdown} coordinateSpace={['source', 'inspiration'].includes(panel.layer) ? entry.coordinate_space : 'document_markdown_v1'} citation={panel.citation} projectId={panel.project} sourceId={panel.layer === 'source' ? panel.citation.id : undefined} scopeKey={panel.scope}/>}
+        {panel.layer === 'insight' ? <>{panel.citation.quote !== entry.text && quote}<p>{entry.text}</p></> : <CitationBody text={['source', 'inspiration'].includes(panel.layer) ? entry.text : entry.markdown} coordinateSpace={['source', 'inspiration'].includes(panel.layer) ? entry.coordinate_space : 'document_markdown_v1'} citation={panel.citation} projectId={panel.project} sourceId={panel.layer === 'source' ? panel.citation.id : undefined} scopeKey={panel.scope}/>}
       </>}
     </section>
   </FocusPanel>;

@@ -1,6 +1,6 @@
 import { ConsolidationSuggestions } from './ConsolidationSuggestions';
 import { InsightLinks } from './InsightLinks';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { LayerTabs, FilterBar, Row, Breadcrumb, FocusPanel, Icon, MarkdownBody, CandidateHint } from '../../shared/ui';
 import { OutcomeFreshness } from '../../shared/ui/OutcomeFreshness';
 import { InsightSource } from '../../shared/ui/InsightSource';
@@ -24,12 +24,13 @@ import { deviceIdentity, isDeviceIdentity, readDeviceCredential } from '../../sh
 import { useRequestScope } from '../../shared/lib/useRequestScope';
 import { formatLocalDate } from '../../shared/lib/time';
 import { workbenchApi } from '../workbench/workbenchApi';
-import { InsightReviewQueue } from './InsightReviewQueue';
+import { InsightReviewQueue, reviewRelationLabels } from './InsightReviewQueue';
 import { InsightMergeReview } from './InsightMergeReview';
 import { ProfileCards } from './ProfileCards';
 import { OriginalFiles, OriginalText } from './LibraryOriginals';
 import { SharedLibraryView } from './SharedLibraryView';
 import { InsightEditor } from './LibraryInsightEditor';
+import { LibraryMatch, LibrarySearchFeedback } from './LibrarySearchFeedback';
 import './Library.css';
 
 const layers = ['insight', 'summary', 'note', 'source'];
@@ -57,13 +58,22 @@ export function Library(props) {
   return props.projectScopeKind === 'shared' ? <SharedLibraryView {...props}/> : <PersonalLibrary {...props}/>;
 }
 
-function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 'insight', initialFilter = null, documentId, sourceId, insightId, inspirationJobId, onNavigationBlocked, onNavigate, onProjectCreated, serverConversationShares }) {
+function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 'insight', initialFilter = null, initialReview = false, documentId, sourceId, insightId, inspirationJobId, onNavigationBlocked, onNavigate, onProjectCreated, serverConversationShares }) {
   const showAgentTools = !readDeviceCredential()?.mobile;
+  const searchScopeId = useId();
   const [layer, setLayer] = useState(layers.includes(initialLayer) ? initialLayer : 'insight'), [scene, setScene] = useState(''), [q, setQ] = useState('');
   const [composing, setComposing] = useState(false), [search, setSearch] = useState({ project: projectId, q: '' });
   const [filter, setFilter] = useState(initialFilter), [loaded, setLoaded] = useState(null), [refresh, setRefresh] = useState(0);
   const [inboxCount, setInboxCount] = useState(null);
   const [inbox, setInbox] = useState(false), [suggestions, setSuggestions] = useState(null);
+  const [targetProjectId, setTargetProjectId] = useState('');
+  const [filingRequests, setFilingRequests] = useState(() => new Set());
+  const filingBusy = filingRequests.size > 0;
+  const onFilingBusyChange = useCallback((key, active) => setFilingRequests(previous => {
+    if (previous.has(key) === active) return previous;
+    if (active) return new Set([...previous, key]);
+    const remaining = new Set(previous); remaining.delete(key); return remaining;
+  }), []);
   const [sharePanelHost, setSharePanelHost] = useState(null), [sharePanelOpen, setSharePanelOpen] = useState(false);
   const [projectSuggestions, setProjectSuggestions] = useState(null);
   const readProject = inbox ? 'inbox' : projectId;
@@ -78,29 +88,37 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
   const [noteEditorState, setNoteEditorState] = useState(null);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [mergeBusy, setMergeBusy] = useState(false);
-  const busy = mutating || editBusy || extractionBusy || reviewBusy || mergeBusy;
+  const busy = mutating || editBusy || extractionBusy || reviewBusy || mergeBusy || filingBusy;
   const [skillExport, setSkillExport] = useState(null);
   const [consolidation, setConsolidation] = useState(null), [consolidating, setConsolidating] = useState(false);
   const [consolidationRead, setConsolidationRead] = useState(0);
   const [reviewing, setReviewing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState(initialReview);
   const reviewNavigationGuard = useRef(null);
   const registerReviewNavigation = useCallback(request => { reviewNavigationGuard.current = request; }, []);
   const requestReviewNavigation = useCallback((action, options) => {
+    if (filingBusy) return false;
     const complete = () => { setEditing(false); action(); };
     if (reviewNavigationGuard.current) return reviewNavigationGuard.current(complete, options);
     complete(); return true;
-  }, []);
+  }, [filingBusy]);
   const reviews = useSignalReviews(projectId, refresh);
   const gaps = useGaps(projectId, refresh);
   const consolidationGate = useRequestScope(projectId), consolidationScope = consolidationGate.scope, consolidationPending = useRef(null);
   const scope = `${projectId}\0${inbox}\0${scene}\0${q}`;
+  const reviewScope = `${scope}\0${userEpoch}`, previousReviewScope = useRef(reviewScope);
   const extractionKey = `${scope}\0${filter}\0${userEpoch}`;
   const activeExtraction = extraction?.key === extractionKey && isDeviceIdentity(extraction.identity) ? extraction : null;
   const activeAutomatic = !group && !reviewing && !activeExtraction
     && automatic?.key === extractionKey && isDeviceIdentity(automatic.identity) ? automatic : null;
   const readingIdentity = deviceIdentity();
-  useEffect(() => { setConfirming(false); }, [scope, userEpoch]);
+  useEffect(() => {
+    if (previousReviewScope.current !== reviewScope) {
+      previousReviewScope.current = reviewScope;
+      setConfirming(false);
+    }
+  }, [reviewScope]);
+  useEffect(() => { if (initialReview) setConfirming(true); }, [initialReview, projectId]);
   useEffect(() => { setExtraction(null); setAutomatic(null); }, [extractionKey]);
   useEffect(() => { if (group || reviewing) setAutomatic(null); }, [group, reviewing]);
   const drillGate = useRequestScope(`${scope}\0${filter}\0${userEpoch}`), drillScope = drillGate.scope;
@@ -163,6 +181,10 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
   }, [chosen]);
   const detailProject = chosen?.sourceProject || readProject;
   const project = projects.find(row => row.id === projectId);
+  const projectName = readProject === 'inbox' ? '收件箱' : project?.name || (readProject === 'default' ? '日常' : readProject);
+  const filingProjects = projects.filter(row => row.id !== 'inbox');
+  const filingTarget = filingProjects.find(row => row.id === (targetProjectId || projectId));
+  useEffect(() => { setTargetProjectId(''); }, [projectId, userEpoch]);
   useEffect(() => { setReviewing(false); setInbox(false); setSuggestions(null); setScene(''); setQ(''); setFilter(initialFilter); setSelection(null); setGroup(null); setLibraryMore(false); setMore(false); setMaintenance(null); setEditing(false); setBusy(false); setError(''); setConsolidation(null); setConsolidating(false); consolidationPending.current = null; }, [projectId, initialFilter]);
   useEffect(() => {
     if (documentId) { setLayer('note'); open('note', { document_id: documentId }); }
@@ -260,13 +282,13 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
   }, [projectId]);
   useEffect(() => {
     setSuggestions(null);
-    if (!inbox || projectId === 'inbox') return;
+    if (readProject !== 'inbox' || layer !== 'insight' || !filingTarget?.scenes?.length) return;
     const controller = new AbortController();
-    libraryApi.inboxSuggestions(projectId, { signal: controller.signal }).then(result => {
-      if (!controller.signal.aborted) setSuggestions({ project: projectId, values: Object.fromEntries((result.items || []).map(row => [row.id, row.scene])) });
+    libraryApi.inboxSuggestions(filingTarget.id, { signal: controller.signal }).then(result => {
+      if (!controller.signal.aborted) setSuggestions({ project: filingTarget.id, values: Object.fromEntries((result.items || []).map(row => [row.id, row.scene])) });
     }).catch(reason => { if (!controller.signal.aborted) setError(reason.message); });
     return () => controller.abort();
-  }, [projectId, inbox, refresh]);
+  }, [readProject, layer, filingTarget?.id, filingTarget?.scenes?.length, refresh]);
   useEffect(() => {
     setProjectSuggestions(null);
     if (readProject !== 'inbox' || layer !== 'insight' || composing || search.project !== projectId || search.q !== q) return;
@@ -291,8 +313,13 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
     const identity = row.id || row.document_id;
     setSelection(null); setExtraction(null); setAutomatic(null); setGroup(null); setLibraryMore(false); setMore(false); setMaintenance(null); setEditing(false); setError(''); setFailedDrill(null);
     try {
-      const data = await libraryApi.drill(targetProject, entryLayer, identity);
+      let data = await libraryApi.drill(targetProject, entryLayer, identity,
+        originMeta?.evidence ? { document_id: originMeta.evidence.document_id, source_id: identity } : undefined);
       if (originMeta?.namespace && data.namespace !== originMeta.namespace) throw new Error('来源已变化 · 重新读取');
+      const originalWindow = originMeta?.evidence?.window || (row.match?.part === 'text' ? row.match : null);
+      if (entryLayer === 'source' && originalWindow && data.source?.id === identity
+          && (data.source_project_id || targetProject) === targetProject)
+        data = { ...data, source: { ...data.source, window: originalWindow } };
       const archived = await documentArchived(targetProject, data, readonly);
       if (drillGate.isCurrent(request) && generation === drillGeneration.current) {
         setSelection({ scope, sourceProject:targetProject, layer: entryLayer, entered: entryLayer, row, data, archived,
@@ -404,7 +431,11 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
   const sourceProject = chosen?.data.source_project_id || detailProject;
   const readonlySource = chosen?.readonly || chosen?.data.readonly;
   const destination = projects.find(row => row.id === insight?.hint?.scope_hint && row.id !== detailProject);
-  const original = chosen?.data.source || (chosen?.entered === 'source' ? chosen.row : null);
+  const original = chosen?.data.source || (chosen?.entered === 'source'
+    ? { ...chosen.row, window: chosen.row.match?.part === 'text' ? chosen.row.match : null } : null);
+  const readableLayers = chosen ? layers.filter(key => key === 'insight' ? insight || chosen.data.grown?.length
+    : key === 'source' ? original || chosen.data.sources?.length : chosen.data[key]) : [];
+  const nextLayer = readableLayers.slice(readableLayers.indexOf(chosen?.layer) + 1)[0];
   const focusId = { insight: insight?.id, summary: chosen?.data.summary?.document_id,
     note: chosen?.data.note?.document_id, source: original?.id }[chosen?.layer] || chosen?.row?.id || chosen?.row?.document_id;
   const focusScope = chosen ? JSON.stringify([chosen.layer === 'source' ? sourceProject : detailProject, chosen.layer, focusId]) : undefined;
@@ -415,25 +446,27 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
   useEffect(() => {
     if (!onNavigationBlocked) return;
     const report = { scope: drillScope, identity: readingIdentity, projectId, blocked: Boolean(busy || editing || unsavedNote),
-      nonReviewBlocked: Boolean(mutating || editBusy || extractionBusy || mergeBusy || editing || unsavedNote),
+      nonReviewBlocked: Boolean(mutating || editBusy || extractionBusy || mergeBusy || filingBusy || editing || unsavedNote),
       requestNavigation: confirming || editing ? requestReviewNavigation : undefined };
     onNavigationBlocked(report);
     return () => onNavigationBlocked({ ...report, disposed: true });
-  }, [onNavigationBlocked, drillScope, projectId, busy, mutating, editBusy, extractionBusy, mergeBusy, editing, unsavedNote, confirming, requestReviewNavigation]);
+  }, [onNavigationBlocked, drillScope, projectId, busy, mutating, editBusy, extractionBusy, mergeBusy, filingBusy, editing, unsavedNote, confirming, requestReviewNavigation]);
   const documentChoices = chosen?.data.documents?.length > 1 && <section aria-label="整理稿选择">{chosen.data.documents.map(row => <Row key={row.document_id} title={row.title} selected={chosen.data.note?.document_id === row.document_id} onOpen={() => selectDrill({ document_id: row.document_id })}/>)}</section>;
   const grownChoices = chosen?.layer === 'insight' && chosen.entered !== 'insight' && <section className="library-grown"><h3>长出的认识</h3>{chosen.data.grown.map(row => <button type="button" key={row.id} onClick={() => open('insight', row)}>{row.text}</button>)}</section>;
   const insightMetadata = insight && <><p className="library-meta">{[insight.scene, `${insight.source_count} 源`].filter(Boolean).join(' · ')}</p>
     {insight.state === 'pending' && <InsightSource source={insight.source} onReference={onNavigate && !editing && !busy
       ? reference => requestReviewNavigation(() => onNavigate('workbench', reference)) : undefined}/>}
-    {insight.conditions?.length > 0 && <ul className="library-conditions">{insight.conditions.map(value => <li key={value}>{value}</li>)}</ul>}</>;
+    {(pendingInsight || insight.conditions?.length > 0) && <div className="library-queue-conditions"><span>适用条件</span>{insight.conditions?.length > 0
+      ? <ul className="library-conditions">{insight.conditions.map((value, index) => <li key={index}>{value}</li>)}</ul> : <p>未设条件</p>}</div>}</>;
   function openEvidence(evidence) {
     const project = chosen.data.documents?.find(row => row.document_id === evidence.document_id)?.project_id
       || chosen.data.source_project_id || detailProject;
     selectDrill({ document_id: evidence.document_id, source_id: evidence.source_id }, { layer: 'source', evidence, projectId: project });
   }
   function jump(next, permitted = false) {
+    if (!readableLayers.includes(next)) return;
     if (editing && !permitted) { requestReviewNavigation(() => jump(next, true)); return; }
-    drillGate.invalidate('detail'); setFailedDrill(null);
+    setFailedDrill(null);
     setEditing(false); setMore(false); setMaintenance(null);
     setSelection(value => value && { ...value, layer: next });
     const identity = next === 'insight' ? chosen?.data.insight?.id : chosen?.data.note?.document_id;
@@ -461,12 +494,19 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
     open('note', { document_id: evidence.document_id }, targetProject, readonly);
   }
   const retryDrill = drillError && <div className="library-error" role="alert"><span>{drillError.message}</span><button type="button" onClick={() => { if (drillGate.isCurrent(drillError.request)) drillError.retry(); }}>重试</button></div>;
+  function chooseLayer(next) {
+    requestReviewNavigation(() => { clearReviewDrill(); setLayer(next); setFilter(null); });
+  }
+  function inboxFiled() {
+    if (currentScope.current !== scope || !isDeviceIdentity(readingIdentity)) return;
+    setSelection(null); setError(''); setRefresh(value => value + 1);
+  }
   return <div ref={setSharePanelHost} className={`library-page ${chosen || group || reviewing || activeExtraction || activeAutomatic || sharePanelOpen ? 'has-focus' : ''}`}>
     <aside className="library-scenes" aria-label="场景">
-      <button type="button" aria-pressed={!inbox && !scene} onClick={() => requestReviewNavigation(() => { setInbox(false); setScene(''); setSelection(null); })}>全部</button>
+      {projectId !== 'inbox' && <button type="button" aria-pressed={!inbox && !scene} onClick={() => requestReviewNavigation(() => { setInbox(false); setScene(''); setSelection(null); })}>全部</button>}
       {(project?.scenes || []).map(name => <button type="button" key={name} aria-pressed={!inbox && scene === name} onClick={() => requestReviewNavigation(() => { setInbox(false); setScene(name); setSelection(null); })}>{name}</button>)}
       <div className="library-scene-divider"/>
-      <button type="button" aria-pressed={inbox || projectId === 'inbox'} onClick={() => requestReviewNavigation(() => { setInbox(true); setScene(''); setFilter(null); setLayer('insight'); setSelection(null); setGroup(null); })}>收件箱 <span className="library-meta">{inboxCount ?? '—'}</span></button>
+      <button type="button" aria-pressed={readProject === 'inbox'} onClick={() => requestReviewNavigation(() => { setInbox(true); setScene(''); setFilter(null); setSelection(null); setGroup(null); })}>收件箱 <span className="library-meta">{inboxCount ?? '—'}</span></button>
       <button type="button" aria-pressed={projectId === 'me'} onClick={() => requestReviewNavigation(() => onNavigate?.('library', { project_id: 'me' }))}>我</button>
     </aside>
     {confirming ? <InsightReviewQueue key={`${scope}:${userEpoch}`} projectId={readProject} projects={projects} scene={scene} query={q}
@@ -475,12 +515,13 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
       detailError={!chosen ? retryDrill : null}
       onBack={() => { setConfirming(false); setSelection(null); }} onBusy={setReviewBusy} onChanged={() => setRefresh(value => value + 1)}
       onOpenInsight={(row, ownerProject) => open('insight', row, ownerProject, true)}
-      onOpenEvidence={(evidence, detail) => open('source', { id: evidence.source_id }, detail.documents?.find(row => row.document_id === evidence.document_id)?.project_id || detail.source_project_id || readProject)}/>
+      onOpenEvidence={(evidence, detail) => open('source', { id: evidence.source_id }, detail.documents?.find(row => row.document_id === evidence.document_id)?.project_id || detail.source_project_id || readProject,
+        Boolean(detail.readonly || detail.source_readonly), { namespace: detail.namespace, evidence })}/>
     : reviewing ? <SignalReviews key={projectId} projectId={projectId} reviews={reviews} onBack={() => { clearReviewDrill(); setReviewing(false); }}
       onOpen={object => open(object.kind === 'document' ? 'note' : 'insight', { id: object.id }, projectId)} onSelect={clearReviewDrill} drillError={drillError?.message || error} hideEvidence={Boolean(chosen)} onChanged={() => setRefresh(value => value + 1)}/>
     : <main className="library-main">
-      <LayerTabs value={layer} counts={counts} onChange={next => requestReviewNavigation(() => { clearReviewDrill(); setInbox(false); setLayer(next); setFilter(null); })}>
-        <div className="library-search-tools"><label className="library-search"><Icon name="search"/><input type="search" aria-label="搜索" value={q}
+      <LayerTabs value={layer} counts={counts} onChange={chooseLayer}>
+        <div className="library-search-tools"><label className="library-search"><Icon name="search"/><input type="search" aria-label="搜索" aria-describedby={searchScopeId} placeholder={`搜索${labels[layer]}`} value={q}
           onCompositionStart={() => setComposing(true)} onCompositionEnd={event => { const value = event.currentTarget.value; setComposing(false); requestReviewNavigation(() => { setQ(value); setSelection(null); }); }}
           onChange={event => { const value = event.target.value; requestReviewNavigation(() => { setQ(value); setSelection(null); }); }}/></label>
           <div className="library-more" onKeyDown={event => { if (event.key === 'Escape') { setLibraryMore(false); event.currentTarget.querySelector('button')?.focus(); } }}>
@@ -499,6 +540,16 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
           </div>
         </div>
       </LayerTabs>
+      <LibrarySearchFeedback id={searchScopeId} project={projectName} scene={scene} layer={labels[layer]} query={q}
+        loading={composing || search.q !== q || !visible?.[layer]} error={error} empty={rows.length === 0}
+        onSearchSources={layer !== 'source' ? () => chooseLayer('source') : undefined}/>
+      {readProject === 'inbox' && layer === 'insight' && filingProjects.length > 0 && <label className="library-queue-target">
+        归入目标<select aria-label="归入目标" value={filingTarget?.id || ''} disabled={filingBusy} onChange={event => { if (!filingBusy) setTargetProjectId(event.target.value); }}>
+          {!filingTarget && <option value="">选择项目</option>}
+          {filingProjects.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
+        </select>
+        {filingBusy && <span role="status">归入中</span>}
+      </label>}
       {layer === 'insight' && (visible?.insight?.counts?.pending || 0) > 0 && <div className="library-confirm-entry"><button type="button" disabled={busy || editing || Boolean(unsavedNote)} onClick={() => { clearReviewDrill(); setGroup(null); setReviewing(false); setConfirming(true); }}>逐条确认<span>{visible.insight.counts.pending}</span></button></div>}
       {layer === 'note' && <FilterBar label="整理稿状态" filters={[{ key: 'unverified', label: '未核对', dot: 'unverified' }, { key: 'verified', label: '已核对', dot: 'done' }, { key: 'archived', label: '已遗忘', dot: 'forgotten-user' }]} value={filter} counts={noteCounts} onChange={value => requestReviewNavigation(() => setFilter(old => old === value ? null : value))}/> }
       {layer === 'insight' && <FilterBar value={filter} counts={visible?.insight?.counts || {}} onChange={value => requestReviewNavigation(() => setFilter(old => old === value ? null : value))}/>}
@@ -519,14 +570,15 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
           onProjectCreated={onProjectCreated} onChanged={() => { setSelection(null); setRefresh(value => value + 1); }}/>) }
       {projectId === 'me' && !inbox && layer === 'insight' && visible?.insight ? <ProfileCards items={rows} busy={busy || editing}
         onOpen={row => open('insight', row)} onEdit={async row => { const data = await open('insight', row); if (data?.can_edit_insight && data.insight_project_id === readProject) setEditing(true); }}
-        onReview={(row, action) => { setSelection(null); mutate(() => libraryApi.review(readProject, row, action)); }}
         onForget={(row, forgotten) => { setSelection(null); mutate(() => libraryApi.forget(readProject, row, forgotten)); }}
         onAdd={onNavigate ? name => onNavigate('workbench', { project_id: 'me', compose: { intent: 'remember', scene: name === '关于我' || name === '规律' ? undefined : name } }) : undefined}/>
       : <div className="library-rows" aria-label={labels[layer]}>
         {rows.map(row => <Row key={row.id || row.document_id} dot={layer === 'source' && row.state ? row.state : layer === 'insight' ? insightDot(row) : layer === 'note' && (noteState(row) === 'archived' || row.recall_state === 'forgotten') ? 'forgotten-user' : row.recall_state === 'cooled' ? 'cooled' : layer === 'source' || row.verified ? 'done' : 'unverified'}
-          title={row.pattern || (layer === 'insight' && row.state === 'pending' && row.hint) ? <>{row.pattern && <Icon name="pattern" size={14}/>} {row.text || row.title}{row.state === 'pending' && <CandidateHint relation={row.hint?.relation} commentSource={row.comment_source}/>}</> : layer === 'note' ? <>{row.text || row.title}{' '}<OutcomeFreshness stale={row.stale} freshCount={row.fresh_count} verified={row.changes_verified}/></> : row.text || row.title} sub={layer === 'summary' ? row.summary : undefined}
-          meta={layer === 'insight' ? [row.scene, `${row.source_count} 源`].filter(Boolean).join(' · ') : [row.filing ? '已移到 #' + (projects.find(project=>project.id===row.filing.target_project_id)?.name || row.filing.target_project_id) : layer === 'source' ? kinds[row.kind] || '原件' : layer === 'note' && noteState(row) === 'archived' ? '已遗忘' : row.verified ? '已核对' : '未核对', date(row.created_at)].filter(Boolean).join(' · ')}
-          selected={chosen && (Boolean(row.id) && chosen.data.insight?.id === row.id || Boolean(row.document_id) && chosen.data.note?.document_id === row.document_id)} onOpen={() => open(layer, row)} trailing={layer === 'source' && row.state ? <button type="button" disabled={row.state !== 'failed' || Boolean(retryRequests[retryKey(row)])} onClick={() => retryOriginal(row)}>重试</button> : inbox && projectId !== 'inbox' && layer === 'insight' && ['pending', 'active'].includes(row.state) ? <InboxFiling key={`${scope}:${row.id}:${row.revision}`} row={row} targetProjectId={projectId} scenes={project?.scenes || []} suggestion={suggestions?.project === projectId ? suggestions.values[row.id] : null} onFiled={() => { setSelection(null); setError(''); setRefresh(value => value + 1); }} onError={setError}/> : undefined}/>)}
+          title={row.pattern || (layer === 'insight' && row.state === 'pending' && row.hint) ? <>{row.pattern && <Icon name="pattern" size={14}/>} {row.text || row.title}{row.state === 'pending' && <CandidateHint relation={row.hint?.relation} commentSource={row.comment_source}/>}</> : layer === 'note' ? <>{row.text || row.title}{' '}<OutcomeFreshness stale={row.stale} freshCount={row.fresh_count} verified={row.changes_verified}/></> : row.text || row.title}
+          label={row.match ? row.text || row.title : undefined}
+          sub={row.match ? <LibraryMatch match={row.match}/> : layer === 'summary' ? row.summary : undefined}
+          meta={row.match ? [projectName, row.scene].filter(Boolean).join(' / ') : layer === 'insight' ? [row.scene, `${row.source_count} 源`].filter(Boolean).join(' · ') : [row.filing ? '已移到 #' + (projects.find(project=>project.id===row.filing.target_project_id)?.name || row.filing.target_project_id) : layer === 'source' ? kinds[row.kind] || '原件' : layer === 'note' && noteState(row) === 'archived' ? '已遗忘' : row.verified ? '已核对' : '未核对', date(row.created_at)].filter(Boolean).join(' · ')}
+          selected={chosen && (Boolean(row.id) && (chosen.data.insight?.id === row.id || chosen.data.source?.id === row.id) || Boolean(row.document_id) && chosen.data.note?.document_id === row.document_id)} onOpen={() => open(layer, row)} trailing={layer === 'source' && row.state ? <button type="button" disabled={row.state !== 'failed' || Boolean(retryRequests[retryKey(row)])} onClick={() => retryOriginal(row)}>重试</button> : readProject === 'inbox' && filingTarget && layer === 'insight' && ['pending', 'active'].includes(row.state) ? <InboxFiling key={`${scope}:${filingTarget.id}:${row.id}:${row.revision}`} row={row} targetProjectId={filingTarget.id} scenes={filingTarget.scenes || []} suggestion={suggestions?.project === filingTarget.id ? suggestions.values[row.id] : null} onFiled={inboxFiled} onError={setError} onBusyChange={onFilingBusyChange}/> : undefined}/>)}
       </div>}
     </main>}
     {group === 'gaps' && <Gaps key={projectId} projectId={projectId} gaps={gaps} onClose={() => setGroup(null)} onOpen={row => onNavigate?.('workbench', { project_id: projectId, compose: { scene: row.scene, intent: 'remember' } })}/>}
@@ -542,7 +594,7 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
       onOpenInsight={row => { setAutomatic(null); open('insight', row, projectId); }}
       onOpenDocument={evidence => { setAutomatic(null); openInspirationDocument(evidence, projectId); }}/>}
     {chosen && !activeExtraction && !activeAutomatic && !(skillExport?.scope === scope && skillExport.sourceId === chosen.data.insight?.id) && <FocusPanel className="library-focus" title={labels[chosen.layer]} focusScope={focusScope} status={chosen.layer === 'note' && chosen.data.note ? noteArchived ? 'forgotten-user' : chosen.data.note.verified ? 'done' : 'unverified' : undefined} actions={panelActions} onClose={() => requestReviewNavigation(() => { clearReviewDrill(); setEditing(false); })}>
-      <Breadcrumb current={chosen.layer} onJump={jump}/>
+      <Breadcrumb levels={readableLayers} current={chosen.layer} onJump={jump}/>
       {retryDrill}
       {!pendingInsight && documentChoices}
       {chosen.layer === 'source' && chosen.entered !== 'source' && chosen.data.sources?.length > 1 && <section aria-label="原件选择">{chosen.data.sources.map(row => <Row key={row.id} title={row.title} selected={chosen.data.source?.id === row.id} onOpen={() => selectDrill({ document_id: chosen.data.note?.document_id, source_id: row.id })}/>)}</section>}
@@ -563,8 +615,8 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
             scopeKey={`${extractionKey}:${focusScope}`} onOpenDocument={evidence => openInspirationDocument(evidence, detailProject, readonlySource)}/>}
           {!pendingInsight && insightMetadata}
           {insight.hint?.target && <section className="library-grown" aria-label={pendingInsight ? '相对已有认识' : '旧认识'}>
-            {pendingInsight ? <Row className="library-comparison-row" dot={<CandidateHint relation={insight.hint.relation} commentSource={insight.comment_source}/>}
-              title={<span title={insight.hint.target.text}>{insight.hint.target.text}</span>} trailing={<Icon name="open" size={14}/>}
+            {pendingInsight ? <Row dot={<CandidateHint relation={insight.hint.relation} commentSource={insight.comment_source}/>}
+              label={insight.hint.target.text} title={insight.hint.target.text} sub={reviewRelationLabels[insight.hint.relation] || '已有认识'} trailing={<Icon name="open" size={14}/>}
               onOpen={() => open('insight', insight.hint.target, insight.hint.target.project_id, true)}/>
               : <><Row readOnly title={insight.hint.target.text}/>
                 {insight.hint.target.conditions?.length > 0 && <ul className="library-conditions">{insight.hint.target.conditions.map(value => <li key={value}>{value}</li>)}</ul>}
@@ -579,6 +631,8 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
               title={evidence.title} sub={evidence.window.quote} onOpen={() => openEvidence(evidence)}/>)}
           </section>}
           {pendingInsight && <>{insightMetadata}{documentChoices}{grownChoices}</>}
+          {pendingInsight && <p className="library-meta">确认后在 {insightProject === 'me' ? '所有项目（我）' : projects.find(row => row.id === insightProject)?.name || insightProject}{insight.scene ? ` / ${insight.scene}` : ''} 生效</p>}
+          {pendingInsight && !chosen.data.evidence?.length && !insight.source && <p className="library-meta">暂无可核对的原句</p>}
           {!chosen.readonly && <div className="library-actions">
             {insight.state === 'pending' && <><button type="button" className="library-primary" disabled={busy} onClick={() => mutate(() => libraryApi.review(detailProject, insight, 'confirm'))}>确认</button><button type="button" disabled={busy} onClick={() => mutate(() => libraryApi.review(detailProject, insight, 'drop'))}>丢弃</button></>}
             {insight.state === 'pending' && destination && <button type="button" disabled={busy} aria-label={destination.id === 'me' ? '确认到我' : `确认到 #${destination.name}`} onClick={() => mutate(async () => { await libraryApi.confirmTo(detailProject, insight, destination.id); return { lifecycle: true }; })}>{destination.id === 'me' ? <Icon name="person" size={16}/> : `#${destination.name}`}</button>}
@@ -630,7 +684,7 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
       </>}
       <CitationUsage key={`${scope}\0${filter}\0${userEpoch}\0${focusScope}\0${chosen.entered}\0${chosen.row.id || chosen.row.document_id}\0${chosen.evidenceKey || ''}`}
         entries={chosen.data.used_by} onOpen={onNavigate ? openCitationUsage : undefined}/>
-      {layers.indexOf(chosen.layer) < 3 && (chosen.data[layers[layers.indexOf(chosen.layer) + 1]] || (chosen.layer === 'insight' && chosen.data.documents?.length > 1) || (chosen.layer === 'note' && chosen.data.sources?.length > 1)) && <button type="button" className="library-down" aria-label="下一层" onClick={() => jump(layers[layers.indexOf(chosen.layer) + 1])}>↓</button>}
+      {nextLayer && nextLayer !== chosen.layer && <button type="button" className="library-down" aria-label="下一层" onClick={() => jump(nextLayer)}>↓</button>}
     </FocusPanel>}
     {showAgentTools && chosen && skillExport?.scope === scope && skillExport.sourceId === chosen.data.insight?.id && <SkillExportPanel key={`${scope}:${detailProject}:${skillExport.sourceId}`} projectId={skillExport.projectId} scene={skillExport.scene} sourceId={skillExport.sourceId} onClose={() => setSkillExport(null)}/>}
   </div>;

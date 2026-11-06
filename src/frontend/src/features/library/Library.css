@@ -27,6 +27,21 @@
 .library-search-tools{display:flex;align-items:center;gap:8px;margin-left:auto;min-width:0}.library-more{position:relative}.library-more-trigger{width:40px;height:40px;border:0;background:transparent;color:var(--muted);font:24px var(--sans);cursor:pointer}.library-more-menu{position:absolute;right:0;top:44px;width:220px;z-index:6;background:var(--panel);border:1px solid var(--line2);border-radius:var(--r-panel);box-shadow:0 12px 32px var(--shadow);padding:4px 0}.library-more-menu button{width:100%;display:flex;align-items:center;gap:12px;min-height:44px;padding:8px 16px;border:0;background:transparent;color:var(--ink);font:14px var(--sans);text-align:left;cursor:pointer}.library-more-menu button+button{border-top:1px solid var(--line)}.library-more-menu button:hover{background:var(--sunk)}.library-more-menu span{margin-left:auto;color:var(--muted);font:12px var(--mono)}
 @media(max-width:759px){.library-search-tools{width:100%;margin-left:0;margin-top:12px}.library-search-tools .library-search{width:auto;flex:1;margin-top:0}}
 
+.library-search-scope,.library-search-feedback{margin:12px 0;color:var(--muted);font:13px/1.6 var(--sans);overflow-wrap:anywhere}
+.library-search-feedback{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.library-search-feedback button,.library-profile-evidence,.library-queue-related button{min-height:40px;padding:4px 8px;border:0;background:transparent;color:var(--ink);font:13px var(--sans);text-decoration:underline;cursor:pointer}
+.library-search-match{white-space:normal;overflow-wrap:anywhere}
+.ui-row-sub:has(.library-search-match){white-space:normal}
+.library-search-match mark{background:var(--mark);color:var(--ink)}
+.library-profile-condition{display:block;color:var(--muted);font:13px/1.6 var(--sans);overflow-wrap:anywhere}
+.library-queue-conditions{display:grid;gap:4px;font:14px/1.7 var(--sans);color:var(--ink2);overflow-wrap:anywhere}
+.library-queue-conditions>span{color:var(--muted);font-size:13px}
+.library-queue-conditions ul,.library-queue-conditions p,.library-queue-related p{margin:0}
+.library-queue-related>div{min-width:0;overflow-wrap:anywhere}
+.library-queue-related strong{display:block;margin-bottom:4px;color:var(--ink2)}
+.library-queue-destination{margin-top:20px}
+.library-queue-finished button+button{margin-left:8px}
+
 .library-inbox-filing{display:flex;align-items:center;gap:6px;flex-wrap:wrap;max-width:45%}.library-inbox-filing button{border:0;background:transparent;color:var(--red);font:13px var(--sans);padding:8px 4px;cursor:pointer;overflow-wrap:anywhere}.library-inbox-filing select{min-width:0;max-width:100%;border:1px solid var(--line);border-radius:var(--r-control);background:var(--panel);color:var(--ink);padding:6px;font:13px var(--sans)}
 
 .library-insight-links .library-actions button,.library-consolidation .library-actions button{display:inline-flex;align-items:center;gap:8px;width:auto;padding:8px 16px;border:1px solid var(--line2);border-radius:var(--r-control);font:14px var(--sans)}

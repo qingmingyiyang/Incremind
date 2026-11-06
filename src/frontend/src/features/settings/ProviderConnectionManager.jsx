@@ -13,7 +13,7 @@ const purposeNames = { generation: '生成', vision: '识图', embedding: '向�
 const operationId = () => `operation-${crypto.randomUUID()}`;
 const connectionId = () => `connection-${crypto.randomUUID()}`;
 
-export function ProviderConnectionManager({ projectId, model, presets, run, busy, onConfigure, api = providerConnectionsApi }) {
+export function ProviderConnectionManager({ projectId, model, presets, run, busy, target, onConfigure, api = providerConnectionsApi }) {
   const gate = useRequestScope(projectId), scope = gate.scope;
   const [items, setItems] = useState(null), [selected, setSelected] = useState(null), [error, setError] = useState(''), [reading, setReading] = useState(false);
   const initialRead = useRef(true);
@@ -43,11 +43,11 @@ export function ProviderConnectionManager({ projectId, model, presets, run, busy
       {presets.map(item => <button type="button" key={item.id} className="settings-provider-card" aria-pressed={!saved && preset.id === item.id} onClick={() => setSelected(`new-${item.id}`)}><span className="settings-provider-mark">{item.mark}</span><strong>{item.name}</strong><span>新增连接</span></button>)}
       {special.map(item => <button type="button" key={item.id} className="settings-provider-card" onClick={() => onConfigure(item.target, item.id)}><span className="settings-provider-mark">{item.mark}</span><strong>{item.name}</strong><span>查看设置</span></button>)}
     </div>
-    {items && <ConnectionEditor key={saved?.id || `new-${preset.id}`} connection={saved} preset={preset} model={model} projectId={projectId} api={api} run={run} disabled={busy || reading} onReload={reload} onSaved={id => setSelected(id)}/>}
+    {items && <ConnectionEditor key={saved?.id || `new-${preset.id}`} connection={saved} preset={preset} model={model} projectId={projectId} api={api} run={run} target={target} disabled={busy || reading} onReload={reload} onSaved={id => setSelected(id)}/>}
   </section>;
 }
 
-function ConnectionEditor({ connection, preset, model, projectId, api, run, disabled, onReload, onSaved }) {
+function ConnectionEditor({ connection, preset, model, projectId, api, run, target, disabled, onReload, onSaved }) {
   const journal = useProviderOperations(), immediateBusy = useRef(false);
   const gate = useRequestScope(`${projectId}:${connection?.id || preset.id}`), scope = gate.scope;
   const id = useRef(connection?.id || connectionId());
@@ -68,6 +68,11 @@ function ConnectionEditor({ connection, preset, model, projectId, api, run, disa
   const selection = model[purpose] || {};
   const selectionChanged = selectionConflict || selectionBaseline.revision !== (selection.revision || 0) || selectionBaseline.mode !== model.generation_mode.revision || selectionBaseline.connection !== connection?.revision;
   function reviewSelection(nextPurpose = purpose) { setSelectionBaseline({ revision: model[nextPurpose]?.revision || 0, mode: model.generation_mode.revision, connection: connection?.revision }); setSelectionConflict(false); }
+  useEffect(() => {
+    if (!target || !Object.hasOwn(purposeNames, target.purpose)) return;
+    selectionEdited.current = false;
+    setPurpose(target.purpose); reviewSelection(target.purpose);
+  }, [target]);
   useEffect(() => { if (!selectionEdited.current) reviewSelection(); }, [selection.revision, model.generation_mode.revision, connection?.revision]);
   const active = selection.provider_connection?.id === connection?.id && selection.provider_connection?.available;
   const errors = { provider_connection_new_key_required: '地址已变化 · 填入此服务商的新密钥', provider_connection_disconnected: '连接已断开 · 重新保存', select_api_before_provider_connection: '在生成用途中选择 API 后采用', server_model_configuration_readonly: '服务器共享配置 · 由管理员分配' };

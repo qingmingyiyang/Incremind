@@ -39,12 +39,12 @@ it('orders model labels, values, status and egress and reports expansion', async
   const trigger = screen.getByRole('button', { name: '生成', exact: true });
   const row = trigger.closest('.ui-row');
   expect(trigger).toHaveAttribute('aria-expanded', 'false');
-  const valueLabel = within(row).getByText('writer');
+  const valueLabel = within(row).getByText('API · 配置已保存 · writer');
   const status = row.querySelector('.ui-status-done');
   const toggle = within(row).getByRole('switch', { name: '生成外发' });
   expect(trigger).toContainElement(valueLabel);
   expect(valueLabel).toContainElement(status);
-  expect(within(row).getByRole('status')).toHaveAccessibleName('writer · 已沉淀');
+  expect(within(row).getByRole('status')).toHaveAccessibleName('API · 配置已保存 · writer');
   expect(status.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   fireEvent.click(trigger);
   expect(trigger).toHaveAttribute('aria-expanded', 'true');
@@ -90,7 +90,7 @@ it('cancels only direct private sources and refreshes the list', async () => {
   fireEvent.click(screen.getByRole('button', { name: '私密资料' })); await settle();
   const direct = screen.getByText('私密材料').closest('.ui-row'); const inherited = screen.getByText('继承材料').closest('.ui-row');
   expect(within(inherited).queryByRole('button', { name: '取消私密' })).not.toBeInTheDocument(); expect(inherited).toHaveTextContent('阅读');
-  fireEvent.click(within(direct).getByRole('button', { name: '取消私密' })); await settle();
+  fireEvent.click(within(direct).getByRole('button', { name: '取消私密 · 私密材料' })); await settle();
   expect(api.cancelPrivate).toHaveBeenCalledWith(expect.objectContaining({ source_id: 'x', policy_revision: 2 }));
   expect(screen.queryByText('私密材料')).not.toBeInTheDocument();
 });
@@ -116,7 +116,7 @@ it('clears a typed key after save and keeps failure visible without exposing it'
 });
 it('writes the privacy revision and the project revision to separate endpoints', async () => {
   render(<SettingsPage api={api} initialSection="privacy"/>); await settle();
-  fireEvent.click(screen.getByRole('button', { name: '移除阅读私密' })); await settle(); expect(api.savePrivacy).toHaveBeenCalledWith([], 6);
+  fireEvent.click(screen.getByRole('button', { name: '取消私密 · 阅读' })); await settle(); expect(api.savePrivacy).toHaveBeenCalledWith([], 6);
   fireEvent.click(screen.getByRole('button', { name: '项目', exact: true })); fireEvent.click(screen.getByRole('button', { name: '阅读' }));
   fireEvent.click(screen.getByRole('switch', { name: '私密' })); await settle(); expect(api.saveProject).toHaveBeenCalledWith(expect.objectContaining({ id: 'alpha', revision: 2 }), { private: true });
 });

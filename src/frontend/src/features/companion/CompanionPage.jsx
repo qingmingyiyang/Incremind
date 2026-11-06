@@ -9,6 +9,13 @@ import { DeliveredReminders } from './DeliveredReminders';
 import "./companionPage.css";
 const MODES = [["chat", "聊聊"], ["review", "回顾"], ["focus", "专注"], ["plan", "安排"]];
 const LINES = { chat: "在呢。", review: "看看这一周。", focus: "我不吵你。", plan: "从记住的事开始。" };
+const REVIEW_DESTINATIONS = [
+  { key: 'remember', label: '记住', primary: { action: '查看原件', layer: 'source' },
+    secondary: { action: '待确认认识', layer: 'insight', filter: 'pending_memory' } },
+  { key: 'confirm', label: '确认', primary: { action: '生效认识', layer: 'insight', filter: 'active' } },
+  { key: 'forget', label: '遗忘', primary: { action: '已遗忘认识', layer: 'insight', filter: 'forgotten' },
+    secondary: { action: '已遗忘整理稿', layer: 'note', filter: 'archived' } },
+];
 export function CompanionPage({ projectId = "", api: injectedApi, initialMode = "chat", initialTab, initialPrompt = "", initialMemoryId = "", initialReminderId='', notices, onNavigate }) {
   const api = useMemo(() => injectedApi || createCompanionApi(), [injectedApi]);
   const [mode, setMode] = useState(() => initialTab === "schedule" ? "plan" : MODES.some(([key]) => key === initialTab) ? initialTab : initialMode);
@@ -28,7 +35,9 @@ export function CompanionPage({ projectId = "", api: injectedApi, initialMode = 
     };
   }, []);
   return <main className="companion-page" aria-label="伙伴">
-    <aside className="companion-page-bear"><div className="companion-page-sprite" data-mode={mode} role="img" aria-label="小熊"/><p>{LINES[mode]}</p>{typeof globalThis.electronAPI?.enterCompanionMode === "function" && <button type="button" className="companion-page-pet" onClick={() => globalThis.electronAPI.enterCompanionMode()}>显示桌宠</button>}</aside>
+    <header className="companion-page-bear"><div className="companion-page-sprite" data-mode={mode} role="img" aria-label="小熊"/>
+      <span className="companion-page-bear-title">伙伴</span><p>{LINES[mode]}</p>
+      {typeof globalThis.electronAPI?.enterCompanionMode === "function" && <button type="button" className="companion-page-pet" onClick={() => globalThis.electronAPI.enterCompanionMode()}>显示桌宠</button>}</header>
     <section className="companion-page-content"><nav className="companion-page-modes" aria-label="伙伴模式">{MODES.map(([key, label]) => <button key={key} type="button" aria-pressed={mode === key} onClick={() => setMode(key)}>{label}</button>)}</nav>
     <DeliveredReminders api={api} identity={userScope} notices={notices} expanded={mode==='plan'} onShowAll={() => setMode('plan')} onOpen={notice => {
       if(notice.project_id===(projectId || 'default')) {setFocusedReminder(notice.event_id);setMode('plan');}
@@ -36,7 +45,7 @@ export function CompanionPage({ projectId = "", api: injectedApi, initialMode = 
     }}/>
     <div className="companion-page-mode" hidden={mode !== "chat"} key={`chat:${userScope}:${projectId}`}><Chat api={api} projectId={projectId} cacheKey={`${userScope}:${projectId || "default"}`} initialPrompt={initialPrompt} initialMemoryId={initialMemoryId}/></div>
     <div className="companion-page-mode" hidden={mode === "chat"} key={`mode:${mode}:${userScope}:${projectId}`}>
-      {mode === "review" && <Review api={api} projectId={projectId}/>}
+      {mode === "review" && <Review api={api} projectId={projectId} onNavigate={onNavigate}/>}
       {mode === "focus" && <Focus api={api}/>}
       {mode === "plan" && <><CompanionReminders api={api} identity={userScope} projectId={projectId || 'default'} focusedReminder={focusedReminder} onNavigate={onNavigate}/><Todos api={api} projectId={projectId}/></>}
     </div></section>
@@ -48,13 +57,26 @@ function useLive() {
   return alive;
 }
 function Retry({ onClick, label = "重试" }) { return <button type="button" className="companion-page-retry" aria-label={label} onClick={onClick}><StatusDot state="failed"/></button>; }
-function Review({ api, projectId }) {
+function Review({ api, projectId, onNavigate }) {
   const [stats, setStats] = useState(null), [error, setError] = useState(false), [attempt, setAttempt] = useState(0);
   useEffect(() => { const c = new AbortController(); let live = true;
     api.getWeekStats({ projectId, signal: c.signal }).then(value => { if (live) { setStats(value); setError(false); } }).catch(() => { if (live) setError(true); });
     return () => { live = false; c.abort(); };
   }, [api, projectId, attempt]);
-  return <section aria-label="本周回顾"><div className="companion-page-stats">{[["remember", "记住"], ["confirm", "确认"], ["forget", "遗忘"]].map(([key, label]) => <div key={key}><strong>{stats?.[key] ?? "—"}</strong><span>{label}</span></div>)}</div><p className="companion-page-week">本周{stats?.week_start && <time dateTime={stats.week_start}> · {shanghaiDate(stats.week_start).replaceAll("-", "·")}</time>}</p>{error && <Retry onClick={() => setAttempt(x => x + 1)}/>}</section>;
+  const open = ({ layer, filter }) => onNavigate('library', {
+    project_id: projectId || 'default', layer, ...(filter ? { filter } : {}),
+  });
+  return <section aria-label="本周回顾">
+    <p className="companion-page-week">本周操作{stats?.week_start && <time dateTime={stats.week_start}> · {shanghaiDate(stats.week_start).replaceAll("-", "·")}</time>}</p>
+    <div className="companion-page-stats">{REVIEW_DESTINATIONS.map(({ key, label, primary, secondary }) => {
+      const count = <><strong>{stats?.[key] ?? '—'}</strong><span>{label}</span></>;
+      return <div key={key}>{onNavigate ? <>
+        <button type="button" onClick={() => open(primary)}>{count}<span className="companion-page-stat-action">{primary.action}<Icon name="arrow-up-right" size={12}/></span></button>
+        {secondary && <button type="button" onClick={() => open(secondary)}><span className="companion-page-stat-action">{secondary.action}<Icon name="arrow-up-right" size={12}/></span></button>}
+      </> : count}</div>;
+    })}</div>
+    {error && <p className="companion-page-error" role="status">本周回顾未读取<Retry onClick={() => setAttempt(x => x + 1)}/></p>}
+  </section>;
 }
 function shanghaiDate(value) {
   const date = new Date(value); return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);

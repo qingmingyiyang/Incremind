@@ -1,6 +1,7 @@
 .companion-page{display:grid;grid-template-columns:minmax(240px,520px) minmax(0,1fr);min-height:calc(100dvh - 100px);color:var(--ink);font-family:var(--sans)}
 .companion-page-bear{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:40px 24px;min-width:0}
 .companion-page-bear p{font:22px/1.6 var(--serif);text-align:center;margin:0}
+.companion-page-bear-title{display:none}
 .companion-page-sprite{width:260px;height:317px;background-image:url('/mascots/bear_companion_sprite-v1.png');background-size:1040px 1268px;background-position:-260px 0;flex-shrink:0}
 .companion-page-sprite[data-mode=chat]{background-position:-260px -634px}
 .companion-page-content{border-left:1px solid var(--line);padding:32px 48px 48px;min-width:0;max-width:720px;box-sizing:border-box;width:100%}
@@ -10,9 +11,16 @@
 .companion-page-mode{padding-top:28px;min-width:0}
 .companion-page button:focus-visible,.companion-page input:focus-visible,.companion-page textarea:focus-visible{outline:2px solid var(--red);outline-offset:2px}
 .companion-page-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
-.companion-page-stats strong{display:block;font:700 56px/1 var(--serif)}
+.companion-page-stats>div{min-width:0}
+.companion-page-stats button{width:100%;min-height:44px;border:0;border-bottom:1px solid var(--line);border-radius:var(--r-control);padding:12px 0;background:transparent;color:var(--ink);text-align:left;cursor:pointer}
+.companion-page-stats button:hover{background:var(--sunk)}
+.companion-page-stats button+button{padding:4px 0}
+.companion-page-stats strong{display:block;font:700 56px/1 var(--serif);overflow-wrap:anywhere}
 .companion-page-stats span{display:block;color:var(--muted);font-size:14px;margin-top:8px}
-.companion-page-week{margin-top:36px;border-top:1px solid var(--line);padding-top:20px;color:var(--ink2);line-height:1.8}
+.companion-page-stats .companion-page-stat-action{display:flex;align-items:center;gap:4px;color:var(--ink2);font-size:12px}
+.companion-page-stats button+button .companion-page-stat-action{margin-top:0}
+.companion-page-stat-action svg{flex:none}
+.companion-page-week{margin:0 0 12px;color:var(--ink2);line-height:1.8}
 .companion-page-retry{border:0;background:transparent;padding:12px;min-width:36px;min-height:36px;cursor:pointer;border-radius:var(--r-control)}
 .companion-page-todo{display:flex;align-items:center;gap:16px;min-height:60px;border-top:1px solid var(--line)}
 .companion-page-todo label{display:flex;align-items:center;gap:16px;flex:1;min-width:0;font-size:16px;overflow-wrap:anywhere}
@@ -37,7 +45,21 @@
 /* 固定进度入口下方保留滚动余量，原生定位控件时也避开入口。 */
 @media(min-width:760px){.app-router-page[data-page-view=companion]{padding-bottom:calc(var(--cr-space-8) + var(--cr-space-7) + env(safe-area-inset-bottom,0px));scroll-padding-bottom:calc(var(--cr-space-8) + var(--cr-space-7) + env(safe-area-inset-bottom,0px))}}
 @media(max-width:1000px){.companion-page{grid-template-columns:minmax(0,1fr)}.companion-page-content{padding:24px 16px 48px;max-width:none;border-left:0;border-top:1px solid var(--line)}.companion-page-bear{padding:24px;flex-direction:row}.companion-page-sprite{width:130px;height:158.5px;background-size:520px 634px;background-position:-130px 0}.companion-page-sprite[data-mode=chat]{background-position:-130px -317px}.companion-page-modes{gap:20px}}
-@media(max-width:759px){.companion-page{grid-template-columns:minmax(0,1fr)}.companion-page-bear{padding:20px;gap:8px}.companion-page-sprite{width:130px;height:158.5px;background-size:520px 634px;background-position:-130px 0}.companion-page-sprite[data-mode=chat]{background-position:-130px -317px}.companion-page-bear p{font-size:18px}.companion-page-content{border-left:0;border-top:1px solid var(--line);padding:24px 20px}.companion-page-modes{justify-content:space-between;gap:12px}.companion-page-modes button{font-size:19px}.companion-page-stats{gap:12px}.companion-page-stats strong{font-size:44px}.companion-page-chat{min-height:260px}}
+@media(max-width:759px){
+  .companion-page{grid-template-rows:auto 1fr}
+  .companion-page-bear{justify-content:flex-start;padding:8px 20px;gap:12px}
+  .companion-page-bear p{display:none}
+  .companion-page-bear-title{display:block;font:700 20px var(--serif)}
+  .companion-page-sprite{width:36px;height:44px;background-size:144px 176px;background-position:-36px 0}
+  .companion-page-sprite[data-mode=chat]{background-position:-36px -88px}
+  .companion-page-content{padding:8px 20px 24px}
+  .companion-page-modes{justify-content:space-between;gap:12px}
+  .companion-page-modes button{font-size:19px;min-height:44px}
+  .companion-page-mode{padding-top:16px}
+  .companion-page-stats{gap:12px}
+  .companion-page-stats strong{font-size:44px}
+  .companion-page-chat{min-height:260px}
+}
 
 .companion-page-pet{padding:8px 16px;border:1px solid var(--line2);border-radius:var(--r-control);background:transparent;color:var(--ink2);font:14px var(--sans);cursor:pointer}
 .companion-page-section{display:flex;align-items:center;gap:8px;margin:28px 0 8px;color:var(--muted);font:400 12px var(--sans)}
@@ -67,4 +89,4 @@
 .companion-page-delivered .ui-row-meta{max-width:36%;overflow-wrap:anywhere;white-space:normal}
 .companion-page-delivered>.companion-page-section{margin-top:0}
 .companion-page-error{color:var(--red)}
-@media(max-width:759px){.companion-page-bear{flex-direction:row;justify-content:flex-start}.companion-page-sprite{width:96px;height:117px;background-size:384px 468px;background-position:-96px 0}.companion-page-sprite[data-mode=chat]{background-position:-96px -234px}.companion-page-reminder{flex-wrap:wrap;gap:8px}.companion-page-reminder-title{flex-basis:calc(100% - 24px)}.companion-page-time{margin-left:16px;font-size:11px}.companion-page-reminder .companion-page-icon{margin-left:auto}.companion-page-presets button{padding:0 10px}}
+@media(max-width:759px){.companion-page-delivered{margin-top:12px}.companion-page-reminder{flex-wrap:wrap;gap:8px}.companion-page-reminder-title{flex-basis:calc(100% - 24px)}.companion-page-time{margin-left:16px;font-size:11px}.companion-page-reminder .companion-page-icon{margin-left:auto}.companion-page-presets button{padding:0 10px}}

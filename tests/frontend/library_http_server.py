@@ -14,6 +14,7 @@ os.environ['CHRIPTMAS_APP_ROOT'] = str(root)
 copyfile(Path(__file__).resolve().parents[2] / 'config/settings.toml.example', root / 'config/settings.toml')
 
 from backend.memory_app.app import create_app
+from backend.recognition import WorkScope
 
 
 app = create_app(runtime_root=root)
@@ -22,6 +23,13 @@ for identity, title, body in [('alpha-source', 'Alpha original', 'alpha beta 搜
                               ('other-source', 'Other original', 'different body')]:
     store.write('sources', identity, {'id': identity, 'project_id': 'alpha', 'title': title,
         'type': 'text', 'metadata': {'content_snapshot': body}}, expected_revision=0)
+store.write('sources', 'inbox-original', {'id': 'inbox-original', 'project_id': 'inbox',
+    'title': '收件箱原件', 'type': 'text', 'metadata': {'content_snapshot': '收件箱独有正文'}}, expected_revision=0)
+
+review_scope = WorkScope('local-user', 'ui-review')
+recognition = app.state.recognition_service
+source = recognition.stage_experience(scope=review_scope, content='项目复盘要保留原始数据。')
+recognition.propose(scope=review_scope, content='复盘保留原始数据', conditions=['项目已经结束'], source_experience_ids=[source])
 
 
 @app.middleware('http')

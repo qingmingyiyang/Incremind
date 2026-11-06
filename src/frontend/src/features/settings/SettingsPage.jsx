@@ -1,9 +1,10 @@
 import { formatBytes } from '../../shared/lib/formatBytes';
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
 import { Row, Switch, StatusDot, Icon } from '../../shared/ui';
 import { ChatGPTSubscriptionSettings } from '../../shared/ui/ChatGPTSubscriptionSettings';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
 import { readDeviceCredential, userStorageKey } from '../../shared/api/deviceTransport';
+import { PROJECT_TEMPLATES } from '../../shared/lib/projectTemplates';
 import { beginCredentialDraft, completeCredentialDraft, editCredentialDraft, receiveCredentialDraft, reviewCredentialDraft, submitCredentialDraft } from './credentialDraft';
 import { REMOTE_PROCESSING_HINT, PRIVATE_MATERIAL_HINT, LOCAL_GENERATION_HINT, LOCAL_VECTOR_HINT } from '../../shared/lib/privacyMessages';
 import { settingsApi } from './settingsApi';
@@ -21,7 +22,9 @@ import { AsrLexicon } from './AsrLexicon';
 import { AsrCredentialSettings } from './AsrCredentialSettings';
 import { PurposeTest } from './PurposeTest';
 import { QuickSettings } from './QuickSettings';
+import { EgressSwitch } from './EgressSwitch';
 import { ProviderConnections } from './ProviderConnections';
+import { useProviderOperations } from './useProviderOperations';
 import { ModelTrialPanel } from './ModelTrialPanel';
 import { PrivacyMap } from './PrivacyMap';
 import { RecentModelUsage } from './RecentModelUsage';
@@ -38,7 +41,7 @@ const purposeIcons = { generation: 'pattern', asr: 'mic', embedding: 'library', 
 function SettingsGlyph({ name, text }) { return <span className="settings-glyph" aria-hidden="true">{text || <Icon name={name} size={18}/>}</span>; }
 function SettingName({ label }) { return <span>{label}</span>; }
 function ModelSummary({ children, configured }) { return <span aria-hidden="true" className="settings-model-summary"><StatusDot state={configured ? 'done' : 'unverified'}/>{children}</span>; }
-function AccessibleModelSummary({ value, configured }) { return <span className="settings-accessible-summary" role="status" aria-label={`${value} · ${configured ? '已沉淀' : '未核对'}`}/>; }
+function AccessibleModelSummary({ value }) { return <span className="settings-accessible-summary" role="status" aria-label={value}/>; }
 function Expander({ open, onOpen }) { return <button type="button" className="settings-chevron" aria-label="展开" aria-expanded={open} onClick={onOpen}><Icon name="chevron-down" size={16}/></button>; }
 const PanelSaveContext = createContext(null);
 const configurationIdentity = row => JSON.stringify(['revision', 'provider', 'base_url', 'model', 'enabled', 'allow_remote', 'subscription_binding', 'server_model_binding'].map(key => row[key]));
@@ -88,7 +91,7 @@ function ModelPanel({ children, row, purpose, modeRevision, modeSelection, api, 
     }}>{children}{(!row.server_managed || purpose === 'generation') && <div className="settings-save"><button type="submit" title={`模型 r${row.revision ?? row.settings_revision ?? '—'} · 快模型 r${row.fast_model?.revision ?? '—'} · 单价 r${row.pricing?.revision ?? '—'}`} disabled={busy}>{saved ? '✓ 已保存' : '保存'}</button></div>}
   </form></PanelSaveContext.Provider>;
 }
-export default function SettingsPage({ projectId = 'default', initialSection = 'model', initialPurpose, expandProject, api = settingsApi }) {
+export default function SettingsPage({ projectId = 'default', initialSection = 'model', initialPurpose, expandProject, createProject, api = settingsApi }) {
   const showAgentTools = !readDeviceCredential()?.mobile;
   const [section, setSection] = useState(initialSection === 'websites' ? 'connect' : initialSection in groups ? initialSection : 'model');
   const [modelFocus, setModelFocus] = useState(initialPurpose || null);
@@ -139,14 +142,14 @@ export default function SettingsPage({ projectId = 'default', initialSection = '
     <div role="group" aria-label="主题" className="settings-theme">{[['light', '浅色', 'sun'], ['system', '跟随系统', 'settings'], ['dark', '深色', 'moon']].map(([key, label, icon]) =>
       <button type="button" key={key} aria-label={label} title={label} aria-pressed={theme === key} onClick={() => setTheme(applyTheme(key))}><Icon name={icon} size={16}/></button>)}</div></nav>
     <main>{error && <p role="alert">{error} <button type="button" onClick={() => { setError(''); setRefresh(old => old + 1); }}>重试</button></p>}{!value ? <span role="status">读取中</span> : <>
-      <QuickSettings key={`quick:${projectId}`} value={value} projects={projects} api={api} run={run} busy={busy} showAgentTools={showAgentTools}
-        onBackupScheduleChange={() => setScheduleRefresh(value => value + 1)}/>
       {section === 'model' && <ModelRows key={`${projectId}:${JSON.stringify(Object.values(value.model).map(row => row?.server_model_binding))}`} projectId={projectId} model={value.model} focus={modelFocus} onRecords={() => setSection('privacy')} api={api} busy={busy} run={run} reload={() => setRefresh(old => old + 1)}/>}
       {section === 'connect' && <ConnectionRows key={projectId} projectId={projectId} value={value} api={api} run={run} busy={busy} showAgentTools={showAgentTools} onConfigureGeneration={() => { setSection('model'); setModelFocus('generation'); }}/>}
       {section === 'privacy' && <PrivacyRows key={projectId} model={value.model} externalAgent={showAgentTools ? value.external_agent || { allow_remote: false, clients: {} } : null} privacy={value.privacy} projects={projects} api={api} run={run} busy={busy}/>}
-      {section === 'project' && <><ProjectRows key={projectId} projectId={projectId} projects={projects} expandProject={expandProject} api={api} run={run} busy={busy} showAgentTools={showAgentTools}/><SharedProjectManagement/></>}
+      {section === 'project' && <><ProjectRows key={projectId} projectId={projectId} projects={projects} expandProject={expandProject} openCreation={createProject} api={api} run={run} busy={busy} showAgentTools={showAgentTools}/><SharedProjectManagement/></>}
       {section === 'data' && <SettingsData projectId={projectId} scheduleRefresh={scheduleRefresh}/>}
       {section === 'devices' && <SettingsDevices key={projectId} projectId={projectId}/>}
+      <QuickSettings key={`quick:${projectId}`} value={value} projects={projects} api={api} run={run} busy={busy} showAgentTools={showAgentTools}
+        onBackupScheduleChange={() => setScheduleRefresh(value => value + 1)}/>
     </>}</main></div>;
 }
 
@@ -157,7 +160,26 @@ function ConnectionRows({ projectId, value, api, run, busy, showAgentTools, onCo
 
 function ModelRows({ projectId, model, focus, onRecords, api, run, busy, reload }) {
   const [open, setOpen] = useState(null), [modeView, setModeView] = useState(null), [test, setTest] = useState({});
-  useEffect(() => { if (focus) setOpen(focus); }, [focus]);
+  const [connections, setConnections] = useState(null), [connectionTarget, setConnectionTarget] = useState(null);
+  const providerOperations = useProviderOperations();
+  const modelArea = useRef(null), connectionsButton = useRef(null);
+  const connectionsId = useId(), egressHintId = useId();
+  function focusControl(control) {
+    control?.focus({ preventScroll: true });
+    control?.scrollIntoView?.({ block: 'nearest' });
+  }
+  function configurePurpose(purpose, type) {
+    setOpen(purpose);
+    if (type === 'subscription') setModeView('subscription');
+    const row = Array.from(modelArea.current?.querySelectorAll('[data-model-purpose]') || []).find(item => item.dataset.modelPurpose === purpose);
+    focusControl(row?.querySelector('.ui-row-open'));
+  }
+  useEffect(() => { if (focus) configurePurpose(focus); }, [focus]);
+  function configureConnection(purpose) {
+    setConnectionTarget({ purpose });
+    setConnections(true);
+    focusControl(connectionsButton.current);
+  }
   const actualMode = model.generation_mode.mode, mode = modeView || actualMode;
   const localState = localGenerationStatus(model.generation_mode.local_readiness);
   useEffect(() => { setModeView(null); }, [actualMode]);
@@ -174,17 +196,23 @@ function ModelRows({ projectId, model, focus, onRecords, api, run, busy, reload 
   function purposeRow(purpose) {
     const label = purposes[purpose];
     if (purpose === 'embedding') return <EmbeddingRow key={purpose} row={model.embedding} open={open === purpose}
-      onOpen={() => setOpen(old => old === purpose ? null : purpose)} api={api} run={run} busy={busy}/>;
+      onOpen={() => setOpen(old => old === purpose ? null : purpose)} onConnection={configureConnection} hintId={egressHintId} api={api} run={run} busy={busy}/>;
     const row = model[purpose] || {}, asr = purpose === 'asr', local = purpose === 'generation' && actualMode === 'local';
     const enabled = asr ? row.enabled === true && row.egress_manifest?.consented === true : row.allow_remote === true;
     const sharedAsr = asr && row.server_managed;
     const changeOpen = () => setOpen(old => old === purpose ? null : purpose);
-    const summary = local ? model.generation_mode.local_model : [row.provider, row.model].filter(Boolean).join(' · ') || '—';
-    return <section key={purpose} className="settings-item"><Row dot={<SettingsGlyph name={purposeIcons[purpose]}/>} title={<SettingName label={label}/>} sub={<ModelSummary configured={row.configured || row.status === 'ready'}>{summary}</ModelSummary>} expanded={open === purpose} onOpen={changeOpen} trailing={<><AccessibleModelSummary value={summary} configured={row.configured || row.status === 'ready'}/>{!row.configured && !local && !sharedAsr && <button type="button" className="settings-connect" onClick={changeOpen}>接入</button>}<Switch label={`${label}外发`} title={sharedAsr && row.available === false ? '共享转写缺少运行条件' : local ? LOCAL_GENERATION_HINT : REMOTE_PROCESSING_HINT} checked={!local && enabled} disabled={busy || local || sharedAsr && row.available === false && !enabled} onChange={next => toggle(purpose, next)}/><Expander open={open === purpose} onOpen={changeOpen}/></>}/>
+    const summary = local ? model.generation_mode.local_model : [row.provider_name || row.provider, row.model].filter(Boolean).join(' · ') || '—';
+    const configured = Boolean(row.configured || row.status === 'ready' || asr && row.has_api_key);
+    const modeLabel = local ? '本机' : row.server_managed ? '服务器共享' : purpose === 'generation' && actualMode === 'subscription' ? '订阅' : 'API';
+    const configLabel = local ? localState.label : row.provider_connection?.available === false ? '连接不可用' : asr && row.available === false ? '暂不可用' : configured ? '配置已保存' : '待接入';
+    const details = `${modeLabel} · ${configLabel}${summary !== '—' ? ` · ${summary}` : ''}`;
+    const currentTest = test[purpose]?.configuration === configurationIdentity(row) && test[purpose]?.mode === actualMode ? test[purpose].result : '';
+    return <section key={purpose} className="settings-item" data-model-purpose={purpose}><Row dot={<SettingsGlyph name={purposeIcons[purpose]}/>} title={<SettingName label={label}/>} sub={<ModelSummary configured={configured}>{details}</ModelSummary>} expanded={open === purpose} onOpen={changeOpen} trailing={<><AccessibleModelSummary value={details}/>{!configured && !local && !sharedAsr && <button type="button" className="settings-connect" onClick={changeOpen}>接入</button>}<EgressSwitch label={`${label}外发`} aria-describedby={egressHintId} title={sharedAsr && row.available === false ? '共享转写缺少运行条件' : local ? LOCAL_GENERATION_HINT : REMOTE_PROCESSING_HINT} checked={!local && enabled} disabled={busy || local || sharedAsr && row.available === false && !enabled} onChange={next => toggle(purpose, next)}/><Expander open={open === purpose} onOpen={changeOpen}/></>}/>
       {open === purpose && <div className="settings-expand">
         {purpose === 'generation' && !row.server_managed && <div role="group" aria-label="方式" className="settings-modes">{[['api', 'API'], ['subscription', '订阅'], ['local', '本机']].map(([key, name]) => <button type="button" key={key} title={key === 'local' ? [LOCAL_GENERATION_HINT, localState.detail].filter(Boolean).join(' ') : undefined} aria-pressed={mode === key} disabled={busy || key === 'local' && !localState.selectable} onClick={() => pickMode(key)}>{name}</button>)}</div>}
         {purpose === 'generation' && mode === 'subscription' && <ChatGPTSubscriptionSettings showEgressSwitch={false} onChanged={reload}/>}
         {purpose === 'generation' && !row.server_managed && <Row readOnly title={model.generation_mode.local_model} meta={localState.label} sub={localState.detail || '沿现有模型目录手动维护资源'}/>}
+        {!asr && !row.server_managed && !(purpose === 'generation' && mode !== 'api') && <button type="button" className="settings-choose-connection" onClick={() => configureConnection(purpose)}>选择服务商</button>}
         <ModelPanel key={`${purpose}:${mode}`} row={row} purpose={purpose} modeRevision={model.generation_mode.revision} modeSelection={model.generation_mode} api={api} run={run} busy={busy}>
         {asr ? <AsrCredentialSettings row={row} api={api} onSaved={reload}/> : !(purpose === 'generation' && ['subscription', 'local'].includes(mode)) && <ModelFields key={`${purpose}:${purpose === 'generation' ? actualMode : ''}`} purpose={purpose} label={label} row={row} readonly={purpose === 'generation' && actualMode !== 'api'} busy={busy} api={api} run={run}/>}
         {purpose === 'generation' && <FastModelField key={`${mode}:${row.subscription_binding?.account}`} row={row} mode={actualMode} modeRevision={model.generation_mode.revision} api={api} run={run} busy={busy}/>}
@@ -196,15 +224,21 @@ function ModelRows({ projectId, model, focus, onRecords, api, run, busy, reload 
           if (local && localState.retry) await api.saveMode({ mode: 'local', localEnabled: true,
             localBaseUrl: model.generation_mode.local_base_url, expectedRevision: model.generation_mode.revision });
           const start = performance.now(); const result = await api.testModel({ purpose });
-          setTest(old => ({ ...old, [purpose]: result.status === 'complete' ? `✓ ${Math.round(performance.now() - start)}ms` : `✕ ${result.status || 'test_failed'}` }));
-        })}>测试</button>}<span>{test[purpose]}</span></div>
+          setTest(old => ({ ...old, [purpose]: { configuration: configurationIdentity(row), mode: actualMode,
+            result: result.status === 'complete' ? `实际测试通过 · ${Math.round(performance.now() - start)} ms` : '实际测试未完成' } }));
+        })}>测试</button>}{!asr && purpose !== 'search' && <span role="status">{currentTest || '本页暂无测试结果'}</span>}</div>
         {(asr || purpose === 'search') && <PurposeTest purpose={purpose} projectId={projectId} row={row} api={api} disabled={busy}/>}
       </div>}
     </section>;
   }
-  return <div className="settings-models"><ProviderConnections projectId={projectId} model={model} api={api} run={run} busy={busy} onConfigure={(purpose, type) => { setOpen(purpose); if (type === 'subscription') setModeView('subscription'); }}/><h2 className="settings-caption">用途</h2><div className="settings-card">
-    {purposeRow('generation')}<VisionRow projectId={projectId} row={model.vision} open={open === 'vision'} onOpen={() => setOpen(old => old === 'vision' ? null : 'vision')} api={api} run={run} busy={busy}/>{purposeRow('asr')}
+  return <div ref={modelArea} className="settings-models"><h2 className="settings-caption">用途</h2>
+    <p className="settings-egress-note" id={egressHintId}>开启外发后，该用途可自动处理普通资料。私密资料及其派生内容仍不外发。</p><div className="settings-card">
+    {purposeRow('generation')}<VisionRow projectId={projectId} row={model.vision} open={open === 'vision'} onOpen={() => setOpen(old => old === 'vision' ? null : 'vision')} onConnection={configureConnection} hintId={egressHintId} api={api} run={run} busy={busy}/>{purposeRow('asr')}
   </div><h2 className="settings-caption">检索</h2><div className="settings-card">{['embedding', 'rerank', 'search'].map(purposeRow)}</div>
+    <section className="settings-service-panel" aria-label="连接管理"><button ref={connectionsButton} type="button" className="settings-disclosure" aria-controls={connections !== null ? connectionsId : undefined} aria-expanded={connections === true} onClick={() => setConnections(old => !old)}>
+      <span>服务商连接{providerOperations.error || providerOperations.commands.length > 0 ? ' · 有操作待核对' : ''}</span><Icon name="chevron-down" size={16}/></button>
+      {connections !== null && <div id={connectionsId} hidden={!connections}><ProviderConnections projectId={projectId} model={model} run={run} busy={busy} target={connectionTarget} onConfigure={configurePurpose}/></div>}
+    </section>
     <ModelTrialPanel projectId={projectId} model={model} run={run} busy={busy}/><SettingsQuestion projectId={projectId} label="带资料试问" model={model.generation.model || model.generation_mode.local_model}/><RecentModelUsage api={api} onRecords={onRecords}/></div>;
 }
 function FastModelField({ row, mode, modeRevision, api, run, busy }) {
@@ -242,31 +276,42 @@ function FastModelField({ row, mode, modeRevision, api, run, busy }) {
     {error && <p role="alert">{error} <button type="button" onClick={() => setRetry(old => old + 1)}>重试</button></p>}
   </div>;
 }
-function VisionRow({ projectId, row = { mode: 'local', mode_revision: 0, local: { status: 'unavailable' } }, open, onOpen, api, run, busy }) {
+function VisionRow({ projectId, row = { mode: 'local', mode_revision: 0, local: { status: 'unavailable' } }, open, onOpen, onConnection, hintId, api, run, busy }) {
   const originalApi = api;
   if (row.server_managed) api = { ...api, saveModel: args => originalApi.saveModel({ ...args, serverManaged: true }) };
   const remote = row.mode === 'remote';
-  return <section className="settings-item"><Row dot={<SettingsGlyph name="book"/>} title={<SettingName label="识图"/>} sub={<ModelSummary configured={remote ? row.configured : row.local?.status === 'ready'}>{remote ? row.model || '—' : row.local?.provider || '本机'}</ModelSummary>} expanded={open} onOpen={onOpen}
-    trailing={<><AccessibleModelSummary value={remote ? row.model || '—' : row.local?.provider || '本机'} configured={remote ? row.configured : row.local?.status === 'ready'}/>{!row.configured && remote && <button type="button" className="settings-connect" onClick={onOpen}>接入</button>}{remote && <Switch label="识图外发" title={REMOTE_PROCESSING_HINT} checked={row.allow_remote === true} disabled={busy} onChange={allowRemote => run(() => api.saveModel({ purpose: 'vision', baseUrl: row.base_url, model: row.model, apiKey: '', enabled: row.enabled === true, allowRemote, expectedRevision: row.revision }))}/>}<Expander open={open} onOpen={onOpen}/></>}/>
+  const configured = remote ? row.configured : row.local?.status === 'ready';
+  const mode = remote ? row.server_managed ? '服务器共享' : '外接' : '本机';
+  const status = remote ? row.provider_connection?.available === false ? '连接不可用' : configured ? '配置已保存' : '待接入' : configured ? '可用' : '不可用';
+  const details = [mode, status, remote ? row.model : row.local?.provider].filter(Boolean).join(' · ');
+  return <section className="settings-item" data-model-purpose="vision"><Row dot={<SettingsGlyph name="book"/>} title={<SettingName label="识图"/>} sub={<ModelSummary configured={configured}>{details}</ModelSummary>} expanded={open} onOpen={onOpen}
+    trailing={<><AccessibleModelSummary value={details}/>{!row.configured && remote && !row.server_managed && <button type="button" className="settings-connect" onClick={onOpen}>接入</button>}{remote && <EgressSwitch label="识图外发" aria-describedby={hintId} title={REMOTE_PROCESSING_HINT} checked={row.allow_remote === true} disabled={busy} onChange={allowRemote => run(() => api.saveModel({ purpose: 'vision', baseUrl: row.base_url, model: row.model, apiKey: '', enabled: row.enabled === true, allowRemote, expectedRevision: row.revision }))}/>}<Expander open={open} onOpen={onOpen}/></>}/>
     {open && <div className="settings-expand"><div role="group" aria-label="识图方式" className="settings-modes">{[['local', '本机'], ['remote', '外接']].map(([mode, label]) => <button type="button" key={mode} disabled={busy} aria-pressed={row.mode === mode} onClick={() => run(() => api.saveVisionMode({ mode, expectedRevision: row.mode_revision ?? 0 }))}>{label}</button>)}</div>
+      {remote && !row.server_managed && <button type="button" className="settings-choose-connection" onClick={() => onConnection('vision')}>选择服务商</button>}
       {remote ? <ModelPanel key="vision:remote" row={row} purpose="vision" api={api} run={run} busy={busy}><ModelFields purpose="vision" label="识图" row={row} busy={busy} api={api} run={run}/><PriceFields purpose="vision" label="识图" row={row} busy={busy} api={api} run={run}/></ModelPanel> : <Row readOnly title={row.local?.provider || '—'} meta={row.local?.status === 'ready' ? '可用' : '不可用'}/>}
       <PurposeTest purpose="vision" projectId={projectId} row={row} api={api} disabled={busy}/></div>}
   </section>;
 }
-function EmbeddingRow({ row = {}, open, onOpen, api, run, busy }) {
+function EmbeddingRow({ row = {}, open, onOpen, onConnection, hintId, api, run, busy }) {
   const originalApi = api;
   if (row.server_managed) api = { ...api, saveModel: args => originalApi.saveModel({ ...args, serverManaged: true }) };
-  const [test, setTest] = useState('');
+  const [test, setTest] = useState(null);
   const local = row.mode === 'local', state = row.local || {}, progress = state.status === 'installing' ? state.progress : state.index;
   const percent = progress?.total > 0 ? Math.min(100, Math.floor(progress.done / progress.total * 100)) : 0;
   const indexing = state.runtime_status === 'loaded' && state.status === 'ready' && progress && progress.done < progress.total;
   const runtimeLabel = { unloaded: '未加载', loading: '加载中', loaded: '已加载', unloading: '卸载中', failed: '加载失败' }[state.runtime_status] || '未加载';
-  return <section className="settings-item settings-vector-row"><Row dot={<SettingsGlyph name="library"/>} title={<SettingName label="向量"/>} expanded={open} onOpen={onOpen}
-    sub={<ModelSummary configured={local ? state.runtime_status === 'loaded' : row.configured}>{local ? `EmbeddingGemma 2 · ${runtimeLabel}` : row.model || '—'}</ModelSummary>}
-    trailing={<><AccessibleModelSummary value={local ? `EmbeddingGemma 2 · ${runtimeLabel}` : row.model || '—'} configured={local ? state.runtime_status === 'loaded' : row.configured}/>{!local && !row.configured && <button type="button" className="settings-connect" onClick={onOpen}>接入</button>}{!local && <Switch label="向量外发" title={REMOTE_PROCESSING_HINT} checked={row.allow_remote === true} disabled={busy} onChange={allowRemote => run(() => api.saveModel({ purpose: 'embedding', baseUrl: row.base_url, model: row.model, apiKey: '', enabled: allowRemote || row.enabled === true, allowRemote, expectedRevision: row.revision }))}/>}<Expander open={open} onOpen={onOpen}/></>}/>
+  const configured = local ? state.runtime_status === 'loaded' : row.configured;
+  const modeLabel = local ? '本机' : row.server_managed ? '服务器共享' : row.mode === 'server' ? '自建' : '外接';
+  const status = local ? runtimeLabel : row.provider_connection?.available === false ? '连接不可用' : configured ? '配置已保存' : '待接入';
+  const details = [modeLabel, status, local ? 'EmbeddingGemma 2' : row.model].filter(Boolean).join(' · ');
+  const currentTest = test?.configuration === configurationIdentity(row) && test?.mode === row.mode && test?.runtime === state.runtime_revision ? test.result : '';
+  return <section className="settings-item settings-vector-row" data-model-purpose="embedding"><Row dot={<SettingsGlyph name="library"/>} title={<SettingName label="向量"/>} expanded={open} onOpen={onOpen}
+    sub={<ModelSummary configured={configured}>{details}</ModelSummary>}
+    trailing={<><AccessibleModelSummary value={details}/>{!local && !row.configured && !row.server_managed && <button type="button" className="settings-connect" onClick={onOpen}>接入</button>}{!local && <EgressSwitch label="向量外发" aria-describedby={hintId} title={REMOTE_PROCESSING_HINT} checked={row.allow_remote === true} disabled={busy} onChange={allowRemote => run(() => api.saveModel({ purpose: 'embedding', baseUrl: row.base_url, model: row.model, apiKey: '', enabled: allowRemote || row.enabled === true, allowRemote, expectedRevision: row.revision }))}/>}<Expander open={open} onOpen={onOpen}/></>}/>
     {open && <div className="settings-expand"><div role="group" aria-label="向量方式" className="settings-modes">{[['local', '本机'], ['server', '自建'], ['remote', '外接']].map(([mode, label]) =>
       <button type="button" key={mode} title={mode === 'local' ? LOCAL_VECTOR_HINT : mode === 'server' ? '使用自建私有向量服务；仍按外发开关和私密规则处理' : undefined} aria-pressed={(row.mode || 'remote') === mode} disabled={busy}
         onClick={() => run(() => api.saveEmbeddingMode({ mode, expectedRevision: row.mode_revision ?? 0 }))}>{label}</button>)}</div>
+      {!local && !row.server_managed && <button type="button" className="settings-choose-connection" onClick={() => onConnection('embedding')}>选择服务商</button>}
       {!local ? null :
         state.status === 'installing' ? <span className="settings-vector-progress" title={state.index_reason_code || (indexing ? '已索引' : undefined)}>
           <span role="progressbar" aria-label={indexing ? '已索引' : '下载'} aria-valuemin={0} aria-valuemax={progress?.total || 0} aria-valuenow={progress?.done || 0}><span style={{ width: `${percent}%` }}/></span>
@@ -285,8 +330,9 @@ function EmbeddingRow({ row = {}, open, onOpen, api, run, busy }) {
       state.index && <Row readOnly title={indexing ? '索引中' : '已索引'} meta={`${state.index.done.toLocaleString()} / ${state.index.total.toLocaleString()}`} trailing={state.index_reason_code && <span className="settings-vector-failed" title={state.index_reason_code}>✕</span>}/>}
       {(!local || state.status === 'ready') && <div className="settings-test"><button type="button" disabled={busy || local && state.runtime_status !== 'loaded' || !local && row.server_managed} title={!local && row.server_managed ? '服务器共享 API 通过实际任务校验' : undefined} onClick={() => run(async () => {
         const start = performance.now(), result = await api.testModel({ purpose: 'embedding' });
-        setTest(result.status === 'complete' ? `✓ ${Math.round(performance.now() - start)}ms` : `✕ ${result.status || 'test_failed'}`);
-      })}>测试</button><span>{test}</span></div>}</div>}</section>;
+        setTest({ configuration: configurationIdentity(row), mode: row.mode, runtime: state.runtime_revision,
+          result: result.status === 'complete' ? `实际测试通过 · ${Math.round(performance.now() - start)} ms` : '实际测试未完成' });
+      })}>测试</button><span role="status">{currentTest || '本页暂无测试结果'}</span></div>}</div>}</section>;
 }
 function ModelFields({ purpose, label, row, readonly, busy, run, api }) {
   readonly = readonly || row.server_managed === true;
@@ -370,26 +416,28 @@ function PrivacyRows({ model, externalAgent, privacy, projects, api, run, busy }
   const name = id => projects.find(row => row.id === id)?.name || id;
   async function show(key) { setOpen(old => old === key ? null : key); if (key === 'sources') await run(async () => setSources(await api.privateSources())); }
   return <>
-    <div className="settings-card settings-stats"><div><strong>{usage.data?.receipt_count ?? '—'}</strong><span>本月外发记录</span></div><div><strong>{formatReceiptCost(usage.data?.cost)}</strong><span>本月花费</span></div><div><strong>{privacy.private_projects.length} · {sources?.length ?? '—'}</strong><span>私密项目 · 资料数</span></div></div>
+    {readError && <p role="alert">读取未完成 · 重试 <button type="button" onClick={() => setRefresh(old => old + 1)}>重试</button></p>}
+    <h2 className="settings-caption">范围</h2><div className="settings-card">
+    <Row dot={<SettingsGlyph name="library"/>} readOnly title="私密项目" sub="取消项目私密后，普通资料按各用途的外发设置处理。单独设为私密的资料继续受保护。"/>
+    <div className="settings-tags">{privacy.private_projects.map(id => <div className="settings-private-project" key={id}><span>{name(id)}</span><button type="button" disabled={busy} aria-label={`取消私密 · ${name(id)}`} onClick={() => run(() => api.savePrivacy(privacy.private_projects.filter(value => value !== id), privacy.revision))}>取消私密</button></div>)}
+      <select aria-label="添加私密项目" title={PRIVATE_MATERIAL_HINT} value={add} disabled={busy} onChange={event => { const id = event.target.value; setAdd(''); if (id) run(() => api.savePrivacy([...privacy.private_projects, id], privacy.revision)); }}><option value="">添加私密项目</option>{projects.filter(row => !privacy.private_projects.includes(row.id) && row.id !== 'me' && row.id !== 'inbox').map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select>
+    </div>
+    <Row dot={<SettingsGlyph name="book"/>} title={<span title={PRIVATE_MATERIAL_HINT}>私密资料</span>} expanded={open === 'sources'} meta={sources ? String(sources.length) : '—'} onOpen={() => show('sources')}/>
+    {open === 'sources' && <div className="settings-expand">{(sources || []).map(row => <Row readOnly key={`${row.type}:${row.source_id}`} title={row.title} sub={row.inherited ? '随项目保持私密' : row.type === 'recognition' ? '私密认识' : '私密原件'} meta={name(row.project_id)} trailing={!row.inherited && Number.isInteger(row.source_revision) && Number.isInteger(row.policy_revision) && <button className="settings-cancel-private" type="button" disabled={busy} aria-label={`取消私密 · ${row.title}`} onClick={() => run(async () => { await api.cancelPrivate(row); setSources(await api.privateSources()); })}>取消私密</button>}/>)}</div>}
+    </div>
+    <PrivacyMap model={model} externalAgent={externalAgent} privacy={privacy} projects={projects} api={api} run={run} busy={busy}/>
+    <h2 className="settings-caption">本月外发</h2><div className="settings-card settings-stats"><div><strong>{usage.data?.receipt_count ?? '—'}</strong><span>外发记录</span></div><div><strong>{formatReceiptCost(usage.data?.cost)}</strong><span>花费</span></div><div><strong>{privacy.private_projects.length} · {sources?.length ?? '—'}</strong><span>私密项目 · 资料数</span></div></div>
     <ReceiptScopeNote summary={usage.data}/>
     {usage.data && <p className="settings-support-empty">已登记模型调用 {usage.data.model_call_count} 次{externalAgent && <> · 外部记忆交付 {usage.data.external_delivery_count} 次</>}</p>}
     {usage.error && <p role="alert">本月记录未读取 · <button type="button" onClick={usage.refresh}>重试</button></p>}
-    <PrivacyMap model={model} externalAgent={externalAgent} privacy={privacy} projects={projects} api={api} run={run} busy={busy}/>
-    {readError && <p role="alert">读取未完成 · 重试 <button type="button" onClick={() => setRefresh(old => old + 1)}>重试</button></p>}
-    <h2 className="settings-caption">范围</h2><div className="settings-card">
-    <Row dot={<SettingsGlyph name="library"/>} readOnly title={<span title={PRIVATE_MATERIAL_HINT}>私密项目</span>}/>
-    <div className="settings-tags">{privacy.private_projects.map(id => <button type="button" disabled={busy} title={`取消后按各用途外发开关参与云端处理。${PRIVATE_MATERIAL_HINT}`} aria-label={`移除${name(id)}私密`} key={id} onClick={() => run(() => api.savePrivacy(privacy.private_projects.filter(value => value !== id), privacy.revision))}>{name(id)} ×</button>)}
-      <select aria-label="添加私密项目" title={PRIVATE_MATERIAL_HINT} value={add} disabled={busy} onChange={event => { const id = event.target.value; setAdd(''); if (id) run(() => api.savePrivacy([...privacy.private_projects, id], privacy.revision)); }}><option value="">＋</option>{projects.filter(row => !privacy.private_projects.includes(row.id) && row.id !== 'me' && row.id !== 'inbox').map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select>
-    </div>
-    <Row dot={<SettingsGlyph name="book"/>} title={<span title={PRIVATE_MATERIAL_HINT}>私密资料</span>} expanded={open === 'sources'} meta={sources ? String(sources.length) : '—'} onOpen={() => show('sources')}/>
-    {open === 'sources' && <div className="settings-expand">{(sources || []).map(row => <Row readOnly key={`${row.type}:${row.source_id}`} title={row.title} sub={row.type === 'recognition' ? '认识' : '原件'} meta={name(row.project_id)} trailing={!row.inherited && Number.isInteger(row.source_revision) && Number.isInteger(row.policy_revision) && <button type="button" disabled={busy} onClick={() => run(async () => { await api.cancelPrivate(row); setSources(await api.privateSources()); })}>取消私密</button>}/>)}</div>}
-    </div><ReceiptInspection api={api} timezone={usage.timezone} month={usage.month} scopeKey={scope.key}/>
+    <ReceiptInspection api={api} timezone={usage.timezone} month={usage.month} scopeKey={scope.key}/>
   </>;
 }
-function ProjectRows({ projectId, projects, expandProject, api, run, busy, showAgentTools }) {
+function ProjectRows({ projectId, projects, expandProject, openCreation, api, run, busy, showAgentTools }) {
   const [open, setOpen] = useState(expandProject || projectId || null), [newName, setNewName] = useState('');
-  const [template, setTemplate] = useState('blank');
-  const templates = [{ id: 'blank', name: '空白', scenes: [] }, { id: 'work', name: '工作', scenes: ['会议', '周报', '计划'] }, { id: 'study', name: '学习', scenes: ['阅读', '笔记', '复习'] }, { id: 'writing', name: '写作', scenes: ['选题', '素材', '草稿'] }, { id: 'life', name: '生活', scenes: ['日常', '旅行', '安排'] }];
+  const [template, setTemplate] = useState(PROJECT_TEMPLATES[0]);
+  const [creating, setCreating] = useState(openCreation === true), [created, setCreated] = useState(null);
+  const createFormId = useId(), createButton = useRef(null), createName = useRef(null), returnToCreate = useRef(false);
   const [counts, setCounts] = useState({}), [refresh, setRefresh] = useState(0);
   const gate = useRequestScope('project-counts'), scope = gate.scope;
   useEffect(() => {
@@ -401,7 +449,43 @@ function ProjectRows({ projectId, projects, expandProject, api, run, busy, showA
     }
     return () => gate.invalidate('read');
   }, [projects, api, scope, refresh]);
-  return <><h2 className="settings-caption">项目<span className="settings-question-model">{projects.length}</span></h2><div className="settings-project-tabs" role="tablist" aria-label="项目设置">{projects.map(row => <button type="button" role="tab" key={row.id} aria-selected={open === row.id} onClick={() => setOpen(row.id)}>{row.name}{row.private && <Icon name="book" size={12}/>}</button>)}</div><section className="settings-card settings-project-create" aria-label="新建项目"><div className="settings-project-templates" role="group" aria-label="项目模板">{templates.map(item => <button type="button" key={item.id} aria-pressed={template === item.id} onClick={() => { setTemplate(item.id); if (!newName || templates.some(value => value.name === newName)) setNewName(item.id === 'blank' ? '' : item.name); }}><strong>{item.name}</strong><span>{item.scenes.join(' · ') || '自己安排'}</span></button>)}</div><form className="settings-new-project" onSubmit={event => { event.preventDefault(); if (busy || !newName.trim()) return; const selected = templates.find(item => item.id === template); run(async () => { const created = await api.createProject(newName.trim()); if (!gate.isScopeCurrent(scope)) return; setNewName(''); setOpen(created.id); if (selected.scenes.length) await api.saveProject(created, { scenes: selected.scenes }); }); }}><input aria-label="新建项目" placeholder="项目名称" value={newName} disabled={busy} onChange={event => setNewName(event.target.value)}/><button disabled={busy || !newName.trim()}>新建项目</button></form></section><div className="settings-card settings-project-list">{projects.map(row => <section className="settings-item" key={row.id}><Row dot={<SettingsGlyph text={Array.from(row.name)[0]}/>} title={<SettingName label={row.name}/>} sub={<span aria-hidden="true">{row.scenes?.join(' · ') || '—'} · {row.id === 'inbox' ? 0 : counts[row.id] ?? '—'} 条约束</span>} expanded={open === row.id} onOpen={() => setOpen(old => old === row.id ? null : row.id)} trailing={<Expander open={open === row.id} onOpen={() => setOpen(old => old === row.id ? null : row.id)}/>}/>
+  useEffect(() => { if (openCreation) setCreating(true); }, [openCreation]);
+  useEffect(() => { if (creating) createName.current?.focus(); }, [creating]);
+  useEffect(() => {
+    if (!creating && !busy && returnToCreate.current) {
+      returnToCreate.current = false;
+      createButton.current?.focus();
+    }
+  }, [creating, busy]);
+  const latestProject = created && (projects.find(row => row.id === created.id) || created);
+  const sameScenes = row => (row.scenes || []).join('\n') === template.scenes.join('\n');
+  const scenesChanged = latestProject && latestProject.revision !== created.revision && !sameScenes(latestProject);
+  function closeCreation() {
+    returnToCreate.current = true;
+    setCreating(false); setCreated(null); setNewName(''); setTemplate(PROJECT_TEMPLATES[0]);
+  }
+  function createProject(event) {
+    event.preventDefault();
+    if (busy || scenesChanged || !newName.trim()) return;
+    run(async () => {
+      const project = created || await api.createProject(newName.trim());
+      if (!gate.isScopeCurrent(scope)) return;
+      setCreated(project); setOpen(project.id);
+      if (template.scenes.length && !sameScenes(latestProject || project)) {
+        await api.saveProject(project, { scenes: template.scenes });
+      }
+      if (gate.isScopeCurrent(scope)) closeCreation();
+    });
+  }
+  return <><div className="settings-project-heading"><h2 className="settings-caption">项目 <span>{projects.length}</span></h2>
+    <button ref={createButton} className="settings-disclosure" type="button" aria-expanded={creating} aria-controls={createFormId} disabled={busy} onClick={() => setCreating(old => !old)}>新建项目</button></div>
+    <section id={createFormId} hidden={!creating} className="settings-card settings-project-create" aria-label="新建项目">
+      <div className="settings-project-templates" role="group" aria-label="项目模板">{PROJECT_TEMPLATES.map(item => <button type="button" key={item.name} disabled={busy || Boolean(created)} aria-pressed={template === item} onClick={() => {
+        setTemplate(item); if (!newName || newName === template.name) setNewName(item.scenes.length ? item.name : '');
+      }}><strong>{item.name}</strong><span>{item.scenes.join(' · ') || '自己安排'}</span></button>)}</div>
+      <form className="settings-new-project" onSubmit={createProject}><input ref={createName} aria-label="项目名称" placeholder="项目名称" value={newName} disabled={busy || Boolean(created)} onChange={event => setNewName(event.target.value)}/><button type="submit" disabled={busy || scenesChanged || !newName.trim()}>{created ? '保存场景' : '创建'}</button></form>
+      {created && <p className="settings-login-hint" role="status">{created.name}已创建。{scenesChanged ? '项目已有新修改，在下方详情核对场景。' : '场景可继续保存。'} <button type="button" disabled={busy} onClick={closeCreation}>关闭新建</button></p>}
+    </section><div className="settings-card settings-project-list">{projects.map(row => <section className="settings-item" key={row.id}><Row dot={<SettingsGlyph text={Array.from(row.name)[0]}/>} title={<SettingName label={row.name}/>} sub={<span aria-hidden="true">{row.scenes?.join(' · ') || '—'} · {row.id === 'inbox' ? 0 : counts[row.id] ?? '—'} 条约束{row.private && ' · 私密'}</span>} expanded={open === row.id} onOpen={() => setOpen(old => old === row.id ? null : row.id)} trailing={<Expander open={open === row.id} onOpen={() => setOpen(old => old === row.id ? null : row.id)}/>}/>
     {open === row.id && <section role="region" aria-label={`${row.name}设置`} className="settings-expand">
       {row.id !== 'me' && <ProjectFields key={`fields:${row.id}`} row={row} run={run} api={api} busy={busy}/>}
       {row.id !== 'inbox' && <ProjectConstraints key={row.id} projectId={row.id} api={api} onChanged={() => setRefresh(old => old + 1)}/>}
@@ -419,6 +503,6 @@ function ProjectFields({ row, api, run, busy }) {
     if (edited.current.name === edit) { edited.current.name = 0; setName(saved.name); }
   }); }}><label>名称<input aria-label="名称" value={name} onChange={event => { edited.current.name += 1; setName(event.target.value); }}/></label><button disabled={busy}>保存</button></form>
     <ProjectScenes row={row} api={api} run={run} busy={busy}/>
-    <Row readOnly title="私密" trailing={<Switch label="私密" title={PRIVATE_MATERIAL_HINT} checked={row.private === true} disabled={busy} onChange={value => run(() => api.saveProject(row, { private: value }))}/>}/>
+    <Row readOnly title="私密" sub={row.private ? '该项目的资料和派生内容保持私密。' : '该项目的普通资料按各用途的外发设置处理。'} trailing={<Switch label="私密" title={PRIVATE_MATERIAL_HINT} checked={row.private === true} disabled={busy} onChange={value => run(() => api.saveProject(row, { private: value }))}/>}/>
   </>;
 }

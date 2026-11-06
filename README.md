@@ -57,7 +57,7 @@ For example, an introductory article on spaced repetition might produce an insig
 
 ## Features
 
-The homepage shows pending insights and recent conversations, with project templates and `#`, `/`, and `@` input shortcuts. Settings bring model connections, projects, privacy, backups, and devices into six groups, with a preview before applying supported text commands. The shared UI conventions are maintained in [DESIGN.md](DESIGN.md).
+The workbench lets you capture material immediately and shows when the original is saved and when processing finishes. The homepage shows pending insights and recent activity for the current project, with `#`, `/`, and `@` input shortcuts. Settings organize models by purpose and offer templates when creating a project. Supported quick commands show a preview before applying changes. The shared UI conventions are maintained in [DESIGN.md](DESIGN.md).
 
 | Status | Feature | What it does |
 |---|---|---|

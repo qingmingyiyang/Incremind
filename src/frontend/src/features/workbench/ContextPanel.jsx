@@ -14,7 +14,7 @@ const number = value => typeof value === 'number' && Number.isFinite(value) && v
 const shown = value => number(value) ? String(value) : '—';
 const percent = (value, window) => number(value) && number(window) && window > 0 ? `${Math.round(value / window * 1000) / 10}%` : '—';
 
-export function ContextPanel({ kind = 'ask', receipt = {}, onClose, onOpenCitation, onSettings, projectName, navigation }) {
+export function ContextPanel({ kind = 'ask', receipt = {}, activeLayer, onClose, onOpenCitation, onSettings, projectName, navigation }) {
   const context = receipt.context ?? {};
   const parts = Array.isArray(context.parts) ? context.parts : [];
   const used = parts.length && parts.every(part => number(part.tokens)) ? parts.reduce((sum, part) => sum + part.tokens, 0) : undefined;
@@ -22,6 +22,28 @@ export function ContextPanel({ kind = 'ask', receipt = {}, onClose, onOpenCitati
   const free = number(window) && number(used) && number(reserve) ? Math.max(0, window - used - reserve) : undefined;
   const citations = Array.isArray(receipt.citations) ? receipt.citations : [];
   const entries = Array.isArray(context.entries) ? context.entries : citations;
+  const citationByNumber = new Map(citations.map(citation => [citation.n, citation]));
+  const linkedCitations = new Set();
+  const ladderEntries = entries.map((entry, index) => {
+    const citation = citationByNumber.get(index + 1);
+    if (citation?.id === entry.id && citation.layer === entry.layer) {
+      linkedCitations.add(citation);
+      return { ...entry, ...citation };
+    }
+    return { ...entry, n: entry.n ?? index + 1 };
+  });
+  ladderEntries.push(...citations.filter(citation => !linkedCitations.has(citation) && !entries.includes(citation)));
+  const ladder = useRef(null);
+  useEffect(() => {
+    if (!activeLayer) return;
+    const frame = requestAnimationFrame(() => {
+      const layer = Array.from(ladder.current?.querySelectorAll('[data-context-layer]') || [])
+        .find(node => node.dataset.contextLayer === activeLayer);
+      layer?.focus({ preventScroll: true });
+      layer?.scrollIntoView?.({ block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeLayer]);
   const binding = context.feedback;
   const [identityEpoch, setIdentityEpoch] = useState(0);
   const actor = deviceIdentity(), userSpace = userStorageKey(binding?.project_id ?? '');
@@ -126,11 +148,7 @@ export function ContextPanel({ kind = 'ask', receipt = {}, onClose, onOpenCitati
   return <FocusPanel title="本次用了什么" onClose={onClose} className="context-panel">
     {navigation}
     {reading.key === key && reading.error && <p role="alert">{reading.error} · <button type="button" disabled={loading} onClick={loadFeedback}>重试</button></p>}
-    <div className="context-total" aria-label="总量"><strong>{shown(used)}</strong>{' '}<span>/ {shown(window)}</span>{' '}<span>{percent(used, window)}</span></div>
-    {number(window) && window > 0 && number(used) && <div className="context-segments" role="progressbar" aria-label="上下文用量" aria-valuemin={0} aria-valuemax={window} aria-valuenow={used}>
-      {rows.filter(part => number(part.tokens) && part.tokens > 0 && part.key !== 'free').map((part, index) => <span key={`${part.key}:${index}`} title={`${labels[part.key] ?? '预留回答'} ${shown(part.tokens)}`} className={part.key === 'reserve' ? 'context-reserve' : ''} style={{ width: `${Math.min(100, part.tokens / window * 100)}%`, backgroundColor: `var(${colors[part.key] ?? '--line2'})` }}/>)}</div>}
-    <section className="context-classification" aria-label="分类">{rows.map((part, index) => <div className="context-part" key={`${part.key}:${index}`}><span className={`context-swatch ${part.key === 'reserve' ? 'context-reserve' : ''}`} style={{ backgroundColor: `var(${colors[part.key] ?? '--line2'})` }}/><span>{labels[part.key] ?? ({ reserve: '预留回答', free: '空余' }[part.key] ?? '—')}</span><span>{shown(part.count)}</span><span>{shown(part.tokens)}</span><span>{percent(part.tokens, window)}</span></div>)}</section>
-    {kind === 'ask' && <details className="context-section" open><summary>阶梯</summary><LadderTrace trace={receipt.trace ?? []} layers={receipt.layers} citations={citations} onOpenCitation={onOpenCitation}/></details>}
+    {kind === 'ask' && <details ref={ladder} className="context-section" open><summary>引用与阶梯</summary><LadderTrace trace={receipt.trace ?? []} layers={receipt.layers} citations={ladderEntries} onOpenCitation={onOpenCitation}/></details>}
     {(kind === 'ask' || entries.some(entry => entry.supplemented || entry.situation_pack)) && <details className="context-section" aria-label="条目"><summary>条目</summary>{entries.map((entry, index) => {
       const url = externalCitationUrl(entry);
       const failure = failed.get(entryKey(entry));
@@ -142,7 +160,13 @@ export function ContextPanel({ kind = 'ask', receipt = {}, onClose, onOpenCitati
       </Fragment>;
     })}</details>}
     {kind === 'ask' && number(context.bookshelf?.hits) && context.bookshelf.hits > 0 && <details className="context-section" aria-label="书架"><summary>书架 {context.bookshelf.hits}</summary>{(context.bookshelf.spines ?? []).map((spine, index) => <Row key={`${spine.kind}:${spine.id}:${index}`} title={spine.title || '—'} meta={[labels[spine.layer], spine.scene, typeof spine.date === 'string' ? spine.date.slice(0, 10) : null].filter(Boolean).join(' · ')} readOnly={!onOpenCitation} onOpen={() => onOpenCitation?.(spine)}/>)}</details>}
-    <section className="context-egress" aria-label="这次的设置"><Row title="模型" meta={typeof egress.model === 'string' ? egress.model : typeof receipt.model === 'string' ? receipt.model : '—'} readOnly={!onSettings} onOpen={() => onSettings?.('model')}/><Row title="外发" meta={authorization} readOnly={!onSettings} onOpen={() => onSettings?.('privacy')}/>{onSettings && <Row title="范围" meta={projectName} onOpen={() => onSettings('project')}/>}<Row title="私密排除" meta={shown(excluded)} readOnly/>{receipt.executor && receipt.executor !== 'builtin' ? <ExternalUsage receipt={receipt}/> : <><Row title="实际用量" meta={`入 ${shown(input)} · 出 ${shown(output)}`} readOnly/><Row title="花费" meta={formatModelCost(receipt.model_cost)} readOnly/></>}</section>
+    <details className="context-section"><summary>技术详情</summary>
+      <div className="context-total" aria-label="总量"><strong>{shown(used)}</strong>{' '}<span>/ {shown(window)}</span>{' '}<span>{percent(used, window)}</span></div>
+      {number(window) && window > 0 && number(used) && <div className="context-segments" role="progressbar" aria-label="上下文用量" aria-valuemin={0} aria-valuemax={window} aria-valuenow={used}>
+        {rows.filter(part => number(part.tokens) && part.tokens > 0 && part.key !== 'free').map((part, index) => <span key={`${part.key}:${index}`} title={`${labels[part.key] ?? '预留回答'} ${shown(part.tokens)}`} className={part.key === 'reserve' ? 'context-reserve' : ''} style={{ width: `${Math.min(100, part.tokens / window * 100)}%`, backgroundColor: `var(${colors[part.key] ?? '--line2'})` }}/>)}</div>}
+      <section className="context-classification" aria-label="分类">{rows.map((part, index) => <div className="context-part" key={`${part.key}:${index}`}><span className={`context-swatch ${part.key === 'reserve' ? 'context-reserve' : ''}`} style={{ backgroundColor: `var(${colors[part.key] ?? '--line2'})` }}/><span>{labels[part.key] ?? ({ reserve: '预留回答', free: '空余' }[part.key] ?? '—')}</span><span>{shown(part.count)}</span><span>{shown(part.tokens)}</span><span>{percent(part.tokens, window)}</span></div>)}</section>
+      <section className="context-egress" aria-label="这次的设置"><Row title="模型" meta={typeof egress.model === 'string' ? egress.model : typeof receipt.model === 'string' ? receipt.model : '—'} readOnly={!onSettings} onOpen={() => onSettings?.('model')}/><Row title="外发" meta={authorization} readOnly={!onSettings} onOpen={() => onSettings?.('privacy')}/>{onSettings && <Row title="范围" meta={projectName} onOpen={() => onSettings('project')}/>}<Row title="私密排除" meta={shown(excluded)} readOnly/>{receipt.executor && receipt.executor !== 'builtin' ? <ExternalUsage receipt={receipt}/> : <><Row title="实际用量" meta={`入 ${shown(input)} · 出 ${shown(output)}`} readOnly/><Row title="花费" meta={formatModelCost(receipt.model_cost)} readOnly/></>}</section>
+    </details>
   </FocusPanel>;
 }
 export default ContextPanel;

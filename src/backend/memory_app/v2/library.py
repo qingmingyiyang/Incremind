@@ -27,6 +27,29 @@ from .outcomes import hidden_outcome_ids, versions as outcome_versions, candidat
 from .task_drafts import TaskDrafts
 
 
+def _match_excerpt(title, text, folded_query):
+    for part in ('text', 'title', 'title_text'):
+        content = text if part == 'text' else title if part == 'title' else title + ' ' + text
+        folded = content.casefold()
+        offset = folded.find(folded_query)
+        if offset < 0:
+            continue
+        start, end = offset, offset + min(len(folded_query), 160)
+        if len(folded) != len(content):
+            cursor = 0
+            for index, char in enumerate(content):
+                width = len(char.casefold())
+                if cursor <= offset < cursor + width:
+                    start = index
+                cursor += width
+                if cursor >= end:
+                    end = index + 1
+                    break
+        return {'part': part, 'pre': content[max(0, start - 48):start], 'quote': content[start:end],
+                'post': content[end:end + 48]}
+    return None
+
+
 def _scoped(function, *args):
     # Work deferred past the reply reuses connections like the request did.
     with connection_scope():
@@ -272,23 +295,40 @@ class LibraryRead:
             result['placement'] = {**hint.payload, **result, 'current_scene': result['scene']}
         return result
 
+    def source_scenes(self, row, project, docs):
+        return {self.scene('item', row['id'], project), *(self.scene('document', identity, project)
+            for identity, doc in docs.items() if identity == row['document_id']
+            or any(ref.get('source_id') == row['id'] for ref in doc.get('source_refs', [])))}
+
     def list(self, layer, project, scene, q, state=None):
+        folded_query = q.casefold()
         if layer == 'insights':
             rows = self.insights(project)
             rows = [r for r in rows if (scene is None or r['scene'] == scene)
-                    and q.casefold() in r['text'].casefold()]
+                    and folded_query in r['text'].casefold()]
+            if folded_query:
+                rows = [{**r, 'match': _match_excerpt('', r['text'], folded_query)} for r in rows]
             counts = {s: sum(r['state'] == s for r in rows) for s in ('pending', 'active', 'stale', 'forgotten')}
             return {'items': [r for r in rows if state is None or r['state'] == state], 'counts': counts,
                 'namespace': self.namespace}
         prepared = DocumentReadSet.load(self.records, self.documents, project)
         docs = self.docs(project, include_archived=layer in {'notes', 'sources'}, prepared=prepared)
         if layer == 'sources':
-            rows = self.source_rows(project, docs, prepared=prepared, include_unfinished=True)
-            return {'items': [r for r in rows if (state is None or not r.get('state')) and (scene is None or
-                self.scene('item', r['id'], project) == scene or
-                any(self.scene('document', d, project) == scene for d in docs
-                    if d == r['document_id'] or any(ref.get('source_id') == r['id'] for ref in docs[d].get('source_refs', []))))
-                and (not q or q.casefold() in (r['title'] + ' ' + self.source_text(project, r['id'])).casefold())]}
+            rows = []
+            for row in self.source_rows(project, docs, prepared=prepared, include_unfinished=True):
+                if state is not None and row.get('state'):
+                    continue
+                scenes = self.source_scenes(row, project, docs) if scene is not None else None
+                if scenes is not None and scene not in scenes:
+                    continue
+                match = _match_excerpt(row['title'], self.source_text(project, row['id']), folded_query) if folded_query else None
+                if folded_query and match is None:
+                    continue
+                if match is not None:
+                    assigned = (scenes if scenes is not None else self.source_scenes(row, project, docs)) - {None}
+                    row = {**row, 'match': match, 'scene': scene or (next(iter(assigned)) if len(assigned) == 1 else None)}
+                rows.append(row)
+            return {'items': rows}
         kinds = {}
         if layer == 'summaries':
             for source in self.source_rows(project, docs, prepared=prepared, include_unfinished=False):
@@ -306,13 +346,16 @@ class LibraryRead:
                 continue
             summary = summary_of(markdown)[0]
             text = summary if layer == 'summaries' else markdown
-            if q.casefold() not in (doc.get('title', '') + ' ' + text).casefold():
+            match = _match_excerpt(doc.get('title', ''), text, folded_query) if folded_query else None
+            if folded_query and match is None:
                 continue
             row = {'document_id': identity, 'title': doc['title'], 'created_at': doc.get('created_at'),
                    'verified': is_verified(self.records, self.documents, identity)}
             recall = self.records.read('v2_document_recall', identity)
             row['recall_state'] = recall.payload['state'] if recall else 'normal'
             row.update(self.placement_metadata(doc, project))
+            if match is not None:
+                row.update(match=match, scene=scene or self.scene('document', identity, project))
             from .document_filings import filing_view
             filed = filing_view(self.records, identity, project)
             if filed is not None:

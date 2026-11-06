@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { Icon } from '../../shared/ui';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
 import { deviceIdentity, isDeviceIdentity, userStorageKey } from '../../shared/api/deviceTransport';
 import { recognitionApi } from '../../shared/api/recognitionApi';
@@ -262,13 +261,15 @@ export function QuickSettings({ value, projects, api, run, busy, onBackupSchedul
       finally { if (operation.current === token) operation.current = null; if (current(token)) setWorking(false); }
     });
   }
-  return <section className="settings-quick" aria-label="一句话改设置">
+  return <details className="settings-quick">
+    <summary>快捷命令{visible && pending && <span> · 有操作待核对</span>}</summary>
+    <p id="settings-quick-help" className="settings-quick-help">每次输入一项。支持切换主题、设置项目私密、切换模型{showAgentTools ? '或外部 agent' : ''}外发、切换识图或向量方式、设置每周备份和添加项目约束。</p>
     <form className="settings-quick-input" onSubmit={event => { event.preventDefault(); makePreview(); }}>
-      <Icon name="pattern" size={18}/><input aria-label="一句话改设置" placeholder="说一句，比如：每周二 09:00 备份" value={visible ? text : ''} disabled={!visible} onChange={event => { edit.current += 1; gate.invalidate('preview'); setText(event.target.value); setPreview(null); setSaved(''); if (!operation.current) setWorking(false); }}/>
+      <input aria-label="快捷命令" aria-describedby="settings-quick-help" placeholder="例如：切换到深色" value={visible ? text : ''} disabled={!visible} onChange={event => { edit.current += 1; gate.invalidate('preview'); setText(event.target.value); setPreview(null); setSaved(''); if (!operation.current) setWorking(false); }}/>
       {visible && saved && <span role="status">{saved}</span>}<button type="submit" disabled={!visible || busy || working || Boolean(pending) || !text.trim()}>预览</button>
     </form>
     {visible && error && <p role="alert" className="settings-quick-help">{error}</p>}
     {visible && pending && <div className="settings-quick-diff" role="status"><span>待核对</span><strong style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', minWidth: 0 }}>{pending.kind === 'constraint' ? `${pending.project.name} · ${pending.content}` : scheduleLabel(pending.command.body)}</strong><button type="button" disabled={busy || working} onClick={recover}>核对并重试</button></div>}
     {visible && (preview?.error ? <p role="status" className="settings-quick-help">{preview.error}</p> : preview && <div className="settings-quick-diff" role="region" aria-label="设置变更预览"><span>{preview.label}</span><span className="settings-quick-old">{stateLabel(preview.from)}</span><span aria-hidden="true">→</span><strong style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', minWidth: 0 }}>{preview.display || stateLabel(preview.to)}</strong><span className="settings-quick-actions"><button type="button" disabled={busy || working || Boolean(pending)} onClick={() => setPreview(null)}>取消</button><button type="button" disabled={busy || working || Boolean(pending) || preview.kind !== 'constraint' && preview.from === preview.to} onClick={apply}>应用</button></span></div>)}
-  </section>;
+  </details>;
 }

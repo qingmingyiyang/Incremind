@@ -1,25 +1,27 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { LayerTabs, FilterBar, Row, FocusPanel, Breadcrumb, MarkdownBody, Icon } from '../../shared/ui';
 import { InsightSource } from '../../shared/ui/InsightSource';
 import { deviceIdentity, isDeviceIdentity, readDeviceCredential, userStorageKey } from '../../shared/api/deviceTransport';
 import { useRequestScope } from '../../shared/lib/useRequestScope';
 import { OriginalFiles, OriginalText } from './LibraryOriginals';
-import { InsightReviewQueue } from './InsightReviewQueue';
+import { InsightReviewQueue, reviewRelationLabels } from './InsightReviewQueue';
 import { sharedLibraryApi, sharedLibraryScope, sharedInsightEditorApi, sharedInsightMergeApi } from './sharedLibraryApi';
 import { InsightEditor } from './LibraryInsightEditor';
 import { DraftNavigationDialog, useDraftNavigation } from './DraftNavigation';
 import { SharedSupersession } from './SharedSupersession';
 import { InsightMergeReview } from './InsightMergeReview';
 import { SharedActiveMerge } from './SharedActiveMerge';
+import { LibraryMatch, LibrarySearchFeedback } from './LibrarySearchFeedback';
 
 const layers = ['insight', 'summary', 'note', 'source'];
 const labels = { insight: '认识', summary: '摘要', note: '整理稿', source: '原件' };
-const reviewCapabilities = { edit: false, move: false, merge: false };
+const reviewCapabilities = { edit: true, move: false, merge: false };
 const dots = { pending: 'pending', active: 'done', stale: 'unverified', forgotten: 'forgotten' };
 const noBusy = () => {};
 
 export function SharedLibraryView({ projectId, projectScope, scopeLoading, scopeError, onScopesRetry,
-  initialLayer = 'insight', initialFilter = null, documentId, sourceId, insightId, onNavigationBlocked }) {
+  initialLayer = 'insight', initialFilter = null, initialReview = false, documentId, sourceId, insightId, onNavigationBlocked }) {
+  const searchScopeId = useId();
   const identity = deviceIdentity();
   const [epoch, setEpoch] = useState(0), [layer, setLayer] = useState(layers.includes(initialLayer) ? initialLayer : 'insight');
   const [scene, setScene] = useState(''), [query, setQuery] = useState(''), [input, setInput] = useState(''), [composing, setComposing] = useState(false);
@@ -76,6 +78,7 @@ export function SharedLibraryView({ projectId, projectScope, scopeLoading, scope
     setReplacement(null); setSupersedeBusy(false); setJournalCandidate(null); setSupersedeNotice(''); setCompletedSupersession(null);
     setMergeDetail(null); setMergeNotice(''); setMergeBusy(false); setPendingMergeBusy(false);
   }, [scope]);
+  useEffect(() => { if (initialReview && canRead && projectScope?.can_write) setReviewing(true); }, [initialReview, canRead, projectId, projectScope?.can_write]);
   useEffect(() => {
     setError('');
     if (!canRead) return;
@@ -105,8 +108,11 @@ export function SharedLibraryView({ projectId, projectScope, scopeLoading, scope
     const token = gate.issue('detail', scope);
     setOpening(true); setError('');
     try {
-      const value = await sharedLibraryApi.drill(projectId, entered, id, options);
+      const { evidenceWindow, ...drillOptions } = options;
+      let value = await sharedLibraryApi.drill(projectId, entered, id, drillOptions);
       sharedLibraryScope(value, data.namespace);
+      if (entered === 'source' && evidenceWindow && value.source?.id === id)
+        value = { ...value, source: { ...value.source, window: evidenceWindow } };
       if (gate.isCurrent(token) && isDeviceIdentity(identity)) setDetail({ scope, data: value, entered, id, layer: display });
     } catch (reason) {
       if (gate.isCurrent(token)) { retry.current = () => open(entered, id, options, display); setError(reason.message); }
@@ -127,11 +133,14 @@ export function SharedLibraryView({ projectId, projectScope, scopeLoading, scope
     if (chosen.data.needs_detail_read && next !== 'insight') { open('insight', chosen.data.insight.id, {}, next); return; }
     if (chosen.data[next]) requestNavigation(() => setDetail({ ...chosen, layer: next }));
   }
-  const rows = (data?.values[layer]?.items || []).filter(row => !filter || layer === 'insight' && row.state === filter
+  const searching = composing || input !== query;
+  const rows = (searching ? [] : data?.values[layer]?.items || []).filter(row => !filter || layer === 'insight' && row.state === filter
     || layer === 'note' && (row.archived ? 'archived' : row.verified ? 'verified' : 'unverified') === filter);
   const counts = Object.fromEntries(layers.map(name => [name, data ? data.values[name].items.length : null]));
   const closeDetail = () => requestNavigation(() => { gate.invalidate('detail'); setDetail(null); setOpening(false); });
-  const source = chosen?.data.source;
+  const listedOriginal = chosen?.entered === 'source' && data?.values.source.items.find(row => row.id === chosen.id);
+  const source = chosen?.data.source || (listedOriginal
+    ? { ...listedOriginal, window: listedOriginal.match?.part === 'text' ? listedOriginal.match : null } : null);
   const note = chosen?.data.note;
   const insight = chosen?.data.insight;
   const canWrite = Boolean(canRead && projectScope.can_write && chosen?.data.can_write);
@@ -189,7 +198,7 @@ export function SharedLibraryView({ projectId, projectScope, scopeLoading, scope
       {canRead && scenes.map(name => <button type="button" key={name} aria-pressed={scene === name}
         onClick={() => requestNavigation(() => setScene(name))}>{name}</button>)}
     </aside>
-    {reviewing && canRead ? <InsightReviewQueue key={`${scopeKey}:${scene}:${query}`} projectId={projectId}
+    {reviewing && canSupersede ? <InsightReviewQueue key={`${scopeKey}:${scene}:${query}`} projectId={projectId}
       projects={[{ id: projectId, name: projectScope.name }]} scene={scene} query={query}
       api={sharedLibraryApi} scopeKind="shared" capabilities={reviewCapabilities} onBusy={noBusy}
       sharedMerge={sharedMerge}
@@ -198,12 +207,12 @@ export function SharedLibraryView({ projectId, projectScope, scopeLoading, scope
         onOpen: openSupersession } : null}
       onNavigationGuard={registerNavigation} onChanged={() => setRefresh(value => value + 1)}
       onBack={() => { setReviewing(false); setDetail(null); }}
-      onOpenInsight={row => open('insight', row.id)} onOpenEvidence={(evidence, value) => {
-        sharedLibraryScope(value, data.namespace); open('source', evidence.source_id, { document_id: evidence.document_id });
+      onOpenInsight={(row, owner) => { if (!owner || owner === projectId) open('insight', row.id); }} onOpenEvidence={(evidence, value) => {
+        sharedLibraryScope(value, data.namespace); open('source', evidence.source_id, { document_id: evidence.document_id, evidenceWindow: evidence.window });
       }}/>
       : <main className="library-main">
         <LayerTabs value={layer} counts={counts} onChange={chooseLayer}>
-          <div className="library-search-tools"><label className="library-search"><Icon name="search"/><input type="search" aria-label="搜索"
+          <div className="library-search-tools"><label className="library-search"><Icon name="search"/><input type="search" aria-label="搜索" aria-describedby={searchScopeId} placeholder={`搜索${labels[layer]}`}
             value={input} onCompositionStart={() => setComposing(true)} onCompositionEnd={event => { const value = event.target.value; setComposing(false); requestNavigation(() => setInput(value)); }}
             onChange={event => { const value = event.target.value; requestNavigation(() => setInput(value)); }}/></label></div>
         </LayerTabs>
@@ -214,7 +223,8 @@ export function SharedLibraryView({ projectId, projectScope, scopeLoading, scope
         {mergeNotice && <p className="library-meta" role="status">{mergeNotice}</p>}
         {sharedMerge && !chosen && <InsightMergeReview key={sharedMerge.storage} projectId={projectId} shared={sharedMerge}
           readonly={Boolean(activeReplacement || activeMergeDetail)} onBusy={setPendingMergeBusy} onChanged={() => setRefresh(value => value + 1)}/>}
-        {canRead && !data && !error && <p role="status">读取中</p>}
+        {canRead && <LibrarySearchFeedback id={searchScopeId} project={projectScope.name} scene={scene} layer={labels[layer]} query={input}
+          loading={searching || !data} error={error} empty={rows.length === 0} onSearchSources={layer !== 'source' ? () => chooseLayer('source') : undefined}/>}
         {layer === 'insight' && <FilterBar value={filter} counts={data?.values.insight.counts} onChange={value => requestNavigation(() => setFilter(old => old === value ? null : value))}/>}
         {layer === 'note' && <FilterBar label="整理稿状态" value={filter} counts={data?.values.note.counts}
           filters={[{ key: 'unverified', label: '未核对', dot: 'unverified' }, { key: 'verified', label: '已核对', dot: 'done' }, { key: 'archived', label: '已遗忘', dot: 'forgotten' }]}
@@ -222,17 +232,18 @@ export function SharedLibraryView({ projectId, projectScope, scopeLoading, scope
         {layer === 'insight' && data?.values.insight.can_write && projectScope?.can_write
           && data.values.insight.items.some(row => row.state === 'pending') && <div className="library-confirm-entry">
             <button type="button" onClick={() => requestNavigation(() => { gate.invalidate('detail'); setDetail(null); setReviewing(true); })}>逐条确认<span>{data.values.insight.counts.pending}</span></button></div>}
-        {data && rows.length === 0 && <p className="library-meta">暂无{labels[layer]}</p>}
         {rows.map(row => <Row key={row.id || row.document_id} title={layer === 'insight' ? row.text : row.title}
-          sub={layer === 'summary' ? row.summary : undefined}
+          label={row.match ? row.text || row.title : undefined}
+          sub={row.match ? <LibraryMatch match={row.match}/> : layer === 'summary' ? row.summary : undefined}
           dot={layer === 'insight' ? dots[row.state] : layer === 'note' ? row.archived ? 'forgotten' : row.verified ? 'done' : 'unverified' : undefined}
-          meta={layer === 'insight' ? [row.by && `贡献 ${row.by}`, row.confirmed_by && `确认 ${row.confirmed_by}`].filter(Boolean).join(' · ') : undefined}
-          onOpen={() => open(layer, row.id || row.document_id)}/>) }
+          meta={row.match ? [projectScope.name, row.scene].filter(Boolean).join(' / ')
+            : layer === 'insight' ? [row.by && `贡献 ${row.by}`, row.confirmed_by && `确认 ${row.confirmed_by}`].filter(Boolean).join(' · ') : undefined}
+          onOpen={() => open(layer, row.id || row.document_id, row.match?.part === 'text' && layer === 'source' ? { evidenceWindow: row.match } : {})}/>) }
       </main>}
     {opening && !chosen && <p className="library-meta" role="status">读取详情中</p>}
     {chosen && !activeReplacement && !activeMergeDetail && <FocusPanel className="library-focus" title={labels[chosen.layer]} onClose={closeDetail}
       focusScope={`${scopeKey}:${chosen.layer}:${chosen.id}`}>
-      <Breadcrumb levels={layers.filter(name => chosen.data[name])} current={chosen.layer} onJump={jump}/>
+      <Breadcrumb levels={layers.filter(name => name === 'source' ? source : chosen.data[name])} current={chosen.layer} onJump={jump}/>
       {error && <div className="library-error" role="alert"><span>{error}</span><button type="button" onClick={() => retry.current?.()}>重新读取</button></div>}
       {chosen.layer === 'insight' && insight && <>
         {chosen.data.needs_detail_read && <div className="library-actions"><span role="status">已保存</span>
@@ -246,6 +257,17 @@ export function SharedLibraryView({ projectId, projectScope, scopeLoading, scope
             setEditing(false); setRefresh(value => value + 1);
           }}/>
           : <p className="library-insight-text">{insight.text}</p>}
+        {(insight.state === 'pending' || insight.conditions?.length > 0) && <div className="library-queue-conditions"><span>适用条件</span>{insight.conditions?.length > 0
+          ? <ul className="library-conditions">{insight.conditions.map((value, index) => <li key={index}>{value}</li>)}</ul> : <p>未设条件</p>}</div>}
+        <InsightSource source={insight.source}/>
+        {!chosen.data.needs_detail_read && chosen.data.evidence?.map((evidence, index) => <section className="library-queue-evidence" key={`${evidence.source_id}:${index}`}>
+          <header><span>{evidence.title}</span><button type="button" onClick={() => open('source', evidence.source_id, { document_id: evidence.document_id, evidenceWindow: evidence.window })}>打开原件</button></header>
+          <blockquote>{evidence.window.pre}<mark>{evidence.window.quote}</mark>{evidence.window.post}</blockquote>
+        </section>)}
+        {insight.state === 'pending' && <><p className="library-meta">确认后在 {projectScope.name}{insight.scene ? ` / ${insight.scene}` : ''} 生效</p>
+          {!insight.source && !chosen.data.evidence?.length && <p className="library-meta">暂无可核对的原句</p>}</>}
+        {insight.hint?.target && <Row title={insight.hint.target.text} label={insight.hint.target.text} sub={reviewRelationLabels[insight.hint.relation] || '已有认识'}
+          readOnly={Boolean(insight.hint.target.project_id && insight.hint.target.project_id !== projectId)} onOpen={() => open('insight', insight.hint.target.id)}/>}
         {!editing && canWrite && <div className="library-actions">
           {chosen.data.can_edit_insight && ['active', 'pending'].includes(insight.state) && <button type="button" disabled={mutating || opening || journalCandidate === insight.id}
             onClick={() => { gate.invalidate('detail'); setEditing(true); }}>编辑</button>}
@@ -260,18 +282,12 @@ export function SharedLibraryView({ projectId, projectScope, scopeLoading, scope
             && <button type="button" disabled={mutating || opening || !Number.isSafeInteger(insight.recall_preference_revision)}
               onClick={changeRecall}>{recoverable ? '恢复' : '遗忘'}</button>}
         </div>}
-        {insight.conditions?.length > 0 && <ul className="library-conditions">{insight.conditions.map(value => <li key={value}>{value}</li>)}</ul>}
-        <InsightSource source={insight.source}/>
         {sharedMerge && !reviewing && <InsightMergeReview key={sharedMerge.storage} projectId={projectId} shared={sharedMerge}
           detail={chosen.data} readonly={editing || mutating || opening} onBusy={setPendingMergeBusy}
           onChanged={result => { setDetail(null); setRefresh(value => value + 1);
             if (result.proposal?.state === 'approved') setMergeNotice('已合并 · 仍待确认'); }}
           onOpenTarget={row => open('insight', row.id)}/>}
         <p className="library-meta">{[insight.by && `贡献 ${insight.by}`, insight.confirmed_by && `确认 ${insight.confirmed_by}`].filter(Boolean).join(' · ')}</p>
-        {!chosen.data.needs_detail_read && chosen.data.evidence?.map((evidence, index) => <section key={`${evidence.source_id}:${index}`}>
-          <blockquote>{evidence.window.pre}<mark>{evidence.window.quote}</mark>{evidence.window.post}</blockquote>
-          <button type="button" onClick={() => open('source', evidence.source_id, { document_id: evidence.document_id })}>打开原件</button>
-        </section>)}
       </>}
       {chosen.layer !== 'insight' && chosen.data.grown?.length > 0 && <section className="library-grown" aria-label="长出的认识">
         {chosen.data.grown.map(row => <Row key={row.id} title={row.text} onOpen={() => open('insight', row.id)}/>)}

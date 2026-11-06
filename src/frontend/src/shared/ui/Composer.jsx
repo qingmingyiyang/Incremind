@@ -49,13 +49,22 @@ export function Composer({ intent, fixedIntent, allowedIntents, allowFiles = tru
     interventionDraft.accept(); input.current?.focus();
   }, [interventionDraft, disabled]);
   useEffect(() => {
-    if (!prefill || prefilled.current === prefill.id) return;
+    if (!prefill || disabled || prefilled.current === prefill.id) return;
     prefilled.current = prefill.id;
     if (prefill.confirmReplace && (text.trim() || files.length)) { setProposal(prefill); return; }
     applyPrefill(prefill);
-  }, [prefill]);
+  }, [prefill, disabled]);
   function applyPrefill(value) {
-    setScopeTag(null); setText(value.text); pick(value.intent, true); input.current?.focus();
+    const current = currentDraft.current;
+    const selectable = !fixedIntent && (!allowedIntents || allowedIntents.includes(value.intent));
+    const next = { ...current, text: value.preserveDraft ? current.text : value.text,
+      files: value.confirmReplace ? [] : current.files, selection: selectable ? value.intent : current.selection,
+      locked: selectable ? true : current.locked,
+      scopeTag: value.preserveDraft ? current.scopeTag : null };
+    currentDraft.current = next; locked.current = next.locked;
+    setScopeTag(next.scopeTag); setText(next.text); setFiles(next.files); setSelection(next.selection);
+    if (selectable) onIntent?.(next.selection);
+    onDraft?.(next); input.current?.focus();
     onPrefill?.(value.id);
   }
   useEffect(() => {
@@ -105,7 +114,7 @@ export function Composer({ intent, fixedIntent, allowedIntents, allowFiles = tru
     else addFiles(transfer.files);
   }
   async function send() {
-    if (disabled || sendDisabled || recording || sending.current || !onSend || (!text.trim() && !files.length)) return;
+    if (disabled || sendDisabled || invalidSharedScope || recording || sending.current || !onSend || (!text.trim() && !files.length)) return;
     sending.current = true;
     const submitted = currentDraft.current;
     let completed = false;
@@ -137,14 +146,14 @@ export function Composer({ intent, fixedIntent, allowedIntents, allowFiles = tru
       settle(accepted);
     } finally { sending.current = false; }
   }
-  // 只显示输入里写的或从别处带入的范围；当前项目已经显示在顶部的项目切换里。
-  const tag = scopeTag?.label || scopedText(text).label;
+  const typedScope = scopedText(text);
+  const invalidSharedScope = Boolean(allowedIntents && typedScope.project);
+  const typedProject = projects.find(project => project.id === typedScope.project)?.name || typedScope.project;
+  const scopeLabel = scopeTag?.label || (typedScope.project ? `#${typedProject}${typedScope.scene ? `/${typedScope.scene}` : ''}` : null);
   const actionLabel = { remember: '记住', ask: '问', do: '干活', inspiration: '灵感' };
-  const clean = scopedText(text).text;
-  const guessed = files.length || /^https?:\/\//i.test(clean) || /^灵感/.test(clean) ? 'remember'
-    : /^(帮我|请帮|写|整理一份|做一份)/.test(clean) ? 'do'
-    : /[？?]$/.test(clean) || /^(什么|怎么|为什么|哪|上次)/.test(clean) ? 'ask' : null;
-  const forced = selected || (!files.length ? executorIntent : null);
+  const forced = files.length && !typedScope.text ? 'remember' : selected || (!files.length ? executorIntent : null);
+  const goesToInbox = !allowedIntents && (selected === 'inspiration' || !selected && /^\s*灵感/.test(text));
+  const destination = allowedIntents ? projectTag : scopeLabel || (goesToInbox ? '收件箱' : projectTag);
   return <div className="ui-composer" onDragOver={transferFiles} onDrop={transferFiles} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setMenu(null); }}>
     {menu && <div ref={menuElement} className="ui-composer-menu" role="menu" aria-label={menu === 'scope' ? '项目与场景' : '动作'} onKeyDown={menuKey}>
       <div className="ui-composer-menu-title">{menu === 'scope' ? '项目 · 场景' : '动作'}</div>
@@ -154,7 +163,8 @@ export function Composer({ intent, fixedIntent, allowedIntents, allowFiles = tru
           {onRemind && <button type="button" role="menuitem" disabled={disabled} onClick={() => { setText(stripShortcut()); setMenu(null); onRemind(); }}><Icon name="calendar" size={16}/>提醒<span className="ui-composer-menu-hint">安排时间</span></button>}
           {!allowedIntents && <button type="button" role="menuitem" disabled={disabled} onClick={() => chooseAction(null)}><Icon name="workspace" size={16}/>自动判断</button>}</>}
     </div>}
-    {proposal && <div className="ui-composer-proposal" role="group" aria-label="试问输入选择"><span>输入中有草稿</span><button type="button" disabled={disabled} onClick={() => { onPrefill?.(proposal.id); setProposal(null); input.current?.focus(); }}>保留草稿</button><button type="button" disabled={disabled} onClick={() => { applyPrefill(proposal); setProposal(null); }}>使用试问</button></div>}
+    {proposal && proposal.id === prefill?.id && <div className="ui-composer-proposal" role="group" aria-label="提问草稿选择"><span>这个项目已有草稿</span><button type="button" disabled={disabled} onClick={() => { onPrefill?.(proposal.id); setProposal(null); input.current?.focus(); }}>保留草稿</button><button type="button" disabled={disabled} onClick={() => { applyPrefill(proposal); setProposal(null); }}>使用问题</button></div>}
+    {invalidSharedScope && <div className="ui-composer-proposal" role="alert">共享项目使用顶部范围 · 移除输入里的项目标签</div>}
     <textarea ref={input} aria-label="输入" rows={2} placeholder="丢进来，或者问我" value={text} disabled={disabled} onChange={event => changeText(event.target.value)} onPaste={event => addFiles(event.clipboardData.files)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={event => {
       if (menu && event.key === 'Escape') { event.preventDefault(); setMenu(null); return; }
       if (menu && event.key === 'ArrowDown') { event.preventDefault(); menuElement.current?.querySelector('button')?.focus(); return; }
@@ -165,12 +175,15 @@ export function Composer({ intent, fixedIntent, allowedIntents, allowFiles = tru
       <input type="file" multiple ref={fileInput} aria-label="文件" hidden disabled={disabled || !allowFiles} onChange={event => { addFiles(event.target.files); event.target.value = ''; }}/>
       <button type="button" className="ui-composer-icon" aria-label="添加文件" title="文件" disabled={disabled || !allowFiles} onClick={() => fileInput.current?.click()}><Icon name="plus"/></button>
       <button type="button" className="ui-composer-icon" aria-label={recording ? '停止录音' : '录音'} aria-pressed={recording} title={recording ? '停止录音' : '录音'} disabled={disabled || !allowFiles || !onRecord} onClick={async () => { const file = await onRecord?.(); if (file) setFiles(current => [...current, file]); }}><Icon name="mic"/></button>
-      {projects.length > 0 ? <button type="button" className={`ui-composer-tag ${tag ? 'is-set' : ''}`} aria-label="选择项目或场景" aria-haspopup="menu" aria-expanded={menu === 'scope'} title={tag || '选择项目或场景，也可以输入 #'} disabled={disabled} onClick={() => setMenu(menu === 'scope' ? null : 'scope')}>{tag || '#项目'}</button>
-        : tag && <span className="ui-composer-tag" title={tag}>{tag}</span>}
+      {projects.length > 0 && <button type="button" className={`ui-composer-tag ${scopeLabel ? 'is-set' : ''}`} aria-label="选择项目或场景" aria-haspopup="menu" aria-expanded={menu === 'scope'} title="选择项目或场景，也可以输入 #" disabled={disabled} onClick={() => setMenu(menu === 'scope' ? null : 'scope')}>#项目</button>}
       <button type="button" className="ui-composer-shortcut" aria-label="选择动作" aria-haspopup="menu" aria-expanded={menu === 'action'} title="选择动作，也可以输入 /" disabled={disabled || Boolean(fixedIntent)} onClick={() => setMenu(menu === 'action' ? null : 'action')}>/</button>
       {typeof tools === 'function' ? tools({ intent: selected, files }) : tools}
-      {(forced || clean || files.length > 0) && <span className="ui-composer-route" title={forced ? '发送时使用所选动作' : '根据输入预览，实际处理由发送后的路由决定'}><Icon name={forced || guessed || 'workspace'} size={12}/><span>{forced ? actionLabel[forced] : guessed ? `会判成${actionLabel[guessed]}` : '自动判断'}</span>{forced && !fixedIntent && !allowedIntents && <button type="button" aria-label="改回自动判断" disabled={disabled} onClick={() => { locked.current = false; pick(null); onAutomatic?.(); }}><Icon name="close" size={12}/></button>}</span>}
-      <button type="button" className="ui-composer-send" aria-label="发送" disabled={disabled || sendDisabled || recording || !onSend || (!text.trim() && !files.length)} onClick={send}><Icon name="send"/></button>
+      <button type="button" className="ui-composer-send" aria-label="发送" disabled={disabled || sendDisabled || invalidSharedScope || recording || !onSend || (!text.trim() && !files.length)} onClick={send}><Icon name="send"/></button>
+    </div>
+    <div className="ui-composer-route" aria-label="发送范围和动作">
+      {destination && <span>{allowedIntents || scopeLabel || forced || goesToInbox ? '范围' : '默认项目'} · {destination}</span>}
+      <span>{actionLabel[forced] || '自动判断'}</span>
+      {forced && !files.length && !fixedIntent && !allowedIntents && <button type="button" aria-label="改回自动判断" disabled={disabled} onClick={() => { locked.current = false; pick(null); onAutomatic?.(); }}><Icon name="close" size={12}/></button>}
     </div>
   </div>;
 }

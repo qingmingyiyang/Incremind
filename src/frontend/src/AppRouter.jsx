@@ -21,6 +21,7 @@ const SettingsPage = lazy(() => import('./features/settings/SettingsPage'));
 const CompanionPage = lazy(() => import('./features/companion/CompanionPage').then(module => ({ default: module.CompanionPage })));
 const PROJECT_KEY = "chriptmas-v2-project-id";
 const HISTORY_KEY = 'chriptmas-v2-history';
+const libraryFilters = { pending_memory: 'pending', pending: 'pending', active: 'active', stale: 'stale', forgotten: 'forgotten' };
 function historyPoint() {
   const entry = window.navigation?.currentEntry;
   if (entry && Number.isSafeInteger(entry.index) && entry.index >= 0)
@@ -93,9 +94,16 @@ export function AppRouter() {
   }
   const handoffSequence = useRef(0);
   const [handoff, setHandoff] = useState(null);
+  const [workbenchProposal, setWorkbenchProposal] = useState(null);
   const finishHandoff = useCallback(id => { setHandoff(value => value?.id === id ? null : value); }, []);
-  const finishInputProposal = useCallback(() => {
+  const finishInputProposal = useCallback(id => {
+    if (typeof id === 'string' && id.startsWith('workbench-proposal-')) {
+      setWorkbenchProposal(value => value?.id === id ? null : value);
+      return;
+    }
+    if (id && id !== window.location.hash) return;
     const params = new URLSearchParams(window.location.hash.slice(1));
+    if (!params.has('compose_text')) return;
     params.delete('compose_text'); params.delete('compose_scene');
     window.history.replaceState(window.history.state, '', `#${params.toString()}`); setRoute(readRoute());
   }, []);
@@ -137,7 +145,7 @@ export function AppRouter() {
       // 身份改变只撤销旧用户的目标，正在进行的指针恢复仍须完成。
       if (historyTraversal.current?.phase === 'waiting') historyTraversal.current = null;
       else if (historyTraversal.current) historyTraversal.current.cancelled = true;
-      setFailedJobOpen(null); setJobs([]); setProjects([]); setError(''); setUserEpoch(value => value + 1);
+      setFailedJobOpen(null); setJobs([]); setProjects([]); setError(''); setHandoff(null); setWorkbenchProposal(null); setUserEpoch(value => value + 1);
     };
     window.addEventListener('chriptmas-user-space', changed);
     window.addEventListener('chriptmas-device-required', changed);
@@ -150,6 +158,7 @@ export function AppRouter() {
     let disposed = false;
     const adopt = next => {
       historyTraversal.current = null; historyAtRoute.current = historyPoint();
+      setWorkbenchProposal(null);
       setHistoryError(''); routeAtNavigation.current = next; setRoute(next);
     };
     const traverse = (point, attempt) => {
@@ -273,6 +282,10 @@ export function AppRouter() {
       }
       if (view === 'workbench' && compose?.intent === 'remember') setHandoff({ id: ++handoffSequence.current, projectId: parameters.project_id || route.projectId, scene: compose.scene, intent: 'remember' });
       else setHandoff(null);
+      setWorkbenchProposal(view === 'workbench' && compose?.intent === 'ask' && typeof compose.text === 'string' && compose.text.trim()
+        ? { id: `workbench-proposal-${++handoffSequence.current}`, projectId: project, scopeKind: kind, identity: routeIdentity,
+          text: compose.text, scene: compose.scene || null }
+        : null);
       const params = new URLSearchParams({ view, ...parameters, project_id: project });
       if (kind !== 'personal') params.set('scope_kind', kind); else params.delete('scope_kind');
       commitNavigation(params);
@@ -302,7 +315,7 @@ export function AppRouter() {
     requestLibraryNavigation(() => {
       if (!isDeviceIdentity(routeIdentity)) return;
       jobOpenGate.invalidate('open'); setFailedJobOpen(null);
-      setHandoff(null);
+      setHandoff(null); setWorkbenchProposal(null);
       const params = new URLSearchParams(route.hash.slice(1));
       params.set("project_id", id);
       if (kind === 'shared') { params.set('scope_kind', 'shared'); params.set('view', 'workbench'); }
@@ -390,6 +403,12 @@ export function AppRouter() {
   const selectedShared = route.scopeKind === 'shared' ? shared.items.find(row => row.id === route.projectId) : undefined;
   const desktopTitlebar = globalThis.electronAPI?.shell === "electron" && globalThis.electronAPI?.entry === "workspace";
   const params = new URLSearchParams(route.hash.slice(1));
+  const libraryLayer = params.get('layer'), libraryFilter = params.get('filter');
+  const initialLibraryFilter = libraryLayer === 'note' && libraryFilter === 'archived' ? 'archived'
+    : Object.hasOwn(libraryFilters, libraryFilter) ? libraryFilters[libraryFilter] : undefined;
+  const inputProposal = workbenchProposal?.projectId === route.projectId && workbenchProposal.scopeKind === route.scopeKind
+    && isDeviceIdentity(workbenchProposal.identity) ? workbenchProposal
+    : params.get('compose_text') ? { id: route.hash, text: params.get('compose_text'), scene: params.get('compose_scene') || null } : null;
   return <>
     {desktopTitlebar && <header className="desktop-titlebar" aria-label="窗口标题栏"><span>Chriptmas OS</span></header>}
     <Shell active={activeView(route.view)} project={route.projectId} projectScopeKind={route.scopeKind} projects={projectList} onProjectChange={switchProject} onNavigate={navigate} onCompanion={() => navigate("companion", reminderNotices.items.length ? {project_id:reminderNotices.items[0].project_id,tab:'schedule'} : {})} reminderNotice={reminderNotices.items.length > 0} bearState={jobs.some(job => job.kind === 'inspiration' ? job.attention === true : job.state === "failed" || job.state === "pending") ? "attention" : jobs.some(job => job.state === "processing") ? "working" : "ready"} tray={<><Tray jobs={jobs} onOpen={openJob} onRetry={retryJob}/>{(jobOpenError || error) && <div className="app-router-error"><span>{jobOpenError ? jobOpenError.blocked ? '请先保存当前内容' : '进度暂不可用 · 重试' : error}</span><button type="button" aria-label={jobOpenError ? jobOpenError.blocked ? '保存后重新打开灵感' : '进度暂不可用 · 重试' : error} onClick={() => jobOpenError ? openJob(jobOpenError.job) : setRefreshKey(value => value + 1)}>重试</button></div>}</>}>
@@ -400,9 +419,9 @@ export function AppRouter() {
           ['native-mcp-consent', 'native-mcp-review', 'native-mcp-target'].forEach(key => next.delete(key));
           window.location.hash = next.toString();
         }}/> : route.scopeKind !== 'personal' && !(route.scopeKind === 'shared' && ['workbench', 'library'].includes(view)) ? <p role="status">该范围的此入口尚未接通 · <button type="button" onClick={() => navigate('workbench')}>查看本人对话</button></p>
-          : view === "workbench" ? <PorcelainLazyRoute><WorkbenchPage key={draftKey} draft={draft} onDraft={saveDraft} projectScopeKind={route.scopeKind} projectScope={selectedShared} scopeLoading={shared.loading} scopeError={shared.error} onScopesRetry={shared.reload} serverConversationShares={shared.server === true} handoff={handoff?.projectId === route.projectId ? handoff : null} onHandoff={finishHandoff} inputProposal={params.get('compose_text') ? { id: route.hash, text: params.get('compose_text'), scene: params.get('compose_scene') || null } : null} onInputProposalHandled={finishInputProposal} projectId={route.projectId} projects={projects} threadId={params.get("thread_id") || undefined} turnId={params.get("turn_id") || undefined} onNavigate={navigate} onProjectCreated={projectCreated} onProjectsStale={reloadProjects}/></PorcelainLazyRoute>
-          : view === 'library' ? <PorcelainLazyRoute><LibraryPage key={`${route.hash}\0${originalOpenSequence}\0${userEpoch}`} projectScopeKind={route.scopeKind} projectScope={selectedShared} scopeLoading={shared.loading} scopeError={shared.error} onScopesRetry={shared.reload} serverConversationShares={shared.server === true} projectId={route.projectId} projects={projects} initialLayer={params.get('layer') || undefined} initialFilter={params.get('filter') === 'pending_memory' ? 'pending' : undefined} documentId={params.get('document_id') || undefined} sourceId={params.get('source_id') || undefined} insightId={params.get('insight_id') || undefined} inspirationJobId={params.get('inspiration_job_id') || undefined} onNavigationBlocked={reportLibraryNavigation} onNavigate={navigate} onProjectCreated={projectCreated}/></PorcelainLazyRoute>
-          : view === 'settings' ? <PorcelainLazyRoute><SettingsPage key={`${route.hash}\0${userEpoch}`} projectId={route.projectId} initialSection={params.get('section') || 'model'} initialPurpose={params.get('purpose') || undefined} expandProject={params.get('expand_project') || undefined}/></PorcelainLazyRoute>
+          : view === "workbench" ? <PorcelainLazyRoute><WorkbenchPage key={draftKey} draft={draft} onDraft={saveDraft} projectScopeKind={route.scopeKind} projectScope={selectedShared} scopeLoading={shared.loading} scopeError={shared.error} onScopesRetry={shared.reload} serverConversationShares={shared.server === true} handoff={handoff?.projectId === route.projectId ? handoff : null} onHandoff={finishHandoff} inputProposal={inputProposal} onInputProposalHandled={finishInputProposal} projectId={route.projectId} projects={projects} threadId={params.get("thread_id") || undefined} turnId={params.get("turn_id") || undefined} onNavigate={navigate} onProjectCreated={projectCreated} onProjectsStale={reloadProjects}/></PorcelainLazyRoute>
+          : view === 'library' ? <PorcelainLazyRoute><LibraryPage key={`${route.hash}\0${originalOpenSequence}\0${userEpoch}`} projectScopeKind={route.scopeKind} projectScope={selectedShared} scopeLoading={shared.loading} scopeError={shared.error} onScopesRetry={shared.reload} serverConversationShares={shared.server === true} projectId={route.projectId} projects={projects} initialLayer={libraryLayer || undefined} initialFilter={initialLibraryFilter} initialReview={params.get('review') === '1'} documentId={params.get('document_id') || undefined} sourceId={params.get('source_id') || undefined} insightId={params.get('insight_id') || undefined} inspirationJobId={params.get('inspiration_job_id') || undefined} onNavigationBlocked={reportLibraryNavigation} onNavigate={navigate} onProjectCreated={projectCreated}/></PorcelainLazyRoute>
+          : view === 'settings' ? <PorcelainLazyRoute><SettingsPage key={`${route.hash}\0${userEpoch}`} projectId={route.projectId} initialSection={params.get('section') || 'model'} initialPurpose={params.get('purpose') || undefined} expandProject={params.get('expand_project') || undefined} createProject={params.get('create_project') === '1'}/></PorcelainLazyRoute>
           : <PorcelainLazyRoute><CompanionPage key={route.hash} projectId={route.projectId} notices={reminderNotices} onNavigate={navigate} initialReminderId={params.get('reminder_id') || ''} initialTab={params.get('tab') || undefined} initialMode={params.get('mode') || (params.get('intent') === 'weekly_memory_review' || params.get('panel') === 'memory' ? 'review' : 'chat')}/></PorcelainLazyRoute>}
 
       </div>

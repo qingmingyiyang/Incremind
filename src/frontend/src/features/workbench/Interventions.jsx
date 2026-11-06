@@ -8,12 +8,19 @@ export function Interventions({ onNewRound, ...props }) {
   const target = data.steer_target;
   const count = interventionTextLength(text);
   if (!target && !text && !pending && !data.steers?.length) return null;
-  return <section className="workbench-interventions" aria-label="中途插话">
-    {(data.steers || []).map(entry => <div className="workbench-intervention-entry" key={entry.id}>
+  const title = data.receipt?.do?.title || data.user_text;
+  const entries = data.steers || [];
+  const history = entries.length > 0 && <details className="workbench-intervention-history">
+    <summary>本轮插话 {entries.length} 条</summary>
+    {entries.map(entry => <div className="workbench-intervention-entry" key={entry.id}>
       <span>{entry.text}</span><span className="ui-count">{labels[entry.state]}</span>
     </div>)}
+  </details>;
+  if (!props.active && !text && !pending) return history;
+  return <section className="workbench-interventions" aria-label="中途插话">
+    {history}
     {(target || text || pending) && <><div className="workbench-intervention-heading">
-      <span>{target ? `插话 · ${target.intent === 'do' ? '干活' : '问'}${target.part === null ? '' : ` · 第${target.part + 1}部分`}` : '本轮插话草稿'}</span>
+      <span>{target ? `补充本轮${target.part === null ? '' : `第${target.part + 1}部分`}` : '本轮插话草稿'}{title && <strong title={title}>{title}</strong>}</span>
       <span className="ui-count">{Number.isInteger(data.steer_remaining) ? `${5 - data.steer_remaining}/5` : '—/5'} · {count}/2000</span>
     </div><textarea aria-label="插话" rows={2} value={text} onChange={event => value.draft(event.target.value)}
       onDragOver={event => { if (Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'none'; } }}

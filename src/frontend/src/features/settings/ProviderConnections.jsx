@@ -61,6 +61,6 @@ export function ModelConnectionForm({ row, mode = 'api', preset = PROVIDER_PRESE
   </form>;
 }
 
-export function ProviderConnections({ projectId, model, run, busy, onConfigure }) {
-  return <ProviderConnectionManager projectId={projectId} model={model} presets={PROVIDER_PRESETS} run={run} busy={busy} onConfigure={onConfigure}/>;
+export function ProviderConnections({ projectId, model, run, busy, target, onConfigure }) {
+  return <ProviderConnectionManager projectId={projectId} model={model} presets={PROVIDER_PRESETS} run={run} busy={busy} target={target} onConfigure={onConfigure}/>;
 }

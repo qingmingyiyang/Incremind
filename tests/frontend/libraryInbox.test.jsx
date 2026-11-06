@@ -36,11 +36,11 @@ it('retains the inbox row after a filing conflict and shows an actionable error'
  fail=true;await inbox();fireEvent.click(screen.getByRole('button',{name:'归入场景：Writing'}));await act(async()=>{});
  expect(screen.getByRole('alert')).toHaveTextContent('内容已变化');expect(screen.getByRole('button',{name:'Inbox thought'})).toBeInTheDocument();
 });
-it('returns to project layers from the inbox without leaving an inbox filter behind',async()=>{
+it('retains the inbox scope when switching layers',async()=>{
  await inbox();fireEvent.click(screen.getByRole('button',{name:'原件 —'}));await act(async()=>{});
- expect(screen.getByRole('button',{name:'全部'})).toHaveAttribute('aria-pressed','true');
+ expect(screen.getByRole('button',{name:'收件箱 1'})).toHaveAttribute('aria-pressed','true');
  const lists=fetch.mock.calls.filter(([url])=>String(url).includes('/sources?'));
- expect(String(lists.at(-1)[0])).toContain('project_id=alpha');
+ expect(String(lists.at(-1)[0])).toContain('project_id=inbox');
 });
 it('discards late suggestions after the project changes',async()=>{
  let finish;const normal=fetch.getMockImplementation();

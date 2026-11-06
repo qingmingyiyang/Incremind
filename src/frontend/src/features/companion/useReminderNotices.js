@@ -4,7 +4,10 @@ import { createCompanionApi } from './companionApi';
 
 export function useReminderNotices(projects, identityEpoch) {
   const api = useMemo(() => createCompanionApi(), []);
-  const projectKey = [...new Set(projects.filter(row => row.private !== true).map(row => row.id))].sort().join('\0');
+  const projectIds = new Set(projects.filter(row => row.private !== true).map(row => row.id));
+  // 日常可以先有提醒、后有资料。项目目录未登记时仍读取日常，由服务端核对私密资格。
+  if (projects.length && !projects.some(row => row.id === 'default')) projectIds.add('default');
+  const projectKey = [...projectIds].sort().join('\0');
   const [snapshot, setSnapshot] = useState({key:null, items:[], failed:false}), [refresh, setRefresh] = useState(0);
   const key = `${identityEpoch}:${projectKey}`;
   useEffect(() => {
@@ -33,5 +36,5 @@ export function useReminderNotices(projects, identityEpoch) {
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [api,key,projectKey,refresh]);
   const visible = snapshot.key === key ? snapshot : {items:[],failed:false};
-  return {...visible, items:visible.items.map(row => ({...row,project_name:projects.find(project => project.id === row.project_id)?.name || row.project_id}))};
+  return {...visible, items:visible.items.map(row => ({...row,project_name:projects.find(project => project.id === row.project_id)?.name || (row.project_id === 'default' ? '日常' : row.project_id)}))};
 }
