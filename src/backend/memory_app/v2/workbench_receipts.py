@@ -54,7 +54,10 @@ def _ask_receipt(plan, chosen, result, egress_receipt_id, egress=None, *, audio_
         layers['inspiration'] = 0
     layers['persona'] = plan.get('profile', {}).get('count', 0)
     for candidate in chosen:
-        layers[_ASK_LAYERS[candidate["layer"]]] += 1
+        if candidate.get('situation_pack'):
+            layers['situation_pack'] = layers.get('situation_pack', 0) + 1
+        else:
+            layers[_ASK_LAYERS[candidate["layer"]]] += 1
         layers["persona"] += int(bool(candidate.get("persona")))
     citations = []
     for source in result["sources"]:

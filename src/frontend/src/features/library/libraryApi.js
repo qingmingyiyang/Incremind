@@ -80,6 +80,10 @@ export const libraryApi = {
   decideSignalReviews(project, items, { signal } = {}) {
     return request('signal-reviews/decide', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: project, items }) });
   },
+  decideProjectAngle(project, { id, revision }, action, { signal } = {}) {
+    return request('signal-reviews/angles/decide', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: project, id, action, expected_revision: revision }) });
+  },
   consolidation: (project, { signal } = {}) => request(`consolidate?${new URLSearchParams({ project_id: project })}`, { signal }),
   consolidate: project => mutation('consolidate', { project_id: project }),
   async extractInspirations(project, scene, documents, { signal, retryToken } = {}) {

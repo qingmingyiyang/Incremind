@@ -11,8 +11,36 @@ def chunk_cache_namespace(project, entry):
                       ensure_ascii=False, separators=(',', ':'))
 
 
-def chunk_cache_id(entry, layer, span_slot, index):
-    return json.dumps([layer, span_slot, entry.get('item_revision'), index], separators=(',', ':'))
+def chunk_cache_id(entry, layer, span_slot, index, *, context_prefix=None):
+    parts = [layer, span_slot, entry.get('item_revision'), index]
+    if context_prefix is not None:
+        parts.extend(('angle-directory-v1', context_prefix))
+    return json.dumps(parts, separators=(',', ':'))
+
+
+def condition_cache_namespace(project, slot):
+    return json.dumps(['method-condition-v1', project, slot], ensure_ascii=False, separators=(',', ':'))
+
+
+def condition_cache_parent(namespace):
+    try:
+        value = json.loads(namespace)
+    except (TypeError, ValueError):
+        return None
+    if (isinstance(value, list) and len(value) == 3 and value[0] == 'method-condition-v1'
+            and isinstance(value[1], str) and value[1] and type(value[2]) is int and value[2] >= 0):
+        return value[1], value[2]
+    return None
+
+
+def _delete_conditions(connection, project, identity=None):
+    prefix = condition_cache_namespace(project, 0)[:-2]
+    where = 'substr(project_id, 1, ?) = ?'
+    params = (len(prefix), prefix)
+    if identity is not None:
+        where += ' AND recognition_id = ?'
+        params += (identity,)
+    return connection.execute('DELETE FROM recognition_embedding_cache WHERE ' + where, params).rowcount
 
 
 def chunk_cache_parent(namespace):
@@ -90,12 +118,14 @@ class VectorCacheInvalidator:
         identities = tuple(dict.fromkeys(recognitions))
         def invalidate(connection):
             return (sum(delete_cached_recognition(connection, project, identity)
+                        + _delete_conditions(connection, project, identity)
                         for project, identity in identities)
                     + sum(delete_cached_namespace(connection, namespace) for namespace in namespaces))
         return self._apply(invalidate)
 
     def recognitions(self, project, identities):
         return self._apply(lambda connection: sum(delete_cached_recognition(connection, project, identity)
+                                                 + _delete_conditions(connection, project, identity)
                                                  for identity in dict.fromkeys(identities)))
 
     def material(self, project, kind, identity):
@@ -106,7 +136,7 @@ class VectorCacheInvalidator:
 
     def project(self, project):
         def invalidate(connection):
-            removed = delete_cached_namespace(connection, project)
+            removed = delete_cached_namespace(connection, project) + _delete_conditions(connection, project)
             namespaces = tuple(row[0] for row in connection.execute('SELECT DISTINCT project_id FROM recognition_embedding_cache'))
             for namespace in namespaces:
                 parent = chunk_cache_parent(namespace)

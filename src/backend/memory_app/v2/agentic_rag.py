@@ -559,6 +559,10 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                 depth = depths[-1]
                 layers = {'summary': {'L3', 'L2'}, 'body': {'L1'}, 'original': {'L0'}}[depth]
                 rows = [row for row in candidates if row['layer'] in layers]
+                pack = plan.get('_situation_pack')
+                if pack:
+                    packed = {item['id'] for item in pack['rows']}
+                    rows = [row for row in rows if row['kind'] != 'recognition' or row['id'] not in packed]
                 rows = sorted(rows, key=lambda row: -row.get('score', 0))[:limits['results']]
                 plan['_rag']['depths'].extend(depths)
                 result['actual_depth'] = depth
@@ -574,6 +578,7 @@ async def investigate(query, project, question, plan, *, turn_id, scene=None, hi
                 combined = fuse_candidates([plan['chosen'], rows])
                 next_plan = query.prepare_ask(project, plan['question'], scene=scene,
                     retrieval_question=question, history=plan.get('history', ''),
+                    situation=plan.get('_situation_query'),
                     part_context=plan.get('part_context'),
                     collected={**collected, 'candidates': combined, '_rerank_state': plan.get('_rerank_state', {})})
                 for name in ('_rag', 'history_guard', 'search_guard', 'search', 'bookshelf_guard'):

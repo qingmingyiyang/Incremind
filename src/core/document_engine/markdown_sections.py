@@ -52,6 +52,24 @@ def _trimmed_span(markdown, start, end):
     return text, start, start + len(text)
 
 
+def subsections_of(markdown: str, title: str) -> dict[str, tuple[int, int]]:
+    """读取指定二级标题下不重复的三级标题范围。"""
+    lines = list(_lines(markdown))
+    section = _section(markdown, lines, title)
+    if section is None:
+        return {}
+    left, right = section
+    headings = [(offset, heading[2]) for offset, _, line, visible in lines
+        if left <= offset < right and visible and (heading := _HEADING.match(line)) and len(heading[1]) == 3]
+    result, repeated = {}, set()
+    for index, (start, label) in enumerate(headings):
+        end = headings[index + 1][0] if index + 1 < len(headings) else right
+        if label in result:
+            repeated.add(label)
+        result[label] = (start, end)
+    return {label: span for label, span in result.items() if label not in repeated}
+
+
 def summary_of(markdown: str) -> tuple[str, int, int]:
     """Read explicit summary or the first legacy paragraph after the H1 title.
 

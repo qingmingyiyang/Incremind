@@ -73,8 +73,9 @@ export function useInterventions({ projectId, turn, active }) {
     catch (failure) { if (valid()) {
       if (failure.status >= 400 && failure.status < 500 && failure.code !== 'steer_submission_conflict') {
         currentPending.current = null; setPending(null); save(currentText.current, null);
-        if (['turn_finished', 'steer_limit'].includes(failure.code)) setData(old => ({ ...old, steer_target: null }));
-        setError(failure.code === 'turn_finished' ? '本轮已结束，草稿已保留' : failure.code === 'steer_limit' ? '本轮已用完五次插话' : '插话未受理');
+        if (['turn_finished', 'steer_limit', 'steer_unsupported'].includes(failure.code)) setData(old => ({ ...old, steer_target: null }));
+        setError({ turn_finished: '本轮已结束，草稿已保留', steer_limit: '本轮已用完五次插话',
+          steer_unsupported: '当前执行者不支持插话，草稿已保留' }[failure.code] || '插话未受理');
       } else { setError('插话结果待核对'); await recover(); }
     } }
     finally { if (valid()) setSending(false); }

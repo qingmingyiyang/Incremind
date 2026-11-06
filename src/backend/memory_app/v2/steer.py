@@ -394,6 +394,11 @@ class SteerService:
         except HTTPException as error:
             if error.status_code != 404 or error.detail != 'steer_not_found':
                 raise
+        public = self.records.read('v2_turns', public_id)
+        if public is not None and public.payload.get('project_id') == project_id:
+            receipt = public.payload.get('receipt', {}).get('do', {})
+            if receipt.get('executor') in {'codex', 'claude-code'}:
+                raise HTTPException(409, 'steer_unsupported')
         rows, actor = self._rows(public_id), self._actor()
         if len(rows) >= self.policy.maximum_count:
             raise HTTPException(409, 'steer_limit')

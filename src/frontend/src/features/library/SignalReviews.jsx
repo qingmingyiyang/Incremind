@@ -25,6 +25,19 @@ function reviewItems(value) {
   return value.items;
 }
 
+function reviewAngles(value) {
+  const rows = value.angles === undefined ? empty : value.angles;
+  const ids = new Set();
+  if (!Array.isArray(rows)) throw new Error('invalid_project_angles');
+  for (const row of rows) {
+    if (!text(row?.id) || !row.id || ids.has(row.id) || !text(row.label) || !row.label
+      || !integer(row.count) || !integer(row.revision) || !row.revision
+      || !['proposed', 'active', 'paused'].includes(row.state)) throw new Error('invalid_project_angles');
+    ids.add(row.id);
+  }
+  return rows;
+}
+
 export function useSignalReviews(projectId, refresh) {
   const gate = useRequestScope(projectId), scope = gate.scope;
   const [loaded, setLoaded] = useState(null), [failure, setFailure] = useState(null);
@@ -36,8 +49,9 @@ export function useSignalReviews(projectId, refresh) {
     active.current?.abort();
     const controller = new AbortController(); active.current = controller;
     try {
-      const value = reviewItems(await libraryApi.signalReviews(projectId, { signal: controller.signal }));
-      if (!controller.signal.aborted && gate.isCurrent(request)) { setLoaded({ scope, items: value }); setFailure(null); }
+      const value = await libraryApi.signalReviews(projectId, { signal: controller.signal });
+      const items = reviewItems(value), angles = reviewAngles(value);
+      if (!controller.signal.aborted && gate.isCurrent(request)) { setLoaded({ scope, items, angles }); setFailure(null); }
     } catch {
       if (!controller.signal.aborted && gate.isCurrent(request)) { setLoaded(null); setFailure({ scope, message: '读取未完成 · 重试' }); }
     }
@@ -49,20 +63,30 @@ export function useSignalReviews(projectId, refresh) {
       items: value.items.filter(row => !rows.some(done => done.id === row.id && done.revision === row.revision)),
     } : value);
   }
-  return { items: loaded?.scope === scope ? loaded.items : empty, error: failure?.scope === scope ? failure.message : '', reload, remove };
+  return { items: loaded?.scope === scope ? loaded.items : empty, angles: loaded?.scope === scope ? loaded.angles : empty,
+    error: failure?.scope === scope ? failure.message : '', reload, remove };
 }
 
 const evidenceLabel = row => row.kind === 'unused' ? `送 ${row.evidence.sent} · 用 ${row.evidence.used}`
   : `${row.kind === 'reask' ? '重问' : '停下'} ${row.evidence.count}`;
 
+const angleActions = {
+  proposed: [['confirm', '确认', 'check', 'confirmed'], ['dismiss', '划掉', 'close', 'dismissed']],
+  active: [['pause', '停用', 'review-stop', 'paused']],
+  paused: [['resume', '恢复', 'review-reask', 'active']],
+};
+
 export function SignalReviews({ projectId, reviews, onBack, onOpen, onSelect, drillError, hideEvidence, onChanged }) {
-  const { items } = reviews;
+  const { items, angles = empty } = reviews;
   const gate = useRequestScope(projectId), scope = gate.scope;
   const [selected, setSelected] = useState([]), [focused, setFocused] = useState(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [leaving, setLeaving] = useState([]);
   const active = useRef(null), locked = useRef(false), timer = useRef(null);
-  useEffect(() => () => { active.current?.abort(); clearTimeout(timer.current); }, []);
-  useEffect(() => { setSelected([]); setFocused(null); }, [scope]);
+  useEffect(() => {
+    locked.current = false;
+    setSelected([]); setFocused(null); setBusy(false); setError(''); setLeaving([]);
+    return () => { active.current?.abort(); clearTimeout(timer.current); };
+  }, [scope]);
   useEffect(() => {
     setSelected(value => value.filter(chosen => items.some(row => row.id === chosen.id && row.revision === chosen.revision)));
     setFocused(value => items.find(row => row.id === value?.id) || null);
@@ -97,9 +121,30 @@ export function SignalReviews({ projectId, reviews, onBack, onOpen, onSelect, dr
       if (!processed && gate.isCurrent(request)) { locked.current = false; setBusy(false); }
     }
   }
+  async function decideAngle(row, action, expectedState) {
+    if (locked.current) return;
+    const request = gate.issue('angle', scope);
+    if (!request) return;
+    const controller = new AbortController(); active.current = controller;
+    locked.current = true; setBusy(true); setError('');
+    try {
+      const result = await libraryApi.decideProjectAngle(projectId, row, action, { signal: controller.signal });
+      if (controller.signal.aborted || !gate.isCurrent(request)) return;
+      if (result?.id !== row.id || result.state !== expectedState) throw new Error('invalid_project_angle_decision');
+      await reviews.reload();
+      if (gate.isCurrent(request)) onChanged?.();
+    } catch (failure) {
+      if (!controller.signal.aborted && gate.isCurrent(request)) {
+        setError(failure.status === 409 ? '内容已变化 · 重新读取' : '操作未完成 · 重试');
+        if (failure.status === 409) await reviews.reload();
+      }
+    } finally {
+      if (gate.isCurrent(request)) { locked.current = false; setBusy(false); }
+    }
+  }
   return <>
     <main className="library-main library-review-main">
-      <header className="library-review-heading"><button type="button" aria-label="返回资料库" onClick={onBack}>‹</button><h2>纠偏 <span>{items.length}</span></h2></header>
+      <header className="library-review-heading"><button type="button" aria-label="返回资料库" onClick={onBack}>‹</button><h2>纠偏 <span>{items.length + angles.length}</span></h2></header>
       {(reviews.error || error) && <div className="library-error" role="alert"><span>{reviews.error || error}</span>
         <button type="button" disabled={busy} onClick={() => { setError(''); reviews.reload(); }}>重试</button></div>}
       <div className="library-rows library-review-rows" aria-label="纠偏列表">
@@ -109,6 +154,11 @@ export function SignalReviews({ projectId, reviews, onBack, onOpen, onSelect, dr
               ? value.filter(chosen => chosen.id !== row.id) : [...value.filter(chosen => chosen.id !== row.id), { id: row.id, revision: row.revision }])}/><span><Icon name="check" size={12}/></span></label><Icon name={`review-${row.kind}`} size={14}/></>}
           title={row.title} selected={focused?.id === row.id} onOpen={() => { setFocused(row); onSelect?.(); }}
           trailing={<><span className="library-review-evidence">{evidenceLabel(row)}</span><span className="library-review-effect">{row.effect === 'correction' ? '+1' : '降权'}</span></>}/>) }
+        {angles.map(row => <Row key={row.id} className="library-review-row library-review-angle" title={row.label} readOnly
+          trailing={<><span className="library-review-evidence" aria-label={`最近被问到 ${row.count} 次`}>{row.count}</span>
+            <span className="library-review-angle-actions">{angleActions[row.state].map(([action, label, icon, expectedState]) =>
+              <button key={action} type="button" className="library-gap-dismiss" aria-label={`${label} ${row.label}`} title={label}
+                disabled={busy} onClick={() => decideAngle(row, action, expectedState)}><Icon name={icon} size={14}/></button>)}</span></>}/>) }
       </div>
       <footer className="library-review-footer"><span>已选 {selectedRows.length}</span><div className="library-actions">
         <button type="button" className="library-primary" disabled={busy || !selectedRows.length} onClick={() => decide('confirm')}>确认 {selectedRows.length}</button>

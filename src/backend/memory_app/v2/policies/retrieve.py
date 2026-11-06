@@ -341,3 +341,15 @@ v13.explicit_answer_evidence = v12.explicit_answer_evidence
 v13.initial_memory_probe = v12.initial_memory_probe
 v13.evidence_answer_probe = v12.evidence_answer_probe
 register('retrieve', '@13')(v13)
+
+
+def v14(entrypoint, /, *args, **kwargs):
+    """在默认调查流程中使用方法条件的原始向量分。"""
+    return v9(entrypoint, *args, **kwargs)
+
+
+for _name in ('drilldown', 'demand_based', 'agentic', 'empty_layer_drilldown', 'explicit_answer_evidence'):
+    setattr(v14, _name, getattr(v9, _name))
+from .method_situation import semantic_condition_score
+v14.condition_score = semantic_condition_score
+register('retrieve', '@14')(v14)

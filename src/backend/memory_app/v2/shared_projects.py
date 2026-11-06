@@ -78,6 +78,9 @@ class SharedProjects:
         return self.clock().astimezone(timezone.utc).isoformat()
 
     def authorize(self, tx, actor, project_id, *, action='read', authority=None, states=('active',)):
+        from .shared_daily_authority import SharedDailyActor
+        if type(actor) is SharedDailyActor:
+            return actor.authorize(self, tx, project_id, action=action, authority=authority)
         caller = current_caller(tx, actor)
         project = tx.read(PROJECTS, segment(project_id))
         if project is None or project.payload['state'] not in states:

@@ -10,6 +10,7 @@ from core.document_engine import SQLiteDocumentRepository
 from ..task_status import get_task_status
 from ..workspace_contracts import _project
 from .do import task_receipt
+from .external_watch import idle_minutes
 
 
 _INTAKE_ERRORS = frozenset({
@@ -100,7 +101,9 @@ def _do_view(records, scope, turn, now, namespace, *, observer=None):
             and type(progress["done"]) is int and type(progress["total"]) is int
             and 0 <= progress["done"] <= progress["total"]):
         progress = None
+    idle = idle_minutes(records, turn, receipt, now)
     return {"id": turn.object_id, "kind": "task", "title": receipt.get("title", ""),
+            **({"idle_minutes": idle} if idle is not None else {}),
             "state": state, "progress": progress, "pending_count": int(state == "pending"),
             "error": "task_failed" if state == "failed" else None,
             "target": target, "updated_at": _timestamp(turn.payload)}

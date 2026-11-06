@@ -187,7 +187,7 @@ class DailyJobs:
                     await asyncio.sleep(get('trigger')(TriggerInput(False, self.initial_delay, self.interval),
                         operation='check', check_interval=self.check_interval))
                     states = await self._checkpoint()
-                    for name in ('nudges', 'automatic_inspirations', 'backup'):
+                    for name in ('nudges', 'automatic_inspirations', 'backup', 'external_watch'):
                         callback = self.jobs.get(name)
                         if callback is not None:
                             try:
@@ -212,7 +212,7 @@ class DailyJobs:
                     await self._run_automatic()
                     next_maintenance = self.clock() + get('trigger')(TriggerInput(False, self.initial_delay, self.interval))
                 else:
-                    for name in ('automatic_inspirations', 'backup'):
+                    for name in ('automatic_inspirations', 'backup', 'external_watch'):
                         callback = self.jobs.get(name)
                         if callback is not None:
                             await self._run_background(callback)

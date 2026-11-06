@@ -100,11 +100,12 @@ def _backup_due_in_existing_space(root, namespace, now):
 
 
 class ServerInspirationCoordinator:
-    def __init__(self, users, pool, jobs, resources, *, now=lambda: datetime.now(timezone.utc)):
+    def __init__(self, users, pool, jobs, resources, *, now=lambda: datetime.now(timezone.utc), shared_daily=None):
         repository = resolve_rebuild_repository_root(Path(__file__))
         self.namespace = RebuildStorageSettings.from_toml(repository / 'config' / 'rebuild.toml.example',
             repository_root=repository).namespace_id
         self.users, self.pool, self.jobs, self.resources, self.now = users, pool, jobs, resources, now
+        self.shared_daily = shared_daily
         self._tasks, self._probe_errors = {}, {}
         self._cursor, self._closed = None, False
 
@@ -122,7 +123,8 @@ class ServerInspirationCoordinator:
             return False
         root = self.users.root_for(identity)
         result = (_backup_due_in_existing_space(root, self.namespace, now)
-                  or _due_in_existing_space(root, self.namespace, now))
+                  or _due_in_existing_space(root, self.namespace, now)
+                  or self.shared_daily is not None and self.shared_daily.due(identity))
         # 只读巡检与入队之间仍须尊重账号停用和删除事实。
         return result and self.users.get(identity)['disabled_at'] is None and not self.users.deletion_pending(identity)
 
@@ -161,6 +163,8 @@ class ServerInspirationCoordinator:
                 async with daily.maintenance_lease(wait=False) as admitted:
                     if not admitted:
                         return
+                    if self.shared_daily is not None:
+                        await retain_until_finished(asyncio.to_thread(self.shared_daily.run_due, application, identity))
                     backup = getattr(application.state, 'memory_backup', None)
                     if backup is None:
                         raise RuntimeError('automatic_backup_service_unavailable')

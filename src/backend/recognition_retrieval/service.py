@@ -16,6 +16,9 @@ import json
 import re
 import sqlite3
 from typing import Protocol
+
+import numpy as np
+
 from core.storage_provider.observability import stage, observe_connection
 
 
@@ -114,17 +117,37 @@ class SQLiteEmbeddingCache:
             raise
 
     def read(self, *, model_id: str, entry: "_RecognitionEntry") -> tuple[float, ...] | None:
+        key = (entry.project_id, entry.id, entry.revision, model_id)
         row = self._connection.execute(
             """
             SELECT vector_json FROM recognition_embedding_cache
             WHERE project_id = ? AND recognition_id = ? AND revision = ? AND model_id = ?
             """,
-            (entry.project_id, entry.id, entry.revision, model_id),
+            key,
         ).fetchone()
-        if row is None:
-            return None
+        return None if row is None else self._decode_cached(row[0], key)
+
+    def read_many(self, *, model_id: str, entries: Sequence["_RecognitionEntry"]) -> dict[str, tuple[float, ...]]:
+        if not entries:
+            return {}
+        requested = json.dumps([(entry.project_id, entry.id, entry.revision) for entry in entries],
+                               separators=(",", ":"))
+        rows = self._connection.execute(
+            """
+            SELECT cache.project_id, cache.recognition_id, cache.revision, cache.vector_json
+            FROM json_each(?) AS requested CROSS JOIN recognition_embedding_cache AS cache
+            WHERE cache.project_id = json_extract(requested.value, '$[0]')
+              AND cache.recognition_id = json_extract(requested.value, '$[1]')
+              AND cache.revision = json_extract(requested.value, '$[2]')
+              AND cache.model_id = ?
+            ORDER BY requested.key
+            """, (requested, model_id))
+        return {identity: self._decode_cached(raw, (project, identity, revision, model_id))
+                for project, identity, revision, raw in rows}
+
+    def _decode_cached(self, raw: str, key: tuple) -> tuple[float, ...]:
         try:
-            parsed = json.loads(row[0])
+            parsed = json.loads(raw)
             if not isinstance(parsed, list):
                 raise RecognitionRetrievalError("cached vector is invalid")
             return _vector(parsed, "cached vector")
@@ -136,7 +159,7 @@ class SQLiteEmbeddingCache:
                 DELETE FROM recognition_embedding_cache
                 WHERE project_id = ? AND recognition_id = ? AND revision = ? AND model_id = ?
                 """,
-                (entry.project_id, entry.id, entry.revision, model_id),
+                key,
             )
             self._connection.commit()
             raise RecognitionRetrievalError("cached vector is invalid") from exc
@@ -649,7 +672,10 @@ def _vector_scores(*, provider: EmbeddingProvider, index: SqliteVecCandidateInde
     if not entries:
         return {}
     model_id = _provider_model_id(provider)
-    cached = {entry.id: cache.read(model_id=model_id, entry=entry) for entry in entries} if cache is not None else {}
+    if isinstance(cache, SQLiteEmbeddingCache):
+        cached = cache.read_many(model_id=model_id, entries=entries)
+    else:
+        cached = {entry.id: cache.read(model_id=model_id, entry=entry) for entry in entries} if cache is not None else {}
     missing = tuple(entry for entry in entries if cached.get(entry.id) is None)
     vectors = provider.embed((query, *(entry.content for entry in missing)))
     if len(vectors) != len(missing) + 1:
@@ -665,7 +691,7 @@ def _vector_scores(*, provider: EmbeddingProvider, index: SqliteVecCandidateInde
         raise RecognitionRetrievalError("embedding vectors have inconsistent dimensions")
     if index is not None:
         return dict(index.search(entries=entries, vectors=entry_vectors, query_vector=query_vector, limit=vector_limit))
-    scores = {entry.id: _cosine(query_vector, vector) for entry, vector in zip(entries, entry_vectors, strict=True)}
+    scores = {entry.id: score for entry, score in zip(entries, _cosine_batch(query_vector, entry_vectors), strict=True)}
     return {item_id: scores[item_id] for item_id in _ordered_ids(scores)[:vector_limit]}
 
 
@@ -818,6 +844,35 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
     if not left_norm or not right_norm:
         return 0.0
     return round(max(0.0, min(1.0, (sum(a * b for a, b in zip(left, right, strict=True)) / (left_norm * right_norm) + 1.0) / 2.0)), 6)
+
+
+def _cosine_batch(left: Sequence[float], vectors: Sequence[Sequence[float]]) -> tuple[float, ...]:
+    if not len(vectors):
+        return ()
+    query = np.asarray(left, dtype=np.float64)
+    matrix = np.array(vectors, dtype=np.float64, copy=True)
+    if query.ndim != 1 or matrix.ndim != 2 or matrix.shape[1] != query.size:
+        raise RecognitionRetrievalError("embedding vectors have inconsistent dimensions")
+    if not np.isfinite(query).all() or not np.isfinite(matrix).all():
+        raise RecognitionRetrievalError("embedding vectors must contain finite values")
+    with np.errstate(over="ignore"):
+        query_norm = np.linalg.norm(query)
+        norms = np.sqrt(np.einsum("ij,ij->i", matrix, matrix))
+    if not isfinite(query_norm) or not np.isfinite(norms).all():
+        # 极端有限值的长度可能溢出，沿原比较器的运算顺序处理。
+        return tuple(_cosine(left, vector) for vector in vectors)
+    if not query_norm:
+        return (0.0,) * len(vectors)
+    nonzero = norms != 0
+    np.divide(matrix, norms[:, None], out=matrix, where=nonzero[:, None])
+    raw = np.clip((matrix @ (query / query_norm) + 1.0) / 2.0, 0.0, 1.0)
+    raw[~nonzero] = 0.0
+    scores = [round(float(value), 6) for value in raw]
+    scaled = raw * 1_000_000
+    # 矩阵归约顺序会改变末位精度，临近舍入边界时沿用原比较器。
+    for index in np.flatnonzero(np.abs(scaled - np.floor(scaled) - 0.5) < 1e-6):
+        scores[index] = _cosine(left, vectors[index])
+    return tuple(scores)
 
 
 def _required_string(value: object, field: str) -> str:

@@ -17,6 +17,49 @@ FIELDS = {"id", "kind", "title", "state", "progress", "pending_count", "error", 
 NOW = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
 
+def test_external_watch_tracks_only_persisted_progress(tmp_path):
+    from backend.memory_app.v2.external_watch import COLLECTION, check
+    from backend.memory_app.v2.jobs import _do_view
+
+    records = SQLiteStructuredRecordStore(tmp_path / 'records.sqlite3')
+    execution = {'executor': 'codex', 'started': True, 'owner': 'worker', 'project_id': 'default'}
+    receipt = {'executor': 'codex', 'state': 'running', 'title': '外部任务'}
+    turn = {'thread_id': 'thread', 'intent': 'do', 'project_id': 'default', 'receipt': {'do': receipt}}
+    scope = WorkScope('local-user', 'default')
+
+    with records.begin() as tx:
+        tx.put('v2_threads', 'thread', {'project_id': 'default'}, expected_revision=0)
+        tx.put('v2_task_executions', 'task', execution, expected_revision=0)
+        tx.put('v2_turns', 'task', turn, expected_revision=0)
+        tx.commit()
+
+    def job(now):
+        return _do_view(records, scope, records.read('v2_turns', 'task'), now, 'recognition')
+
+    check(records, NOW)
+    assert 'idle_minutes' not in job(NOW + timedelta(seconds=299))
+    assert job(NOW + timedelta(minutes=5))['idle_minutes'] == 5
+    assert records.read('v2_turns', 'task').payload == turn
+
+    progressed = {**turn, 'receipt': {'do': {**receipt, 'external_progress': {'sequence': 1, 'terminal': None}}}}
+    with records.begin() as tx:
+        tx.put('v2_turns', 'task', progressed, expected_revision=1)
+        tx.commit()
+    next_tick = NOW + timedelta(minutes=6)
+    assert 'idle_minutes' not in job(next_tick)
+    check(records, next_tick)
+    assert job(next_tick + timedelta(minutes=5))['idle_minutes'] == 5
+
+    ended = {**turn, 'receipt': {'do': {**receipt, 'external_progress': {'sequence': 1, 'terminal': 'done'}}}}
+    with records.begin() as tx:
+        tx.put('v2_turns', 'task', ended, expected_revision=2)
+        tx.commit()
+    assert 'idle_minutes' not in job(next_tick + timedelta(minutes=5))
+    check(records, next_tick + timedelta(minutes=5))
+    assert records.read(COLLECTION, 'task') is None
+    assert records.read('v2_turns', 'task').payload == ended
+
+
 @pytest.fixture
 def tray(tmp_path, monkeypatch):
     from backend.memory_app.v2 import jobs

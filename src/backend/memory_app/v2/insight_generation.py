@@ -209,9 +209,9 @@ def generate_insights(models, service, documents, project_id, document_id, *, on
                 raise RecognitionConflict('insight_project_choices_changed')
         selected = (prior_turn.payload['request'].get('policy_versions', {}).get('extract', '@1')
             if prior_turn else version('extract'))
-        dynamic = selected == '@6'
-        comments = selected in {'@3', '@4', '@5', '@6'}
-        comparative = selected in {'@2', '@3', '@4', '@5', '@6'}
+        dynamic = selected in {'@6', '@8'}
+        comments = selected in {'@3', '@4', '@5', '@6', '@8'}
+        comparative = selected in {'@2', '@3', '@4', '@5', '@6', '@8'}
         if dynamic:
             current_analysis = _checked_material_analysis(records, documents, project_id, document_id, revision=revision)
             if prior_turn:
@@ -235,8 +235,13 @@ def generate_insights(models, service, documents, project_id, document_id, *, on
                     raise RecognitionConflict('insight_neighbor_unavailable')
             else:
                 assignment = scene_of(records, 'document', document_id)
+                angle_options = {}
+                if selected == '@8' and material_analysis is not None:
+                    from .material_angles import interpretation_ids
+                    angle_options['angle_ids'] = interpretation_ids(material_analysis['analysis'])
                 neighbors = InsightLinks(records, service, models).extraction_neighbors(project_id, experience,
-                    assignment['scene'] if assignment and assignment['project_id'] == project_id else None)
+                    assignment['scene'] if assignment and assignment['project_id'] == project_id else None,
+                    **angle_options)
             project_choices = public_projects(records, documents, models)
         materials = [{"type": "experience", "id": experience_id,
                 "revision": experience.revision, "project_id": project_id}] + [
@@ -422,11 +427,14 @@ def generate_insights(models, service, documents, project_id, document_id, *, on
                             record_comment_candidate(tx, candidate_id, project_id, generation['id'],
                                 turn.turn_id, hint, comment_inputs)
                         if dynamic and material_analysis is not None and 'analysis_claim_ids' in hint:
-                            tx.put('v2_material_candidate_evidence', candidate_id, {
+                            from .material_angles import CANDIDATE_EVIDENCE
+                            tx.put(CANDIDATE_EVIDENCE, candidate_id, {
                                 'project_id': project_id, 'extract_turn_id': turn.turn_id,
                                 'analysis_ref': material_analysis['analysis_ref'],
                                 'bindings': material_analysis['bindings'],
-                                'claim_ids': hint['analysis_claim_ids'], 'evidence': hint['analysis_evidence']}, expected_revision=0)
+                                'claim_ids': hint['analysis_claim_ids'], 'evidence': hint['analysis_evidence'],
+                                **({'angle_ids': hint['analysis_angle_ids'], 'candidate_revision': candidate.revision}
+                                   if 'analysis_angle_ids' in hint else {})}, expected_revision=0)
                     tx.commit()
                 return candidate
             try:

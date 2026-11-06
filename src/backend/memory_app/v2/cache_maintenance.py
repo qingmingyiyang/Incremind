@@ -2,10 +2,12 @@
 from backend.recognition import RecognitionError, WorkScope
 from backend.recognition_retrieval import SQLiteEmbeddingCache
 from backend.recognition_retrieval.cache_invalidation import chunk_cache_parent, chunk_cache_id
+from core.search_and_recall.vector_cache_invalidation import condition_cache_parent
 from ..source_egress import SourceEgressService
 from ..retrieval_models import configured_adapter
 import re
 from .privacy import is_private_project
+from .shared_vector_keys import contextual_cache_prefix, indexed_summary
 
 
 class CacheMaintenance:
@@ -35,17 +37,21 @@ class CacheMaintenance:
             removed = 0
             for namespace in cache.namespaces():
                 parent = chunk_cache_parent(namespace)
-                if parent is None:
-                    current = self._recognitions(namespace, scopes.get(namespace, ()), authority)
-                else:
+                condition = condition_cache_parent(namespace)
+                if parent is not None:
                     current = self._chunks(*parent, authority)
+                elif condition is not None:
+                    project, slot = condition
+                    current = self._recognitions(project, scopes.get(project, ()), authority, condition_slot=slot)
+                else:
+                    current = self._recognitions(namespace, scopes.get(namespace, ()), authority)
                 removed += cache.purge_invalid(project_id=namespace, current_revisions=current,
                                                current_model_id=model_key, model_id_pattern=model_pattern)
             return removed
         finally:
             cache.close()
 
-    def _recognitions(self, project, scopes, authority):
+    def _recognitions(self, project, scopes, authority, *, condition_slot=None):
         configured = self.query.models.public().get('embedding', {})
         local = configured.get('mode') == 'local' and configured.get('provider') == 'local'
         if not local and is_private_project(self.query.records, project):
@@ -53,6 +59,8 @@ class CacheMaintenance:
         current = {}
         for scope in scopes:
             for entry in self.query.service.retrieval_entries(scope=scope):
+                if condition_slot is not None and condition_slot >= len(entry['conditions']):
+                    continue
                 try:
                     snapshot = authority.snapshot(scope, [{'type':'recognition', 'id':entry['id'], 'revision':entry['revision']}])
                     if not local:
@@ -81,7 +89,10 @@ class CacheMaintenance:
                 authority.require(snapshot, 'embedding')
         except RecognitionError:
             return {}
+        context_prefix = None
         if kind == 'document':
+            summary = documents[identity]['summary']
+            context_prefix = contextual_cache_prefix(summary, indexed_summary(self.query.records, project, entry, summary))
             spans = [(span['layer'], span['chunks']) for span in documents[identity]['spans']]
             original = originals.get(entry.get('item_id'))
             if original and original['length']:
@@ -89,6 +100,10 @@ class CacheMaintenance:
         else:
             source = next(value for value in sources if value['source_id'] == identity)
             spans = [('L0', source['chunks'])]
-        return {chunk_cache_id(entry, layer, slot, index):entry['revision']
-                for slot, (layer, chunks) in enumerate(spans) if layer != 'L2'
-                for index in range(len(chunks))}
+        current = {chunk_cache_id(entry, layer, slot, index, context_prefix=context_prefix):entry['revision']
+                   for slot, (layer, chunks) in enumerate(spans) if layer != 'L2'
+                   for index in range(len(chunks))}
+        if kind == 'document' and documents[identity]['summary'] and any(layer == 'L2' for layer, _ in spans):
+            from .topic_groups import summary_cache_entry
+            current[summary_cache_entry(project, entry).id] = entry['revision']
+        return current

@@ -5,7 +5,8 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from backend.recognition import WorkScope
+from backend.recognition import RecognitionConflict, WorkScope
+from backend.security.user_context import USER_ACCESS
 from backend.shared.document_visibility import LegacyDocumentVisibility
 from core.storage_provider import SQLiteUnitOfWorkConflict
 from ..transaction_records import TransactionRecords
@@ -257,9 +258,34 @@ def install_signal_review_routes(application, *, records, owner=None, service=No
     @router.get('')
     def current(project_id: str):
         try:
-            return owner.current(project_id)
+            value = owner.current(project_id)
+            angles = getattr(application.state, 'product_project_angles', None)
+            if angles is not None:
+                rows = angles.current(project_id)
+                if rows:
+                    return {**value, 'angles': rows}
+            return value
         except SQLiteUnitOfWorkConflict:
             raise HTTPException(409,'signal_reviews_changed') from None
+
+    @router.post('/angles/decide')
+    async def decide_angle(request: Request):
+        body = await _json(request)
+        if set(body) != {'project_id', 'id', 'action', 'expected_revision'}:
+            raise HTTPException(400, 'project_angle_decision_invalid')
+        project, identity = _project(body['project_id']), _project(body['id'])
+        angles = getattr(application.state, 'product_project_angles', None)
+        if angles is None:
+            raise HTTPException(404, 'project_angles_unavailable')
+        access = USER_ACCESS.get()
+        try:
+            return angles.decide(project, identity, body['action'], body['expected_revision'],
+                                 by='admin' if access is not None and access.by == 'admin' else 'user')
+        except (RecognitionConflict, SQLiteUnitOfWorkConflict):
+            raise HTTPException(409, 'project_angle_changed') from None
+        except ValueError:
+            raise HTTPException(400, 'project_angle_decision_invalid') from None
+
     @router.post('/decide')
     async def decide(request: Request):
         body = await _json(request)

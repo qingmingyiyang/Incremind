@@ -338,7 +338,7 @@ py -3.12 -m venv .venv
 <table>
 <tr>
 <td width="50%"><img src="docs/images/split.png" alt="一句话拆成记住和问" /><br/><sub>一句话拆成"记住"和"问"；"日常"里找不到答案，指向"学习方法"</sub></td>
-<td width="50%"><img src="docs/images/answer.png" alt="带引用的回答" /><br/><sub>自动转到"学习方法"项目里回答，上标数字可点开原文</sub></td>
+<td width="50%"><img src="docs/images/answer.png" alt="带引用的回答" /><br/><sub>点击项目建议后可到学习方法项目重新提问，上标数字可点开原文</sub></td>
 </tr>
 <tr>
 <td width="50%"><img src="docs/images/library.png" alt="资料库" /><br/><sub>资料库：认识分待确认和生效，标出补充（＋）和新增（◇）</sub></td>

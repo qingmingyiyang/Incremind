@@ -241,7 +241,8 @@ const WorkbenchTurn = memo(function WorkbenchTurn({ turn, turnId, projectId, err
             ? { ...current, turns: replaceReceiptTurn(current.turns, updated) } : current)}/>}
         {memory ? <>
           <div className="workbench-receipt-title"><StatusDot state={memory.state}/><span className="workbench-memory-title" title={memory.title}>{memory.title}</span><ProgressDots {...memory.progress} running={memory.state === 'processing'} title="原件 · 正文 · 整理 · 入库"/>{memory.document_id && <button type="button" aria-label="打开整理稿" onClick={() => { closeOutput(); closeCitation(); setTracePanel(null); setDraftPanel({ scope, documentId: memory.document_id, itemId: memory.item_id }); }}>↗</button>}{memory.state === 'failed' && <><button type="button" disabled={sending || continuing} onClick={() => retry(turn, projectId)}>重试</button>{memory.item_id && <button type="button" aria-label="打开原件" onClick={() => { closeOutput(); closeCitation(); setTracePanel(null); setDraftPanel({ scope, projectId, itemId: memory.item_id }); }}>↗</button>}</>}</div>
-          <DocumentPlacement projectId={projectId} projects={projects} row={{...memory,revision:memory.document_revision}} onChanged={refreshPlacement} onError={setError}/><div className="workbench-insights">{memory.insights.map(insight => chip(insight, memory.filing?.state === 'filed' ? memory.filing.target_project_id : undefined))}{!!memory.related.length && <span className="workbench-related-count" title={memory.related.map(entry => entry.text).join('\n')}>∞ {memory.related.length}</span>}</div><WorkbenchError error={memory.error} fallback="整理未完成 · 重试" projectId={errorProjectId} onSettings={openSettings}/>
+          <DocumentPlacement projectId={projectId} projects={projects} row={{...memory,revision:memory.document_revision}}
+            allowShared={actions.allowSharedFiling} onNavigate={onNavigate} onChanged={refreshPlacement} onError={setError}/><div className="workbench-insights">{memory.insights.map(insight => chip(insight, memory.filing?.state === 'filed' && memory.filing.target_scope_kind !== 'shared' ? memory.filing.target_project_id : undefined))}{!!memory.related.length && <span className="workbench-related-count" title={memory.related.map(entry => entry.text).join('\n')}>∞ {memory.related.length}</span>}</div><WorkbenchError error={memory.error} fallback="整理未完成 · 重试" projectId={errorProjectId} onSettings={openSettings}/>
         </> : ask ? <>
           {stopControl && <div className="workbench-receipt-title">{stopControl}</div>}
           <CitedAnswer answer={ask.answer ?? ask.partial ?? ''} citations={ask.citations} unverifiedSpans={ask.unverified_claim_spans} onOpenCitation={openCitation} citationHref="#workbench-citation" onCopyAnswer={() => recordCopy()}/><div className="workbench-ask-layers"><LayerBadges layers={ask.layers} onOpenTrace={() => { closeOutput(); closeCitation(); setTracePanel({ scope, projectId, ask }); }}/>{hint && <span className="ui-layer-badges workbench-elsewhere"><button type="button" title={`在 ${hintLabel} 里问`} aria-label={`在 ${hintLabel} 里问`} disabled={sending} onClick={() => askElsewhere(turn, hint)}>→ {hintLabel}</button></span>}<button type="button" className="workbench-answer-copy" aria-label="复制回答" title="复制" onClick={copyAnswer}><Icon name={copied ? 'check' : 'copy'} size={14}/></button></div>
@@ -793,7 +794,6 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
         const favorites = !file && (!intent || intent === 'remember') && /https:\/\/(?:space\.bilibili\.com\/\d+\/favlist|(?:www\.)?bilibili\.com\/medialist\/detail\/ml\d+)/.test(text);
         const expanded = favorites ? await workbenchApi.thread(project, id, { scopeKind }) : null;
         if (!gate.isCurrent(request)) return acceptance();
-        if (project === 'default' && result.turn?.id) sentHere.current.add(result.turn.id);
         if (project === projectId) setSession(current => ({ scope, project, id, threads: current.threads.some(thread => thread.id === id) ? current.threads : [{ id, title: displayScopedText(result.turn.user_text || file?.name || '') }, ...current.threads], turns: expanded?.turns || (current.id === id ? current.turns.some(old => old.id === result.turn.id) ? replaceReceiptTurn(current.turns, result.turn) : [...current.turns, result.turn] : [result.turn]) }));
       }
       if (!preparedUpdate) setContinuation(null);
@@ -815,7 +815,6 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
             acceptedText = true;
             writeStoredJson(userStorageKey(`chriptmas-v2-thread:${isShared ? 'shared:' : ''}${acceptedTurn.project}`), acceptedTurn.id);
             if (acceptedTurn.project === projectId) {
-              if (projectId === 'default') sentHere.current.add(acceptedTurn.turnId);
               setSession(current => current.scope === scope && current.project === projectId
                 && (current.id === originalThread || current.id === acceptedTurn.id)
                 ? { ...current, id: acceptedTurn.id, turns: detail.turns,
@@ -835,19 +834,6 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
     if (isShared || !gate.isScopeCurrent(scope)) return;
     return send({ text: `${formatScopeTag(hint.project_id, hint.scene || null)}\n${scopedText(turn.user_text).text}`, files: [], intent: 'ask' });
   }, [busy, sessionReady, gate, scope, projectId, projects, visible.id, onNavigate, isShared]);
-  // 在日常里刚问的问题没找到或答得不全、资料在别的项目时，自动去那个项目再问一次（资料会被自动归走）。
-  // 只跟进本页刚发出的轮次；拆分出的问题在后台完成，所以随轮询结果检查。
-  const sentHere = useRef(new Set());
-  useEffect(() => {
-    if (isShared || projectId !== 'default' || busy || !sessionReady) return;
-    for (const turn of visible.turns) {
-      if (!sentHere.current.has(turn.id)) continue;
-      const asked = turn.intent === 'multi' ? (turn.receipt?.parts || []).filter(part => part.intent === 'ask').map(part => ({ user_text: part.span, ask: part.receipt?.ask }))
-        : turn.intent === 'ask' ? [{ user_text: turn.user_text, ask: turn.receipt?.ask }] : [];
-      const lost = asked.find(row => row.ask?.elsewhere?.project_id);
-      if (lost) { sentHere.current.delete(turn.id); askElsewhere({ user_text: lost.user_text }, lost.ask.elsewhere); return; }
-    }
-  }, [visible.turns, projectId, busy, sessionReady, askElsewhere, isShared]);
   async function createUnknownProject() {
     if (!unknownProject || unknownProject.scope !== scope || creatingProject.current || busy) return;
     const retained = unknownProject, request = gate.issue('project', scope);
@@ -1224,6 +1210,7 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
     });
   }, [refreshPlacement]);
   const turnActions = useMemo(() => ({ readOnly: isShared, review, retry, continueTurn, openOutput, openCitation,
+    allowSharedFiling: serverConversationShares,
     openShare: isShared && !serverConversationShares ? undefined : openShare, redoOutput, chooseOutput, closeOutput, closeCitation, saveAnswerOutcome, savingOutcome, openCorrection,
     rememberActions: isShared ? { projectId, canRead: projectScope?.can_read_sources === true,
       canRetry: projectScope?.can_write === true, disabled: busy || retrying || sharedRemember.working || sharedInspirations.working, retry, onNavigate, openSettings } : undefined,
@@ -1285,7 +1272,7 @@ function PersonalWorkbench({ projectId = 'default', projectScopeKind: scopeKind 
     setTracePanel(null); closeCitation(); closeOutput(); closeShare(); setDraftPanel(null); setCorrectionPanel(null);
     setContinuation(null); setChoicePanel(null); setUnknownProject(null); setError('');
     setContinuationReset(value => value + 1);
-    externalExecutor.onClose(); attachmentRetry.current = null; sentHere.current.clear();
+    externalExecutor.onClose(); attachmentRetry.current = null;
     writeStoredJson(cacheKey, '');
     setSession(current => ({ ...current, id: null, turns: [] }));
     onNavigate?.('workbench', { project_id: projectId, scope_kind: scopeKind });

@@ -71,7 +71,7 @@ def _episode(organize, original_title):
         if saved is None:
             selected = version('material_analysis')
             policies = {'organize': '@2', 'material_analysis': selected}
-            if selected in {'@2', '@3', '@4'}:
+            if selected in {'@2', '@3', '@4', '@5', '@6', '@7'}:
                 policies['context_preparation'] = '@1'
             payload = {'item_id': organize.item_id, 'project_id': organize.project_id,
                 'source_text': organize.source, 'original_title': original_title,
@@ -79,6 +79,16 @@ def _episode(organize, original_title):
                 'auxiliary_binding': auxiliary_binding,
                 'owner_revision': row.revision, 'policy_versions': policies,
                 'state': 'processing', 'plan_stage': None, 'analysis_stages': [], 'temporal_stages': []}
+            if selected in {'@6', '@7'}:
+                from .project_angles import active_angles
+                created_at = row.payload.get('created_at')
+                angles = active_angles(tx, organize.project_id, created_at=created_at) if created_at else ()
+                payload['project_angles'] = [{key: angle[key] for key in ('id', 'label', 'focus', 'kind')}
+                                             for angle in angles]
+            if selected == '@7':
+                from .topic_groups import can_use_labels, known_labels
+                payload['known_topics'] = (list(known_labels(tx, organize.project_id))
+                    if can_use_labels(organize.models, auxiliary_binding) else [])
             saved = tx.put(ANALYSES, organize.item_id, payload, expected_revision=0)
             tx.commit()
         if (saved.payload['source_text'] != organize.source or saved.payload['project_id'] != organize.project_id
@@ -86,7 +96,10 @@ def _episode(organize, original_title):
                     {'organize': '@2', 'material_analysis': '@1'},
                     {'organize': '@2', 'material_analysis': '@2', 'context_preparation': '@1'},
                     {'organize': '@2', 'material_analysis': '@3', 'context_preparation': '@1'},
-                    {'organize': '@2', 'material_analysis': '@4', 'context_preparation': '@1'})
+                    {'organize': '@2', 'material_analysis': '@4', 'context_preparation': '@1'},
+                    {'organize': '@2', 'material_analysis': '@5', 'context_preparation': '@1'},
+                    {'organize': '@2', 'material_analysis': '@6', 'context_preparation': '@1'},
+                    {'organize': '@2', 'material_analysis': '@7', 'context_preparation': '@1'})
                 or saved.payload['body_range'] != body_range):
             raise ModelConfigurationError('remote_processing_target_changed')
         if saved.payload.get('auxiliary_binding') != auxiliary_binding:
@@ -97,7 +110,7 @@ def _episode(organize, original_title):
 def run_analysis(organize, *, original_title, local_model=False):
     """先规划后分析，连续覆盖实际原文；小材料每种阶段只需一次调用。"""
     episode = _episode(organize, original_title)
-    if episode['policy_versions'].get('material_analysis') in {'@2', '@3', '@4'}:
+    if episode['policy_versions'].get('material_analysis') in {'@2', '@3', '@4', '@5', '@6', '@7'}:
         from .material_analysis_fallback import run_fallback
         input_limit, output, workers = _limits(organize, binding=episode['auxiliary_binding'])
         return run_fallback(organize, episode, input_limit=input_limit, output=output, workers=workers)
@@ -240,7 +253,7 @@ def _checked_analysis(reader, row, payload):
     _check(row, payload, row.payload.get('draft'))
     if payload.get('state') != 'completed':
         raise ValueError('material_analysis_incomplete')
-    if payload.get('policy_versions', {}).get('material_analysis') in {'@2', '@3', '@4'}:
+    if payload.get('policy_versions', {}).get('material_analysis') in {'@2', '@3', '@4', '@5', '@6', '@7'}:
         from .material_analysis_fallback import checked_fallback
         if (payload['policy_versions'] != {'organize': '@2',
                 'material_analysis': payload['policy_versions']['material_analysis'], 'context_preparation': '@1'}
@@ -356,6 +369,8 @@ def render_analysis(analysis):
     lines = ['\n\n## 材料分析']
     rendered_claims = set()
     for angle in analysis['plan']['angles']:
+        if angle.get('present') is False:
+            continue
         lines.extend(['', '### ' + angle['label']])
         for claim in analysis['claims']:
             if angle['id'] not in claim['angle_ids']:
@@ -440,8 +455,10 @@ def commit_publication(tx, row, operation, document):
     _check(row, frozen.payload, operation['draft'])
     if frozen.payload['markdown'] != operation['markdown']:
         raise ValueError('material_analysis_binding_changed')
-    tx.put(PUBLICATIONS, frozen.object_id, {**frozen.payload,
+    saved = tx.put(PUBLICATIONS, frozen.object_id, {**frozen.payload,
         'document_id': document['id'], 'document_revision': document['revision']}, expected_revision=frozen.revision)
+    from .material_angles import save_document_angles
+    save_document_angles(tx, document, saved, operation['markdown'])
 
 
 def read_document_analysis(records, documents, project_id, document_id, *, revision=None, reader=None):

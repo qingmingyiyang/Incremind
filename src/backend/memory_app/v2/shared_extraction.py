@@ -17,7 +17,7 @@ from core.document_engine import SQLiteDocumentRepository
 from core.product_core.workbench_original_asset import _sha256_file
 from core.storage_provider.source_asset_authority import read_source_asset_authority
 from ..document_recognition import ensure_document_experience
-from ..original_sources import original
+from ..original_sources import original, resolve
 from ..source_egress import SourceEgressService, recognition_service
 from ..server_audit import AdminAudit
 from ..transaction_records import TransactionRecords
@@ -209,7 +209,8 @@ class SharedExtraction:
             data = self.registry.roots._data(project_id)
         return access, data
 
-    def _original_material(self, data, project_id, node):
+    @staticmethod
+    def read_transfer_original(data, project_id, node, *, include_alias_assets=False):
         scope = WorkScope('local-user', project_id)
         source = original(data.records, scope, node['type'], node['id'])
         payload = source.payload
@@ -227,27 +228,36 @@ class SharedExtraction:
                     if isinstance(error, ValueError) and error.args != ('original_not_found',):
                         raise
                     raise SharedProjectError('shared_extraction_original_unavailable', status=409) from None
-                files.append(self._file(path, data.root, entry['name']))
-        elif node['type'] == 'original_source':
+                files.append(SharedExtraction._file(path, data.root, entry['name']))
+        workspace_files = len(files)
+        asset_source = node['id'] if node['type'] == 'original_source' else None
+        if include_alias_assets and node['type'] == 'original_item' and payload.get('source_id'):
+            alias_id = payload['source_id']
+            if resolve(data.records, scope, alias_id) != ('original_item', node['id']):
+                raise SharedProjectError('shared_extraction_original_unavailable', status=409)
+            asset_source = alias_id
+        if asset_source is not None:
             authority = read_source_asset_authority(json_store=data.sources,
                 sqlite_records=data.sources._records if data.sources.sqlite_active else None,
                 authority_identity=data.sources.authority_identity)
             assets = {asset.asset_id: asset for asset in authority.assets}
             blobs = {blob.sha256: blob for blob in authority.blobs}
             for link in authority.links:
-                if link.source_id != node['id'] or link.role != 'original':
+                if link.source_id != asset_source or link.role != 'original':
                     continue
                 asset = assets[link.asset_id]
                 blob = blobs[asset.blob_sha256]
                 path = data.root / 'library' / Path(blob.active_vault_ref)
-                display = asset.metadata.get('original_filename') or title
-                file = self._file(path, data.root, display)
+                display = asset.metadata.get('original_filename') or asset.metadata.get('display_name') or title
+                file = SharedExtraction._file(path, data.root, display)
                 if file['size'] != asset.byte_count or file['sha256'] != asset.blob_sha256:
                     raise SharedProjectError('shared_extraction_asset_changed', status=409)
                 files.append(file)
-        return {'title': title, 'text': text, 'files': files}
+        return {'title': title, 'text': text, 'files': files,
+            **({'workspace_files': workspace_files} if include_alias_assets else {})}
 
-    def _file(self, path, source_root, display_name):
+    @staticmethod
+    def _file(path, source_root, display_name):
         try:
             path = Path(path).resolve(strict=True)
             if not path.is_relative_to(source_root.resolve(strict=True)):
@@ -375,7 +385,7 @@ class SharedExtraction:
             for node in snapshot['nodes']:
                 if node['type'] not in {'original_item', 'original_source'}:
                     continue
-                original_copy = self._original_material(data, shared_project_id, node)
+                original_copy = self.read_transfer_original(data, shared_project_id, node)
                 item_materials.append(material(node['type'], node['id'], node['source_revision'],
                     original_copy['title'], original_copy['text'], private))
                 for index, file in enumerate(original_copy['files']):

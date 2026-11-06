@@ -42,7 +42,7 @@ def interfaces_for_turn(kind):
         raise ValueError('unknown_policy_pipeline') from error
     if kind in {'memory.organize', 'memory.propose_insights'} and version('organize') == '@2':
         recipe = (*recipe, 'material_analysis')
-        if version('material_analysis') in {'@2', '@3', '@4'}:
+        if version('material_analysis') in {'@2', '@3', '@4', '@5', '@6', '@7'}:
             recipe = (*recipe, 'context_preparation')
     if kind == 'project.task':
         recipe = (*recipe, 'context_preparation')

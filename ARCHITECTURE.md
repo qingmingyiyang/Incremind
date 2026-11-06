@@ -283,6 +283,7 @@ M4.1：取消调用方不会取消已经开始的同步刷新，应用关闭通�
   - `POST /api/v2/signals` `{"project_id","kind":"copy|view","turn_id"?,"object"?,"client_id"}` → 204，开关关闭时不写；`stop` 只由服务端写（T14.11）。
 
 ### 5.3 托盘 `/api/v2/jobs`
+- 正在运行的外部任务连续 5 分钟没有新进展时，返回 `idle_minutes`。进展序号由每分钟维护任务写入旁路观察记录，新进展、进程结束或执行资格失效时撤掉提示。
 - `GET /api/v2/jobs?project_id=` → 
   ```json
   {"items": [{"id","kind":"intake|task","title","state":"processing|pending|failed|done",

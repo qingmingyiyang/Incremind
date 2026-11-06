@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from random import Random
 
 import pytest
 
@@ -12,6 +13,46 @@ from backend.recognition_retrieval import (
     SqliteVecCandidateIndex,
     retrieve,
 )
+
+
+def test_batched_cosine_preserves_rounded_scores_and_order():
+    from backend.recognition_retrieval.service import _cosine, _cosine_batch, _ordered_ids
+
+    random = Random(706)
+    query = tuple(random.uniform(-1, 1) for _ in range(256))
+    vectors = tuple(tuple(random.uniform(-1, 1) for _ in range(256)) for _ in range(1000))
+    vectors += ((0.0,) * len(query), vectors[0], query)
+    expected = tuple(_cosine(query, vector) for vector in vectors)
+    actual = _cosine_batch(query, vectors)
+    assert actual == expected
+    keys = [f'record-{index:04}' for index in range(len(vectors))]
+    assert _ordered_ids(dict(zip(keys, actual, strict=True))) == _ordered_ids(dict(zip(keys, expected, strict=True)))
+    assert _cosine_batch(query, ()) == ()
+    assert _cosine_batch((0.0, 0.0), ((1.0, 1.0),)) == (0.0,)
+    with pytest.raises(RecognitionRetrievalError, match='inconsistent dimensions'):
+        _cosine_batch(query, ((0.0, 0.0),))
+    with pytest.raises(RecognitionRetrievalError, match='finite values'):
+        _cosine_batch((float('nan'),), ((0.0,),))
+
+
+def test_sqlite_vector_batch_uses_all_four_cache_keys(tmp_path):
+    from backend.recognition_retrieval.service import _RecognitionEntry
+
+    cache = SQLiteEmbeddingCache(str(tmp_path / 'batch-vectors.sqlite3'))
+    first = _RecognitionEntry('first', 2, '原文', 'project-a', ())
+    second = _RecognitionEntry('second', 3, '其他', 'project-b', ())
+    wrong_project = _RecognitionEntry('first', 2, '原文', 'project-b', ())
+    old_revision = _RecognitionEntry('second', 2, '其他', 'project-b', ())
+    try:
+        cache.write(model_id='model-a', entry=first, vector=(1.0, 0.0))
+        cache.write(model_id='model-a', entry=second, vector=(0.0, 1.0))
+        cache.write(model_id='model-b', entry=first, vector=(1.0, 1.0))
+        assert cache.read_many(model_id='model-a', entries=(first, second)) == {
+            'first': (1.0, 0.0), 'second': (0.0, 1.0)}
+        assert cache.read_many(model_id='model-a', entries=(wrong_project, old_revision)) == {}
+        assert cache.read_many(model_id='model-b', entries=(first, second)) == {'first': (1.0, 1.0)}
+    finally:
+        cache.close()
 
 
 def _entry(item_id: str, content: str, **overrides: object) -> dict[str, object]:

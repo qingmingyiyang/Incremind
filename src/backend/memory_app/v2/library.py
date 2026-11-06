@@ -691,6 +691,8 @@ def install_library_routes(application, *, records, service, documents=None, wor
                         if restoring else body['markdown'])
                     saved = enlisted.save_user_edit(document_id, markdown=markdown,
                                                      expected_revision=body['expected_revision'])
+                    from .material_angles import refresh_document_angles
+                    refresh_document_angles(tx, saved, markdown)
                     record_edit(tx, enlisted, scope=WorkScope('local-user', project), document_id=document_id,
                                 from_revision=body['expected_revision'], to_revision=saved['revision'], now=enlisted.now)
                     service.invalidate_document_dependents_in_uow(tx, scope=WorkScope('local-user', project),

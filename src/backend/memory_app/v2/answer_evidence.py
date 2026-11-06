@@ -502,12 +502,27 @@ def build_partition_messages(chosen, question, *, history='', profile=None, part
         # 模型只看完整正文和必要缺口；坐标与绑定仍冻结在完整目录供程序复验。
         data['evidence_catalog'] = model_catalog(catalog)
         data['date_provenance'] = model_date_refs(data['date_provenance'])
+    pack_numbers = {number for number, row in enumerate(chosen, 1) if row.get('situation_pack')}
+    pack_message = None
+    if pack_numbers:
+        for key in ('sources', 'units'):
+            if key not in data['evidence_catalog']:
+                raise ValueError('situation_pack_catalog_unavailable')
+        pack = {key: [row for row in data['evidence_catalog'][key] if row['source_number'] in pack_numbers]
+                for key in ('sources', 'units')}
+        data['evidence_catalog'] = {key: [row for row in data['evidence_catalog'][key]
+            if row['source_number'] not in pack_numbers] for key in ('sources', 'units')}
+        from .policies.situation_pack import PACK_VERSION
+        prefix = get('situation_pack', version=PACK_VERSION).prefix
+        pack_message = {'role': 'user', 'content': prefix + json.dumps(pack, ensure_ascii=False, separators=(',', ':'))}
     messages = _profile_messages(profile or {}, [
         {'role': 'system', 'content': instruction},
         {'role': 'user', 'content': user_text([json.dumps(data, ensure_ascii=False, sort_keys=compose_version not in {'@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'},
             **({'separators': (',', ':')} if compose_version in {'@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else {}))], question, history)}])
     if part_context:
         messages.insert(1 if (profile or {}).get('text') else 0, {'role': 'user', 'content': part_context['text']})
+    if pack_message is not None:
+        messages.insert(1 if (profile or {}).get('text') else 0, pack_message)
     return messages
 
 
@@ -1028,7 +1043,7 @@ def validate_first_facts(output, catalog, *, chosen, question, compose_version='
 def reviewed_scope_answer(output, catalog, first_output, *, chosen, question, compose_version='@24', _on_projection=None):
     """逐位置审核首要点，原件经共同守卫后才映射为23采用账本。"""
     from .policies.date_grounding import validate_calendar_statements_v1
-    if compose_version == '@37':
+    if compose_version in {'@37', '@38'}:
         from .marked_answer import reviewed_marked_answer
         return reviewed_marked_answer(output, catalog, first_output, chosen=chosen, question=question)
     if compose_version in {'@35', '@36'}:

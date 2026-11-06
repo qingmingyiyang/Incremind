@@ -17,6 +17,7 @@ from .material_origin_admission import read_origin_item
 from .material_origins import ORIGIN_KIND, SharedProjectLease
 from .server_deletion import _directory
 from .shared_runtime import current_shared_read_capability
+from .shared_daily_authority import DAILY_SUBJECT, SharedDailyActor, actor_for_shared_lease
 from .shared_extraction import PersonalDestination
 from .server_users import current_caller, enabled_user
 
@@ -118,12 +119,12 @@ class SharedOriginTurnStore(SQLiteAITurnStore):
         if capability is not None:
             if capability.actor.user_id != lease.actor_user_id or capability.lease_payload() != lease.payload():
                 raise RecognitionConflict('material_origin_binding_changed')
+            if lease.device_id == DAILY_SUBJECT:
+                actor_for_shared_lease(self.registry, self.devices, self.application, lease, request)
             self._authorize_owner(capability._writer._central, capability.actor)
             self._personal()
             return self._claim_under_origin(request, child_commit)
-        actor = self.devices.identity_for_device(lease.device_id, lease.actor_user_id)
-        if actor is None or actor.revision != lease.device_revision:
-            raise RecognitionConflict('material_origin_identity_changed')
+        actor = actor_for_shared_lease(self.registry, self.devices, self.application, lease, request)
         authority = {'project_revision': lease.project_revision, 'member_revision': lease.member_revision,
             'account_revision': lease.account_revision}
         # 接纳仅短持中央资格及共享根，网络执行继续由原运行时管理。
@@ -248,6 +249,10 @@ class SharedOriginTurnStore(SQLiteAITurnStore):
             raise RecognitionConflict('material_origin_child_ancestry_changed') from error
 
     def _authorize_owner(self, central, actor):
+        if type(actor) is SharedDailyActor:
+            actor.require_application(self.registry, self.application, self._owner)
+            self.registry.authorize(central, actor, actor.project_id)
+            return
         caller = current_caller(central, actor)
         if (not user_action_allowed(caller.payload['role'], actor.user_id, self._owner, 'space')
                 or enabled_user(central, self._owner) is None):

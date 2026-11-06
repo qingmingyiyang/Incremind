@@ -9,6 +9,7 @@ from backend.memory_app.v2.material_analysis import ANALYSES, item_analysis, rea
 from backend.memory_app.v2.policies import ACTIVE, get, override
 from backend.memory_app.v2.policies.material_analysis import parse_claims
 from backend.memory_app.v2.policies.material_analysis_dialogue import parse_dialogue_claims
+from backend.memory_app.v2.policies.pipelines import versions_for_turn
 from tests.memory_app.v2.test_material_analysis import runtime, confirm, PLAN, SOURCE, claim
 from tests.memory_app.v2.test_material_analysis_nullable import NullableModel
 
@@ -99,6 +100,31 @@ def test_exact_quote_fast_path_and_old_versions_stay_unchanged():
         old.parse_focused(raw, **options)
     assert len(new.parse_focused(raw, **options)['value'][0]['evidence']) == 2
     assert ACTIVE['material_analysis'] == '@1' and ACTIVE['extract'] == '@5'
+
+
+def test_focus_policy_sends_only_the_bound_original_segment_for_claims():
+    old, current = (get('material_analysis', version=value) for value in ('@4', '@5'))
+    outside = 'Check the archived evidence separately.'
+    full_text = DIALOGUE + '\n' + outside
+    options = {'original_title': 'Dialogue', 'plan': PLAN, 'full_text': full_text,
+        'body_start': 31, 'offset': 0, 'source': DIALOGUE}
+    old_messages = old.focused('analysis', **options)
+    messages = current.focused('analysis', **options)
+    assert json.loads(old_messages[1]['content'])['full_text'] == full_text
+    assert json.loads(messages[1]['content']) == {'original_title': 'Dialogue', 'plan': PLAN,
+        'source': DIALOGUE, 'body_start': 31, 'focus_range': {'start': 31, 'end': 31 + len(DIALOGUE)}}
+    assert 'full_text' not in messages[0]['content']
+    assert current.focused('temporal', **options) == old.focused('temporal', **options)
+    parse_options = {'piece': DIALOGUE, 'offset': 31, 'plan': PLAN, 'full_source': full_text, 'source_offset': 31}
+    assert current.parse_claims(json.dumps(output(FIRST)), **parse_options) == old.parse_claims(
+        json.dumps(output(FIRST)), **parse_options)
+    with pytest.raises(ValueError, match='material_analysis_quote_invalid'):
+        current.parse_claims(json.dumps(output(outside)), **parse_options)
+    with pytest.raises(ValueError, match='material_analysis_input_invalid'):
+        current.focused('analysis', **{**options, 'offset': 1})
+    with override(organize='@2', material_analysis='@5', context_preparation='@1', extract='@6'):
+        versions = versions_for_turn('memory.organize')
+    assert versions['material_analysis'] == '@5' and versions['context_preparation'] == '@1'
 
 
 def test_discontinuous_evidence_is_accepted_as_separate_exact_quotes():

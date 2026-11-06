@@ -64,6 +64,7 @@ def cached_candidate_vectors(query, candidates):
     from .layers import summary_of
     from .contextual_chunk_vectors import chunk_cache_namespace, chunk_cache_id
     from .privacy import is_private_project
+    from .shared_vector_keys import contextual_cache_prefix, indexed_summary
 
     public = getattr(query.models, "public", None)
     path = query.records.database_path.parent / "recognition-vectors.sqlite3"
@@ -110,12 +111,16 @@ def cached_candidate_vectors(query, candidates):
             validate(candidate)
             namespace, key = scope.project_id, entry["id"]
             if candidate.get("kind") != "recognition":
+                context_prefix = None
                 windows = candidate.get("windows", ())
                 if len(windows) != 1:
                     continue
                 if entry["kind"] == "document":
                     markdown = query.documents.markdown(entry["id"])
-                    _, start, end = summary_of(markdown)
+                    summary, start, end = summary_of(markdown)
+                    if query.origin_admission is None:
+                        context_prefix = contextual_cache_prefix(summary,
+                            indexed_summary(query.records, scope.project_id, entry, summary))
                     spans = []
                     if start != end:
                         spans.append(("L2", markdown, start, end))
@@ -128,7 +133,7 @@ def cached_candidate_vectors(query, candidates):
                             spans.append(("L0", original, 0, len(original)))
                 else:
                     spans = [("L0", entry["content"], 0, len(entry["content"]))]
-                matches = [chunk_cache_id(entry, layer, slot, index)
+                matches = [chunk_cache_id(entry, layer, slot, index, context_prefix=context_prefix)
                            for slot, (layer, text, start, end) in enumerate(spans)
                            if layer == candidate["layer"] and layer != "L2"
                            for index, chunk in enumerate(split_evidence_chunks(text[start:end]))

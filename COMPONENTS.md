@@ -1,5 +1,9 @@
 # 统一组件与公共能力索引
 
+- 检索字段与角度（2026-11-06，M2–M7）。`v2.indexer.FieldQuery` 统一读取原文字段、分块、向量及材料角度投影。`WorkspaceQuery` 继续复验当前资料权限，再用版本化规则完成排序。情境包与项目角度分别复用既有模型请求和纠偏入口，资料修订与隐私变化参与复验。
+
+- 共享每日整理与人工移入（2026-11-06，T15.13）。共享每日整理沿服务器调度在当前所有者空间运行，写回共享候选前复核所有权和来源。`SharedDocumentFiling` 保存两侧空间和原操作编号，提交共享副本后标记原处。归属面板使用原操作编号查询和继续，保留整理稿、原件与附件。
+
 - 对话分享到共享项目（2026-11-05，T15.15）：`SharedProjectConversationShare` 复用正式服务器快照和原引用选择，按当前写入资格读取目标权限修订及资料位置。原请求和回执指针按账号、目标空间、设备及原轮保存，恢复只核对同目标、同资料位置及同编号。已受理原件由共享资料库读取，项目操作记录显示原记住动作。
 
 - 共享认识人工取代（2026-11-05，G09）：`SharedInsightMaintenance` 以候选和原认识的当前修订，在共享资料的同一写事务发布认识、审核取代关系并关闭旧有效期。复用 `InsightLinks` 原召回降权，旧正文和历史仍可读。提交结果未知时按原候选和目标修订读回实际发布、关系及有效期。
@@ -594,7 +598,7 @@ T13.2 调用约束：先由既有执行服务认领整个请求的幂等所有�
 | 按块排版编辑 | `shared/ui/RichMarkdownEditor.jsx`、`richMarkdown.js` | 一个ProseMirror内核做块内编辑，原字符串及分隔符保留，只序列化实际改块；CRLF/CR/LF坐标对齐。未知语法原样阅读或源码，待办只编辑文字，唯一可见事实才定位。复用Icon/token，三入口共用；验证：22篇样本及richMarkdown/editor测试。 |
 | 文档编辑会话 | `shared/ui/DocumentMarkdownEditor.jsx`、`WorkbenchDraftPanel.jsx`、`WorkbenchOutcomePanel.jsx` | 工作台整理稿、资料库与成果共用既有 PATCH/expected_revision 及 DraftConflictView 三快照；按用户、目标空间、项目和文稿恢复浏览器未保存正文与原始基线，成功保存按对应内容清除。调用方持有真实 document/readonly/scope，评论继续核对正文与修订。SourceDraftView 的 renderedEditor({locateFact}) 显式替代右列；验证：真实 HTTP/CAS、跨面板和跨页面、浏览器重开、冲突选择及等待中新编辑保持。 |
 
-| 进度托盘读模型 | `backend.memory_app.v2.jobs.install_job_routes` | `/api/v2/jobs` 按项目汇总 workspace_items、recognition_tasks 和 v2 干活回执；复用待确认来源、get_task_status/task_receipt纯读状态，按保存检查点显示进度，完成任务保留24小时；关联任务去重、线程/项目漂移拒绝。目标为工作台thread/turn或真实document，无文档旧任务落整理稿列表，原记录不修改。验证：`tests/memory_app/v2/test_jobs.py`、`test_workbench_remember.py` |
+| 进度托盘读模型 | `backend.memory_app.v2.jobs.install_job_routes` | `/api/v2/jobs` 按项目汇总 workspace_items、recognition_tasks 和 v2 干活回执；复用待确认来源、get_task_status/task_receipt纯读状态，按保存检查点显示进度，完成任务保留24小时；关联任务去重、线程/项目漂移拒绝。目标为工作台thread/turn或真实document，无文档旧任务落整理稿列表，原记录不修改。`v2.external_watch` 通过旁路记录观察外部进展序号，连续 5 分钟无进展时投影 `idle_minutes`。验证：`tests/memory_app/v2/test_jobs.py`、`test_workbench_remember.py` |
 | 唯一应用路由与项目控制 | `src/frontend/src/AppRouter.jsx`、`App.jsx` 的 `AppContent` | 新 Shell 统一项目、导航、头像与托盘；兼容所有旧视图，项目来自 v2/projects 并安全读写 hash/localStorage，轮询处理中 1.5s/其余 15s、取消过期请求。旧无项目 pending_memory 保留全局入口，临时展示状态不持久化为项目。AppContent 复用旧页面分派与权限门禁，pet 初始窗口归属保持。验证：`tests/frontend/appRouter.test.jsx`、`webEntry.test.jsx` |
 | 认识任务深链 | `RecognitionWorkbench` 的 `embedded/initialTaskId` | 新壳隐藏旧项目选择，按项目与完整 hash 重建编辑会话；托盘原始 recognition task ID 复用 loadTask 与 acceptTask 进入结果窗及进度轮询，不冒充旧 TaskDetail 的 task_ref。独立旧页面默认入口保留。验证：`tests/frontend/appRouterPages.test.jsx` |
 

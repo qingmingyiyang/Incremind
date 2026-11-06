@@ -73,6 +73,37 @@ from .workbench_receipts import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _quick_outcome(records, body, *, project, tag, text, accepted_at, acceptance):
+    thread_id = body.get('thread_id')
+    if (not isinstance(thread_id, str) or not thread_id or tag is not None
+            or body.get('intent') not in (None, 'auto') or body.get('executor', 'builtin') != 'builtin'
+            or {'continue_from', 'item_id', 'item_ids', 'context_ids'} & body.keys()
+            or get('route', version='@3').requires_model_routing(text)):
+        return None
+    policy = get('steer', version='@1')
+    if policy(text)['category'] not in {'correction', 'addition'}:
+        return None
+    previous_id = acceptance.get('previous_id') if acceptance else None
+    if previous_id is not None:
+        previous = records.read('v2_turns', previous_id)
+    else:
+        # 旧线程没有消息顺序记录时，沿用已保存的公开轮次顺序。
+        previous = max((row for row in records.list_matching('v2_turns', project_id=project, thread_id=thread_id)
+                        if row.payload.get('parent_turn_id') is None),
+                       key=lambda row: (row.payload['created_at'], row.object_id), default=None)
+    if previous is None:
+        return None
+    value = previous.payload
+    if (value.get('intent') != 'do' or value.get('project_id') != project or value.get('thread_id') != thread_id
+            or value.get('parent_turn_id') is not None or not policy.followup(value.get('updated_at'), accepted_at)):
+        return None
+    receipt = value.get('receipt', {}).get('do', {})
+    identity = receipt.get('document_id')
+    if receipt.get('state') == 'done' and not receipt.get('executor') and isinstance(identity, str) and identity:
+        return identity
+    return None
+
+
 def _shared_stopped_ask(ask, *, partial):
     return {'answer': None, 'partial': partial, 'interruption': 'stopped', 'citations': [],
         'layers': dict.fromkeys((*_ASK_LAYERS.values(), 'persona'), 0), 'trace': [], 'egress_receipt_id': None,
@@ -301,6 +332,7 @@ def install_workbench_routes(application, *, records, models, documents, service
             from .document_filings import filing_view
             filed = filing_view(records, memory['document_id'], project) if memory['document_id'] else None
             if (filed is not None and filed['state'] == 'filed'
+                    and filed.get('target_scope_kind') != 'shared'
                     and not (memory['state'] == 'processing' and row.object_id in running)):
                 auxiliary = records.read('v2_document_filing_aux', filed['filing_document_id'])
                 if auxiliary is not None and auxiliary.payload.get('project_id') == filed['target_project_id']:
@@ -317,7 +349,7 @@ def install_workbench_routes(application, *, records, models, documents, service
                         memory.update(state='done', error=None)
             # An automatically filed item's insights were extracted in its new project.
             insight_scope = (WorkScope("local-user", filed['target_project_id'])
-                if filed is not None and filed['state'] == 'filed' else scope)
+                if filed is not None and filed['state'] == 'filed' and filed.get('target_scope_kind') != 'shared' else scope)
             memory["insights"] = [result for old in memory["insights"]
                 if (result := insight_view(records, insight_scope, old["id"], service=service)) is not None
                 and not (result['kind'] == 'candidate' and result['state'] == 'forgotten')]
@@ -545,6 +577,7 @@ def install_workbench_routes(application, *, records, models, documents, service
             from .document_filings import filing_view
             prior_filing = filing_view(records, memory['document_id'], project)
             already_filed = prior_filing is not None and prior_filing['state'] == 'filed'
+            shared_filed = already_filed and prior_filing.get('target_scope_kind') == 'shared'
             if placement_input is not None:
                 if placement_input.payload.get('project_id') != project:
                     raise RecognitionConflict('placement_scope_changed')
@@ -554,7 +587,9 @@ def install_workbench_routes(application, *, records, models, documents, service
                         tagged=placement_input.payload['tagged'],
                         policy_version=placement_input.payload['policy_version'])
             filed = None
-            if automatic or already_filed:
+            if shared_filed:
+                filed = prior_filing
+            elif automatic or already_filed:
                 # 没写 #项目 的资料不堆在日常：由模型判断归到已有项目或新建项目（用户 2026-10-08）。
                 from .auto_place import auto_file
                 filed = await run_in_threadpool(auto_file, records, documents, service, models,
@@ -1225,6 +1260,13 @@ def install_workbench_routes(application, *, records, models, documents, service
             # 解析不出时间时仍由原普通记住处理，不再交路由重新选择意图。
             return await execute_one({**body, 'intent': 'remember'}, request_key=request_key,
                 on_started=on_started, on_delta=on_delta, on_frame=on_frame, prepared_reminder=parsed)
+        previous_outcome = _quick_outcome(records, body, project=project, tag=tag, text=cleaned,
+            accepted_at=accepted_clock.get(), acceptance=accepted_message.get())
+        if previous_outcome is not None:
+            if on_plan and await on_plan('do') != 'sse':
+                on_started = on_delta = on_frame = None
+            return await execute_one({**body, 'intent': 'do', 'continue_from': previous_outcome},
+                request_key=request_key, on_started=on_started, on_delta=on_delta, on_frame=on_frame)
         if (requested in {None, 'auto'} or 'item_ids' in body
                 or requested == 'do' and body.get('executor', 'builtin') == 'builtin'
                 and getattr(get('route'), 'classify_manual_do', False)):
@@ -1907,6 +1949,8 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
     if lease is None or lease.turn_id != active_request['turn_id']:
         raise ValueError('answer_frame_producer_owner_unavailable')
     query.validate_answer_request(query.models, original_request)
+    from .situation_packs import attach as attach_situation_pack, observe as observe_situation
+    observe_situation(query, project, scene, situation, turn_id)
     with records.begin() as tx:
         thread = tx.read('v2_threads', thread_id)
         if thread is not None and thread.payload.get('project_id') != project:
@@ -2058,9 +2102,13 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         name = ('evidence_fast_path' if getattr(get('retrieve'), 'evidence_answer_probe', False) else
                 'raw_fast_path' if getattr(get('retrieve'), 'raw_evidence_probe', False) else 'initial_memory')
         plan['trace'][0][name] = dict(initial_route)
+    clarifying = agentic and plan['_rag_summary'].get('status') == 'clarify'
+    if not clarifying:
+        attach_situation_pack(plan)
     # execute_ask releases its evidence after completion; retain only mapping metadata.
     chosen = tuple({"layer": candidate["layer"], "persona": bool(candidate.get("persona")),
         **({'inspiration': True} if candidate.get('inspiration') else {}),
+        **({'situation_pack': candidate['situation_pack']} if candidate.get('situation_pack') else {}),
         "bookshelf": bool(candidate.get("bookshelf")), "bookshelf_restore": candidate.get("bookshelf_restore"),
         "temporal": bool(candidate.get("temporal")), "validity": dict(candidate.get("validity") or {}),
         "stale": bool(candidate.get("stale")),
@@ -2075,7 +2123,6 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
     except RecognitionError:
         raise HTTPException(409, "source_changed_retry") from None
     has_context = bool(chosen or plan.get("profile", {}).get("text") or part_context)
-    clarifying = agentic and plan['_rag_summary'].get('status') == 'clarify'
     allow_elsewhere = not clarifying and (not agentic or not has_context)
     navigation_coverage = None
     if elsewhere_version is not None and allow_elsewhere:
@@ -2083,21 +2130,7 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         wordings = [retrieval_question, *rewrite['queries']] if rewrite['used'] else [retrieval_question]
         navigation_coverage = get('elsewhere', version=elsewhere_version)(operation='coverage',
             coverage_questions=wordings, terms_for=query_terms,
-            evidence='\n'.join(c['excerpt'] for c in plan['chosen'] if not c.get('persona')))
-    redirect, routed = None, False
-    if elsewhere_version is not None and allow_elsewhere and project == 'default' and not tagged and not part_context:
-        has_hits = any(not c.get('persona') for c in chosen)
-        if not (has_hits and (navigation_coverage or 0) >= .6):
-            # 日常里没找到时先定该去哪个项目问；页面会转过去重问，不必先生成一句"没有资料"（用户 2026-10-09）。
-            routed = True
-            from .elsewhere import suggest_elsewhere
-            redirect = suggest_elsewhere(query, project, cleaned, coverage=navigation_coverage,
-                has_hits=has_hits, tagged=tagged, policy_version=elsewhere_version)
-            if redirect is None:
-                from .auto_place import ask_home
-                redirect = await run_in_threadpool(ask_home, records, query.documents, query.models, project, cleaned, turn_id)
-            if redirect is not None:
-                has_context, chosen = False, ()
+            evidence='\n'.join(c['excerpt'] for c in plan['chosen'] if not c.get('persona') and not c.get('situation_pack')))
     if clarifying:
         has_context = False
     preview_id = query.store_ask_preview(plan) if has_context else None
@@ -2126,10 +2159,6 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         elif has_context:
             result = await query.execute_ask(preview_id, project, cleaned, True,
                 on_delta=streamed if on_delta is not None else None, on_retry=frames.retry)
-        elif redirect is not None:
-            # This turn only points to the project the page re-asks in.
-            result = {"no_match": True, "answer": "", "sources": [], "model_used": False,
-                      "excluded_sources": plan["excluded_sources"]}
         else:
             result = query.public_ask_preview('', plan)
         interrupted = 'interruption' in result
@@ -2159,17 +2188,15 @@ async def _answer_workbench(workspace, records, project, cleaned, scene, thread_
         if partial:
             result['model_usage']['observed_only'] = True
         receipt['model_usage'] = result['model_usage']
-    if routed:
-        if redirect is not None:
-            receipt['elsewhere'] = redirect
-    elif elsewhere_version is not None and allow_elsewhere:
+    if elsewhere_version is not None and allow_elsewhere:
         from .elsewhere import suggest_elsewhere
+        has_hits = any(not c.get('persona') and not c.get('situation_pack') for c in chosen)
         hint = suggest_elsewhere(query, project, cleaned, coverage=navigation_coverage,
-            has_hits=any(not c.get('persona') for c in chosen), tagged=tagged,
+            has_hits=has_hits, tagged=tagged,
             policy_version=elsewhere_version)
-        weak = not (any(not c.get('persona') for c in chosen) and (navigation_coverage or 0) >= .6)
+        weak = not (has_hits and (navigation_coverage or 0) >= .6)
         if hint is None and project == 'default' and not tagged and weak:
-            # 资料会被自动归到别的项目，日常里找不到时指出该去哪个项目问（用户 2026-10-09）。
+            # 日常先交付当前回答，再给出可能有资料的项目。
             from .auto_place import ask_home
             hint = await run_in_threadpool(ask_home, records, query.documents, query.models, project, cleaned, turn_id)
         if hint is not None:

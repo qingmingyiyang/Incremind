@@ -7,7 +7,8 @@ from backend.recognition import RecognitionConflict
 _CAPSULE = {'schema_version', 'turn_id', 'purpose', 'wire_payload', 'items'}
 _ITEM = {'role', 'position', 'qualified_material', 'renderer', 'rendered_text', 'rendering'}
 _MATERIAL = {'type', 'id', 'revision', 'project_id', 'namespace'}
-_RENDERERS = {'recognition-content-v1', 'contextual-chunk-v1', 'rerank-candidate-v1', 'task-division-text-v1'}
+_RENDERERS = {'recognition-content-v1', 'recognition-condition-v1', 'contextual-chunk-v1',
+              'rerank-candidate-v1', 'task-division-text-v1'}
 
 
 def validate_rendered_capsule_shape(capsule, *, request, reference, auxiliary):
@@ -81,9 +82,13 @@ def validate_rendered_capsule_shape(capsule, *, request, reference, auxiliary):
                     or item['renderer'] not in _RENDERERS or not isinstance(item['rendering'], dict)):
                 raise RecognitionConflict('shared_rendered_input_changed')
             rendering = item['rendering']
-            fields = {'candidate', 'summary'} if item['renderer'] == 'contextual-chunk-v1' else {'candidate'}
+            condition = item['renderer'] == 'recognition-condition-v1'
+            fields = ({'candidate', 'summary'} if item['renderer'] == 'contextual-chunk-v1' else
+                {'candidate', 'condition_index'} if condition else {'candidate'})
             if (set(rendering) != fields or not isinstance(rendering['candidate'], (dict, list))
                     or 'summary' in rendering and not isinstance(rendering['summary'], str)
+                    or condition and (material['type'] != 'recognition' or purpose != 'embedding'
+                        or type(rendering['condition_index']) is not int or rendering['condition_index'] < 0)
                     or purpose == 'rerank' and item['renderer'] != 'rerank-candidate-v1'
                     or purpose == 'embedding' and item['renderer'] == 'rerank-candidate-v1'
                     or task_division and purpose != 'embedding'):

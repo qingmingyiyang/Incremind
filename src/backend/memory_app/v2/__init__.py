@@ -174,6 +174,8 @@ def install_v2_routes(application, *, runtime_root, records, models, documents, 
     install_todo_routes(application, records=records, service=service, documents=documents, workspace=workspace)
     install_link_routes(application, records=records, service=service)
     daily_jobs = install_daily_jobs(application, records=records, runtime_root=runtime_root)
+    from .situation_packs import prune as prune_situation_packs
+    daily_jobs.register('situation_packs', lambda: prune_situation_packs(records, workspace.query))
     def refresh_outcomes():
         from .outcome_freshness import INPUTS
         projects = sorted({row.payload['project_id'] for row in records.list(INPUTS)})
@@ -194,6 +196,10 @@ def install_v2_routes(application, *, runtime_root, records, models, documents, 
     daily_jobs.register('local_embedding_index', application.state.memory_embedding_index.run_scoped)
     daily_jobs.register('insight_links', InsightLinks(records, service, models).run)
     daily_jobs.register('consolidation', consolidation.run)
+    from .project_angles import ProjectAngles
+    angles = ProjectAngles(application, records, models, local_timezone=reminders.local_timezone)
+    application.state.product_project_angles = angles
+    daily_jobs.register('project_angles', angles.run)
     from .automatic_inspirations import AutomaticInspirations, install_automatic_inspiration_routes
     automatic = AutomaticInspirations(records, service, documents, models,
         LibraryRead(records, service, documents, workspace))
@@ -207,6 +213,8 @@ def install_v2_routes(application, *, runtime_root, records, models, documents, 
         manual_reminders=True)
     application.state.memory_nudges = nudges
     daily_jobs.register('nudges', nudges.run)
+    from .external_watch import check as check_external_watch
+    daily_jobs.register('external_watch', lambda: check_external_watch(records))
     install_nudge_routes(application, service=nudges)
     from .reminder_center import install_reminder_center_routes
     install_reminder_center_routes(application, records=records, reminders=reminders,

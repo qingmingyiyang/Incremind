@@ -11,6 +11,7 @@ from .material_origin_admission import SharedOriginAdmission
 from .material_origin_readers import ReadOnlyMaterialRecords
 from .material_origins import ORIGIN_KIND, SharedMaterialOwner, SharedProjectLease
 from .material_read_context import current_material_data
+from .shared_daily_authority import SharedDailyActor, actor_for_shared_lease
 from .shared_project_constraint_input import SharedProjectConstraintInput, require_shared_reader_scope
 from .shared_projects import PROJECTS
 
@@ -58,6 +59,8 @@ class SharedQueryFactory:
             raise RecognitionConflict('material_origin_execution_owner_changed')
         key = (id(application), actor.user_id, actor.device_id, actor.revision, admission.lease,
             admission.destination.namespace, admission.destination.root_identity)
+        if type(actor) is SharedDailyActor:
+            key = (*key, actor)
         with self._lock:
             query = self._queries.get(key)
             if query is not None:
@@ -103,9 +106,7 @@ class SharedQueryFactory:
                 or access.caller.user_id != lease.actor_user_id or access.caller.device_id != lease.device_id
                 or access.caller.revision != lease.device_revision):
             raise RecognitionConflict('material_origin_execution_caller_changed')
-        actor = self.devices.identity_for_device(lease.device_id, lease.actor_user_id)
-        if actor is None or actor.revision != lease.device_revision:
-            raise RecognitionConflict('material_origin_identity_changed')
+        actor = actor_for_shared_lease(self.registry, self.devices, application, lease, request)
         query = self.query(application, actor, lease.project_id, lease=lease)
         query.origin_admission.restore(request)
         return query
@@ -170,9 +171,7 @@ class SharedQueryFactory:
         if len(items) != 1:
             raise RecognitionConflict('material_origin_binding_missing')
         lease = SharedProjectLease.from_payload(items[0].payload.get('shared', {}).get('lease'))
-        actor = self.devices.identity_for_device(lease.device_id, lease.actor_user_id)
-        if actor is None or actor.revision != lease.device_revision:
-            raise RecognitionConflict('material_origin_identity_changed')
+        actor = actor_for_shared_lease(self.registry, self.devices, application, lease, request)
         require_shared_reader_scope(reader, registry=self.registry, actor=actor, lease=lease)
         query = self.query(application, actor, lease.project_id, lease=lease)
         query.origin_admission._bind_bundle(request, bundle)

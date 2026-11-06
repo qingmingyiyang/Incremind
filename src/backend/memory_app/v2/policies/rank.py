@@ -215,5 +215,33 @@ def v4(request: RankInput) -> float:
 for _name in ('freshness', 'adjust', 'describe', 'decorate', 'rescore', 'instruction', 'profile_instruction', 'meaning'):
     setattr(v4, _name, getattr(v3, _name))
 v4.contextual = contextual
+
+
+def angle_bonus(score, *, matched, exact):
+    return score * (1.12 if matched else 1.0) + (0.25 if exact else 0.0)
+
+
+def v5(request: RankInput) -> float:
+    return v4(request)
+
+
+for _name in ('freshness', 'adjust', 'describe', 'decorate', 'rescore', 'instruction',
+              'profile_instruction', 'meaning', 'contextual'):
+    setattr(v5, _name, getattr(v4, _name))
+v5.angle_bonus = angle_bonus
+v5.angle_route_version = '@1'
+
+
+def v6(request: RankInput) -> float:
+    return v5(request)
+
+
+for _name in ('freshness', 'adjust', 'describe', 'decorate', 'rescore', 'instruction',
+              'profile_instruction', 'meaning', 'contextual', 'angle_bonus', 'angle_route_version'):
+    setattr(v6, _name, getattr(v5, _name))
+from . import topic_grouping
+v6.topic_grouping = topic_grouping
 from . import register
 register('rank', '@4')(v4)
+register('rank', '@5')(v5)
+register('rank', '@6')(v6)

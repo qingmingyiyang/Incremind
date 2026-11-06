@@ -21,3 +21,15 @@ def material_vector_namespace(query, namespace, text, model_id):
 
 def rendered_chunk_text(entry, summary, text):
     return entry['title'] + '\n' + str(summary)[:120] + '\n' + text
+
+
+def indexed_summary(reader, project, entry, summary):
+    if entry['kind'] != 'document' or not entry.get('item_id'):
+        return summary
+    from .material_angles import angle_directory
+    directory = angle_directory(reader, project, entry['id'], entry['revision'])
+    return directory + '\n' + summary if directory else summary
+
+
+def contextual_cache_prefix(summary, indexed):
+    return indexed[:120] if indexed[:120] != summary[:120] else None

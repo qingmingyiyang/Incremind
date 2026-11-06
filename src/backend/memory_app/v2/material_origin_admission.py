@@ -10,6 +10,7 @@ from ..original_sources import resolve_turn_material
 from ..source_egress import SourceEgressService
 from .material_origins import ORIGIN_KIND, SharedMaterialOwner, SharedProjectLease
 from .material_origin_readers import ReadOnlyMaterialRecords, ReadOnlyMaterialDocuments, ReadOnlyMaterialSources
+from .shared_daily_authority import SharedDailyActor
 from .shared_extraction import PersonalDestination
 
 
@@ -104,7 +105,8 @@ class SharedOriginAdmission:
             if access.caller != actor or access.target_user_id != getattr(application.state, 'server_user_id', None):
                 raise RecognitionConflict('material_origin_execution_owner_changed')
             target = access.target_user_id
-        self.destination = PersonalDestination.from_application(registry, actor, application, target_user_id=target)
+        self.destination = (actor.destination(registry, application, target) if type(actor) is SharedDailyActor
+            else PersonalDestination.from_application(registry, actor, application, target_user_id=target))
         self.lease = lease if lease is not None else SharedProjectLease.acquire(registry, actor, project_id)
         if self.lease.project_id != project_id or self.lease.actor_user_id != actor.user_id:
             raise RecognitionConflict('material_origin_execution_owner_changed')
@@ -112,6 +114,8 @@ class SharedOriginAdmission:
 
     def validate_execution_owner(self):
         self.destination.validate_application(self.registry, self.application)
+        if type(self.actor) is SharedDailyActor:
+            self.actor.require_application(self.registry, self.application, self.destination.owner_user_id)
         access = USER_ACCESS.get()
         if access is not None and (access.caller != self.actor or access.target_user_id != self.destination.owner_user_id):
             raise RecognitionConflict('material_origin_turn_owner_changed')

@@ -294,9 +294,11 @@ def create_server_application(layout, *, child_factory, port=8001, concurrency=1
     @asynccontextmanager
     async def server_lifetime(application):
         from .server_inspirations import ServerInspirationCoordinator
+        from .v2.shared_daily import SharedDailyConsolidation
         loop = asyncio.get_running_loop()
         accepting_vectors = True
-        inspirations = ServerInspirationCoordinator(users, pool, jobs, resources)
+        inspirations = ServerInspirationCoordinator(users, pool, jobs, resources,
+            shared_daily=SharedDailyConsolidation(context))
 
         def broadcast():
             if accepting_vectors:

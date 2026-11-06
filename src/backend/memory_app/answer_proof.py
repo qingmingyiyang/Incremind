@@ -137,7 +137,7 @@ def select_raw_answer_input(request, product, raw_input, raw_result, capsule, *,
         citations = public.get('citations')
         numbers = ([citation['n'] for citation in citations] if isinstance(citations, list)
                    else [source['number'] for source in public['sources']])
-        if request['policy_versions']['compose'] == '@37':
+        if request['policy_versions']['compose'] in {'@37', '@38'}:
             from .v2.marked_answer import publication_matches
             if not publication_matches(public, {'unverified_claims': 0, 'unverified_claim_spans': []}):
                 return None
@@ -310,7 +310,7 @@ def select_answer_input(request, product, canonical_input, canonical_result, rev
                             return None
                     final = render_grounded_answer(final, catalog, first_fact_partition(draft, catalog, compose_version=request['policy_versions']['compose']) if first_model in (FirstFactsOutput, FirstReferencedFactsOutput, FocusedReferencedFactsOutput) else draft, max_output_tokens=limit, chosen=plan['chosen'],
                         **get('compose', version=request['policy_versions']['compose'])(None, operation='grounded_render', question=question),
-                        **({'_on_publication': publication.update} if request['policy_versions']['compose'] == '@37' else {})).model_dump()
+                        **({'_on_publication': publication.update} if request['policy_versions']['compose'] in {'@37', '@38'} else {})).model_dump()
                 elif final_model is EvidencePartitionOutput:
                     limits = get('compose', version=request['policy_versions']['compose'])(None, question, operation='render_limits',
                         execution_location=plan['target']['execution_location'])

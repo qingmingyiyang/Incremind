@@ -281,7 +281,7 @@ class InsightLinks:
         return edge
 
     def _rank(self, project, anchor, entries, *, source_refs=None, validate_current=None, limit=5,
-              keyword_threshold=KEYWORD_THRESHOLD, embedding_wire=None, embedding_allowed=None):
+              keyword_threshold=KEYWORD_THRESHOLD, embedding_wire=None, embedding_allowed=None, preferred=()):
         scores = {row.object_id: similarity(anchor.payload["content"], row.payload["content"]) for row in entries}
         threshold = keyword_threshold
         public = self.models.public() if self.models is not None else {}
@@ -365,12 +365,13 @@ class InsightLinks:
                         )
 
                 try:
+                    candidate_limit = max(limit, len(entries)) if preferred else limit
                     result = retrieve(
                         project,
                         anchor.payload["content"],
                         projected,
-                        limit=limit,
-                        vector_candidate_limit=limit,
+                        limit=candidate_limit,
+                        vector_candidate_limit=candidate_limit,
                         keyword_enabled=False,
                         embedding_provider=provider,
                         embedding_cache=ScopedCache(),
@@ -385,10 +386,10 @@ class InsightLinks:
                 threshold = VECTOR_THRESHOLD
             except Exception as error:
                 _LOGGER.warning("link_vector_fallback exception_type=%s", type(error).__name__)
-        ranked = sorted(entries, key=lambda r: (-scores[r.object_id], r.object_id))[:limit]
+        ranked = sorted(entries, key=lambda r: (r.object_id not in preferred, -scores[r.object_id], r.object_id))[:limit]
         return [(r, scores[r.object_id]) for r in ranked], threshold
 
-    def extraction_neighbors(self, project, experience, scene):
+    def extraction_neighbors(self, project, experience, scene, *, angle_ids=()):
         """Read the real active scene/project/persona neighborhood before extraction."""
         from .insights import insight_view
         from .policies import get
@@ -413,7 +414,13 @@ class InsightLinks:
             payload={'project_id': project, 'content': experience.content})
         refs = lambda row: [{'type': 'experience' if row.object_id == experience.id else 'recognition',
             'id': row.object_id, 'revision': row.revision}]
-        ranked, _ = self._rank(project, anchor, entries, source_refs=refs)
+        preferred = set()
+        if angle_ids:
+            from .material_angles import insight_angles
+            requested_angles = set(angle_ids)
+            preferred = {row.object_id for row in entries if requested_angles.intersection(insight_angles(
+                self.records, row.payload['project_id'], row.object_id, row.revision))}
+        ranked, _ = self._rank(project, anchor, entries, source_refs=refs, preferred=preferred)
         return [row for row, _ in ranked]
 
     def propose_extraction_support(self, project, experience, document, target, evidence, identity):

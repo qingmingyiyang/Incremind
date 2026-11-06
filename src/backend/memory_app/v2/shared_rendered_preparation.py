@@ -177,6 +177,15 @@ def validate_rendered_material(items, owner, reader, material):
             if candidate['kind'] != 'recognition':
                 raise RecognitionConflict('shared_rendered_input_body_changed')
             rendered = candidate['entry']['content']
+        elif item['renderer'] == 'recognition-condition-v1':
+            row = reader.read('recognitions', material['id'])
+            index = item['rendering']['condition_index']
+            frozen = candidate['entry'].get('conditions', ())
+            current = row.payload.get('conditions', ()) if row is not None else ()
+            if (candidate['kind'] != 'recognition' or row is None or row.revision != material['revision']
+                    or index >= len(frozen) or index >= len(current) or current[index] != frozen[index]):
+                raise RecognitionConflict('shared_rendered_condition_changed')
+            rendered = current[index]
         elif item['renderer'] == 'rerank-candidate-v1':
             if candidate['kind'] == 'recognition':
                 title = '已发布认识'
@@ -206,7 +215,7 @@ def validate_rendered_material(items, owner, reader, material):
 
 
 @contextmanager
-def _prepare(query, purpose, payload, *, question, candidates, renderer, summaries=None):
+def _prepare(query, purpose, payload, *, question, candidates, renderer, summaries=None, condition_slots=None):
     _query_current(query)
     payload = deepcopy(payload)
     if purpose == 'embedding' and question is not None:
@@ -214,9 +223,11 @@ def _prepare(query, purpose, payload, *, question, candidates, renderer, summari
     if not isinstance(payload, dict):
         raise RecognitionConflict('shared_rendered_input_changed')
     pool = []
-    for candidate in candidates:
+    for index, candidate in enumerate(candidates):
         if renderer == 'recognition-content-v1':
             text = candidate['entry']['content']
+        elif renderer == 'recognition-condition-v1':
+            text = candidate['entry']['conditions'][condition_slots[index]]
         elif renderer == 'rerank-candidate-v1':
             text = candidate['title'] + '\n' + candidate['excerpt']
         else:
@@ -226,6 +237,8 @@ def _prepare(query, purpose, payload, *, question, candidates, renderer, summari
         rendering = {'candidate': _frozen_candidates([candidate])}
         if renderer == 'contextual-chunk-v1':
             rendering['summary'] = summaries[candidate['entry']['id']]
+        if renderer == 'recognition-condition-v1':
+            rendering['condition_index'] = condition_slots[index]
         pool.append({'role': 'material', 'qualified_material': _material(query, candidate), 'renderer': renderer,
             'rendered_text': text, 'rendering': rendering})
     items = []
@@ -266,6 +279,15 @@ def recognition_wire_input(query, *, payload, question, entries):
         'excerpt': format_recognition_content(entry), 'title': entry['content'], 'windows': ()}
         for entry in entries]
     return _prepare(query, 'embedding', payload, question=question, candidates=candidates, renderer='recognition-content-v1')
+
+
+def condition_wire_input(query, *, payload, question, conditions):
+    candidates = [{'kind': 'recognition', 'id': entry['id'], 'entry': deepcopy(entry),
+        'scope': WorkScope('local-user', query.origin_admission.lease.project_id), 'namespace': query.source_namespace,
+        'excerpt': format_recognition_content(entry), 'title': entry['content'], 'windows': ()}
+        for entry, _ in conditions]
+    return _prepare(query, 'embedding', payload, question=question, candidates=candidates,
+        renderer='recognition-condition-v1', condition_slots=[index for _, index in conditions])
 
 
 def chunk_wire_input(query, *, payload, question, entry, scope, snapshot, layer, span_start, summary, chunks):

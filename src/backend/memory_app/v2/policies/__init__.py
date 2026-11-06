@@ -6,6 +6,7 @@ from threading import RLock
 
 ACTIVE = {
     'steer': '@2',
+    'watch': '@1',
     'rerank': '@2',
     'vector': '@1',
     'ladder': '@15',
@@ -21,10 +22,13 @@ ACTIVE = {
     'scope': '@2',
     'retrieve': '@9',
     'rank': '@4',
+    'angle_route': '@1',
+    'project_angle_learning': '@1',
     'strength': '@1',
     'forget': '@1',
     'enough': '@1',
     'compose': '@37',
+    'situation_pack': '@1',
     'trigger': '@2',
     'consolidate': '@3',
     'handoff': '@1',
@@ -127,11 +131,16 @@ from . import extract_inspiration
 from . import material_analysis
 from . import material_analysis_fallback, context_preparation
 from . import material_analysis_nullable
-from . import material_analysis_dialogue
+from . import material_analysis_dialogue, material_angles, material_topics
+from . import situation_pack
 from . import outcome_correction
 from . import agent_data
 from . import transcript_correction
+from . import angle_route
+from . import project_angle_learning
 register('transcript_correction', '@1')(transcript_correction.v1)
+register('angle_route', '@1')(angle_route.v1)
+register('project_angle_learning', '@1')(project_angle_learning.v1)
 
 for _module in (organize, place, extract, route, scope, retrieve, rank, strength,
                 forget, enough, compose, trigger, consolidate, image_read, handoff):
@@ -150,6 +159,10 @@ register('material_analysis', '@1')(material_analysis.v1)
 register('material_analysis', '@2')(material_analysis_fallback.v2)
 register('material_analysis', '@3')(material_analysis_nullable.v3)
 register('material_analysis', '@4')(material_analysis_dialogue.v4)
+register('material_analysis', '@5')(material_analysis_dialogue.v5)
+register('material_analysis', '@6')(material_angles.v6)
+register('material_analysis', '@7')(material_topics.v7)
+register('situation_pack', '@1')(situation_pack.v1)
 register('context_preparation', '@1')(context_preparation.v1)
 register('context_preparation', '@2')(context_preparation.v2)
 register('context_preparation', '@3')(context_preparation.v3)
@@ -164,6 +177,7 @@ register('extract', '@4')(extract_comments.v4)
 register('extract', '@5')(extract_comments.v5)
 register('extract', '@6')(extract_material.v6)
 register('extract', '@7')(extract_inspiration.v7)
+register('extract', '@8')(extract_material.v8)
 register('trigger', '@2')(trigger.v2)
 register('consolidate', '@2')(consolidate.v2)
 from . import consolidate_steer
@@ -174,6 +188,8 @@ register('retry', '@3')(retry.v3)
 
 from . import inspiration_schedule
 register('inspiration_schedule', '@1')(inspiration_schedule.v1)
+from . import shared_consolidation
+register('shared_consolidation', '@1')(shared_consolidation.v1)
 
 from . import reask
 register('reask', '@1')(reask.v1)
@@ -239,6 +255,9 @@ register('steer', '@1')(steer.v1)
 register('steer', '@2')(steer.v2)
 register('stale', '@1')(stale.v1)
 register('outcome_update', '@1')(outcome_update.v1)
+
+from . import watch
+register('watch', '@1')(watch.v1)
 
 from . import constraint_scope
 register('constraint_scope', '@1')(constraint_scope.v1)

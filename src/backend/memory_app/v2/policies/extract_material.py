@@ -1,7 +1,7 @@
 """材料分析后的动态认识提炼；来源身份仍由调用方冻结并验证。"""
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .extract_comments import (
     CommentExtractInput, CommentExtractDecodeInput, _sources, _comment_proofs,
@@ -228,3 +228,46 @@ class MaterialPolicy(ModelPolicy):
 
 
 v6 = MaterialPolicy(prepare, decide, budget)
+
+
+def _interpretation(request):
+    material = request.material_analysis
+    if material is None or 'summary_by_angle' not in material['analysis']['plan']:
+        return request, None
+    analysis = material['analysis']
+    angles = [row for row in analysis['plan']['angles'] if row['kind'] == 'interpret' and row['present']]
+    ids = {row['id'] for row in angles}
+    claims = [row for row in analysis['claims'] if ids.intersection(row['angle_ids'])]
+    summaries = {identity: value for identity, value in analysis['plan']['summary_by_angle'].items() if identity in ids}
+    plan = {**analysis['plan'], 'angles': angles, 'summary_by_angle': summaries,
+        'summary': '\n'.join(row['label'] + ' · ' + summaries[row['id']] for row in angles if row['id'] in summaries)}
+    filtered = {**material, 'analysis': {**analysis, 'plan': plan, 'claims': claims, 'temporal': [], 'synthesis': None}}
+    return replace(request, material_analysis=filtered), {row['id']: ids.intersection(row['angle_ids']) for row in claims}
+
+
+def angle_budget(request, **options):
+    filtered, _ = _interpretation(request)
+    return budget(filtered, **options)
+
+
+def prepare_angles(request):
+    filtered, claims = _interpretation(request)
+    messages = prepare(filtered)
+    if claims is not None:
+        messages[0]['content'] += ('正文认识只依据材料分析中的解读型陈述。'
+            '抽取型字段留在整理稿。没有解读型陈述时，正文认识列表为空。')
+    return messages
+
+
+def decide_angles(request):
+    filtered, claims = _interpretation(request)
+    result = decide(filtered)
+    if claims is None or not result.valid:
+        return result
+    hints = tuple({**hint, 'analysis_angle_ids': sorted(set().union(*(claims[identity]
+            for identity in hint['analysis_claim_ids'])))}
+        if 'analysis_claim_ids' in hint else hint for hint in result.hints)
+    return replace(result, hints=hints)
+
+
+v8 = MaterialPolicy(prepare_angles, decide_angles, angle_budget)

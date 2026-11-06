@@ -1,4 +1,4 @@
-"""extract@6 的结构化输出；旧认识输出合同不变。"""
+"""材料提炼的结构化输出及实际评论来源复验。"""
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,7 +32,7 @@ class MaterialOutput(BaseModel):
 
 def resolve_material_comment_candidate_inputs(reader, scope, candidate, *, turn_id, request,
         generated, comment_inputs, comparative_inputs, manifest):
-    """复用实际生成与来源冻结，为@6评论消费者提供同一解码合同。
+    """复用实际生成与来源冻结，为材料提炼的评论消费者提供解码合同。
 
     调用方从原内核只读authority传入request、output、manifest，并先完成评论来源资格校验。
     本函数复验材料分析owner和manifest候选身份，不创建Turn或写入任何记录。
@@ -44,9 +44,10 @@ def resolve_material_comment_candidate_inputs(reader, scope, candidate, *, turn_
     from .policies.extract_material import MaterialExtractDecodeInput
     from .source_sections import _exact
 
+    selected = request.get('policy_versions', {}).get('extract')
     if (request.get('turn_id') != turn_id or request.get('desired_outcome') != 'memory.propose_insights'
             or request.get('scope', {}).get('project_id') != scope.project_id
-            or request.get('policy_versions', {}).get('extract') != '@6'
+            or selected not in {'@6', '@8'}
             or set(comparative_inputs) != {'neighbors', 'projects', 'material_analysis'}
             or not isinstance(manifest, dict) or set(manifest) != {
                 'candidate_ids', 'proposal_keys', 'support_keys', 'generation_id'}
@@ -74,7 +75,7 @@ def resolve_material_comment_candidate_inputs(reader, scope, candidate, *, turn_
     inputs = MaterialExtractDecodeInput(generated['output'], normalize_conditions,
         comparative_inputs['neighbors'], comparative_inputs['projects'], scope.project_id,
         comment_inputs['sources'], analysis)
-    decoded = get('extract', version='@6').decide(inputs)
+    decoded = get('extract', version=selected).decide(inputs)
     prefix = f"candidate-v2-{document['id']}-r{document['revision']}-"
     expected_ids = [prefix + str(index) for index in range(1, len(decoded.rows) + 1)]
     if (not decoded.valid or not _exact(manifest['candidate_ids'], expected_ids)

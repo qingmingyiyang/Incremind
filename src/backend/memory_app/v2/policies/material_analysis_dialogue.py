@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import json
 import re
 
-from .material_analysis import _object, _text, decode, parse_claims
+from .material_analysis import _ANALYZE_CONTEXT, _object, _text, decode, parse_claims
 from .material_analysis_fallback import read_requests
 from .material_analysis_nullable import MaterialAnalysisNullablePolicy
 
@@ -114,3 +114,20 @@ class MaterialAnalysisDialoguePolicy(MaterialAnalysisNullablePolicy):
 
 
 v4 = MaterialAnalysisDialoguePolicy()
+
+
+@dataclass(frozen=True)
+class MaterialAnalysisFocusPolicy(MaterialAnalysisDialoguePolicy):
+    def __call__(self, operation, **values):
+        messages = super().__call__(operation, **values)
+        if operation != 'analysis':
+            return messages
+        system = ('依据已冻结材料分析计划，分析source指定的重点段落。'
+            '每项陈述须由本段原文支持，跨段关系留到汇总阶段。'
+            + messages[0]['content'].removeprefix(_ANALYZE_CONTEXT))
+        focused = {key: value for key, value in values.items() if key != 'full_text'}
+        return [{**messages[0], 'content': system},
+            {**messages[1], 'content': json.dumps(focused, ensure_ascii=False, sort_keys=True)}]
+
+
+v5 = MaterialAnalysisFocusPolicy()

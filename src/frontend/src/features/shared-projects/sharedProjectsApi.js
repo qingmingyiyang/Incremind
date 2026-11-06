@@ -25,6 +25,11 @@ async function request(path, { body, signal, idempotencyKey } = {}) {
 }
 export const sharedProjectsApi = {
   scopes: signal => request('/scopes', { signal }).then(sharedScopes),
+  filingTarget: (project, signal) => request(`/${part(project)}/filing-target`, { signal }),
+  fileDocument: (project, document, body, key, signal) => request(`/${part(project)}/filings/${part(document)}`,
+    { body, idempotencyKey: key, signal }),
+  filingCommand: (project, document, key, signal) =>
+    request(`/${part(project)}/filings/${part(document)}/commands/${part(key)}`, { signal }),
   extractionPreview: (project, body, key, signal) => request(`/${part(project)}/extractions`, { body, idempotencyKey: key, signal }),
   extractionCommand: (key, signal) => request(`/extraction-commands/${part(key)}`, { signal }),
   extraction: (id, signal) => request(`/extractions/${part(id)}`, { signal }),

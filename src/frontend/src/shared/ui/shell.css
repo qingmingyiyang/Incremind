@@ -31,6 +31,7 @@
 .ui-tray-row:first-child{border-top:0}
 .ui-tray-job{flex:1;min-width:0;text-align:left;font-size:14px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:8px 0}
 .ui-tray-meta{font:12px var(--mono);color:var(--muted);white-space:nowrap}
+.ui-tray-idle{display:inline-flex;align-items:center;gap:4px;color:var(--red)}
 .ui-tray-retry{color:var(--red)!important;font-size:13px!important;min-height:40px}
 @media(max-width:759px){
  .ui-shell{grid-template-columns:56px minmax(0,1fr) auto;grid-template-rows:56px minmax(0,1fr) 60px}

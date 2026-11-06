@@ -584,7 +584,7 @@ def comment_source_for_candidate(reader, scope, candidate):
         request, generated = immutable
         if (request['turn_id'] != turn_id or request['desired_outcome'] != 'memory.propose_insights'
                 or request['scope']['project_id'] != scope.project_id
-                or request.get('policy_versions', {}).get('extract') not in {'@3', '@4', '@5', '@6'}
+                or request.get('policy_versions', {}).get('extract') not in {'@3', '@4', '@5', '@6', '@8'}
                 or not _exact(request, index.payload['request'])
                 or index.payload['identity']['kind'] != 'memory.propose_insights'
                 or index.payload['identity']['project'] != scope.project_id
@@ -608,7 +608,7 @@ def comment_source_for_candidate(reader, scope, candidate):
             return None
         from .policies import get
         manifest = None
-        if request['policy_versions']['extract'] == '@6':
+        if request['policy_versions']['extract'] in {'@6', '@8'}:
             # 新版本从实际单轮immutable计划读取动态索引，不能使用候选自报的清单。
             actual = _comment_generation(reader, turn_id, include_manifest=True)
             if actual is None or not _exact(actual[:2], immutable) or actual[2] is None:

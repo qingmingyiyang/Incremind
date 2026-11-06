@@ -1273,6 +1273,20 @@ def v37(entrypoint, /, *args, **kwargs):
 register('compose', '@37')(v37)
 
 
+def v38(entrypoint, /, *args, **kwargs):
+    """保留原有回答合同，增加独立情境材料和语义条件资格。"""
+    if kwargs.get('operation') == 'methods':
+        from .method_situation import condition_score, covered
+        rows, instruction, situation = args
+        return [row for row in rows
+                if (row.get('condition_matched') or condition_score(row['entry'].get('conditions', ()), situation))
+                and not covered(row['entry']['content'], instruction)]
+    return v37(entrypoint, *args, **kwargs)
+
+
+register('compose', '@38')(v38)
+
+
 def evidence_contract_version(selected):
-    """37完整复用34的模型输入和Schema，公开呈现仍按真实冻结版本选择。"""
-    return '@34' if selected == '@37' else selected
+    """公开呈现按真实冻结版本选择，引用合同复用34。"""
+    return '@34' if selected in {'@37', '@38'} else selected

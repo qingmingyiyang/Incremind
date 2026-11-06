@@ -20,6 +20,14 @@ describe('Tray',()=>{
  const jobs=[{id:'a',title:'录音',state:'processing',progress:62},{id:'b',title:'资料',state:'failed'}];
  it('renders counts collapsed',()=>{render(<Tray jobs={jobs}/>);expect(screen.getByRole('button',{name:'进度'})).toHaveTextContent('1');expect(screen.queryByRole('region',{name:'进度列表'})).not.toBeInTheDocument();});
  it('renders canonical progress and pending count',()=>{render(<Tray jobs={[{id:'p',title:'原件',state:'processing',progress:{done:2,total:4}},{id:'n',title:'认识',state:'pending',pending_count:2}]}/>);fireEvent.click(screen.getByRole('button',{name:'进度'}));expect(screen.getByText('50%')).toBeInTheDocument();expect(screen.getByRole('region',{name:'进度列表'})).toHaveTextContent('认识2');});
+ it('shows and clears external inactivity from the current job data', () => {
+   const job = { id: 'external', title: '外部任务', state: 'processing' };
+   const { rerender } = render(<Tray jobs={[{ ...job, idle_minutes: 5 }]} />);
+   fireEvent.click(screen.getByRole('button', { name: '进度' }));
+   expect(screen.getByTitle('已 5 分钟没有新进展')).toHaveTextContent('5 分钟');
+   rerender(<Tray jobs={[job]} />);
+   expect(screen.queryByTitle('已 5 分钟没有新进展')).not.toBeInTheDocument();
+ });
  it('opens jobs and retries failures',()=>{const open=vi.fn(),retry=vi.fn();render(<Tray jobs={jobs} onOpen={open} onRetry={retry}/>);fireEvent.click(screen.getByRole('button',{name:'进度'}));fireEvent.click(screen.getByRole('button',{name:'录音'}));expect(open).toHaveBeenCalledWith(jobs[0]);fireEvent.click(screen.getByRole('button',{name:'进度'}));fireEvent.click(screen.getByRole('button',{name:'重试'}));expect(retry).toHaveBeenCalledWith(jobs[1]);});
  it('closes the tray after opening a job so its receipt is visible',()=>{const open=vi.fn();render(<Tray jobs={jobs} onOpen={open}/>);fireEvent.click(screen.getByRole('button',{name:'进度'}));fireEvent.click(screen.getByRole('button',{name:'录音'}));expect(open).toHaveBeenCalledWith(jobs[0]);expect(screen.getByRole('button',{name:'进度'})).toHaveAttribute('aria-expanded','false');expect(screen.queryByRole('region',{name:'进度列表'})).not.toBeInTheDocument();fireEvent.click(screen.getByRole('button',{name:'进度'}));expect(screen.getByRole('region',{name:'进度列表'})).toBeInTheDocument();});
  it('has no serious accessibility violations expanded',async()=>{const {container}=render(<Tray jobs={jobs}/>);fireEvent.click(screen.getByRole('button',{name:'进度'}));await expectNoSevereA11yViolations(container);});

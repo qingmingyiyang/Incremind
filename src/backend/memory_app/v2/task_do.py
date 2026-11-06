@@ -497,7 +497,12 @@ class TaskDo:
                 version=style_version, scope_version=version('scope')) if style_version is not None else None)
         query = self.query if shared else getattr(self.organization, 'method_query', None)
         from .method_context import prepare_methods, freeze_task_methods
-        method_plan = prepare_methods(query, project, text, scene) if query is not None else None
+        if query is not None and data_operation is None:
+            from .situation_packs import observe as observe_situation
+            observe_situation(query, project, scene, situation, turn_id)
+        method_plan = (prepare_methods(query, project, text, scene, situation=situation,
+                allow_situation_pack=data_operation is None)
+            if query is not None else None)
         identity = 'turn-' + uuid4().hex
         rows = self.records.read_batch({'v2_task_divisions': None})
         example_materials = []
@@ -538,6 +543,9 @@ class TaskDo:
             # 同一认识可同时作为画像或方法，保留原引用顺序且不重复冻结。
             if material not in materials:
                 materials.append(material)
+        if not shared and (method_plan or {}).get('_situation_pack'):
+            materials = list({(item['type'], item['project_id'], item['id'], item['revision']): item
+                for item in materials}.values())
         material_proof = None
         if shared:
             actor_namespace = self.query.origin_admission.personal['namespace']

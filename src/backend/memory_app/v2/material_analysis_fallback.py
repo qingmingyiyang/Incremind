@@ -28,6 +28,11 @@ def _execute(episode, *, source_text, complete, freeze, validate, read_original,
     """同一确定编排用于实际运行和只读重建；不信任旁路自报的stage/coverage。"""
     selected = episode.get('policy_versions', {}).get('material_analysis', '@2')
     policy, context = get('material_analysis', version=selected), get('context_preparation', version='@1')
+    if hasattr(policy, 'bind'):
+        policy = policy.bind(episode['project_angles'])
+    if selected == '@7':
+        policy = policy.bind_topics(episode['known_topics'])
+    plan_parser = getattr(policy, 'parse_plan', parse_plan)
     body, title = episode['body_range'], episode['original_title']
     source = source_text[body['start']:body['end']]
     input_limit, output = episode['input_limit'], episode['output_limit']
@@ -59,7 +64,7 @@ def _execute(episode, *, source_text, complete, freeze, validate, read_original,
         read_original=read_original, stage_prefix='material-context', freeze_schedule=save_schedule('context'))
     plans = []
     for index, part in enumerate(prepared.parts, 1):
-        plans.append(stage('material-plan-' + str(index), part.messages, parse_plan))
+        plans.append(stage('material-plan-' + str(index), part.messages, plan_parser))
     level = 0
     while len(plans) > 1:
         level += 1
@@ -74,7 +79,7 @@ def _execute(episode, *, source_text, complete, freeze, validate, read_original,
         if all(len(group) == 1 for group in groups):
             raise ValueError('material_analysis_plan_uncompressible')
         plans = [group[0] if len(group) == 1 else stage('material-plan-merge-' + str(level) + '-' + str(index),
-            policy('plan', original_title=title, material_plans=group), parse_plan)
+            policy('plan', original_title=title, material_plans=group), plan_parser)
             for index, group in enumerate(groups, 1)]
     plan = plans[0]
     analysis_request = _request(policy, 'analysis', title=title, source=source, body=body,
@@ -154,12 +159,12 @@ def _execute(episode, *, source_text, complete, freeze, validate, read_original,
     claims, temporal, progress, progress_rows = [], [], None, []
 
     def parse(operation, focus, raw, compressed):
-        temporal_parser = policy.parse_temporal if selected in {'@3', '@4'} else parse_temporal
+        temporal_parser = getattr(policy, 'parse_temporal', parse_temporal)
         if compressed:
-            focused_parser = policy.parse_focused if selected in {'@3', '@4'} else parse_focused
+            focused_parser = getattr(policy, 'parse_focused', parse_focused)
             return focused_parser(raw, operation=operation, piece=focus.text, offset=focus.start,
                 plan=plan, original_title=title, full_source=source, source_offset=body['start'])
-        if operation == 'analysis' and selected == '@4':
+        if operation == 'analysis' and hasattr(policy, 'parse_claims'):
             return {'value': policy.parse_claims(raw, piece=focus.text, offset=focus.start, plan=plan,
                 full_source=source, source_offset=body['start']), 'read_requests': []}
         return {'value': parse_claims(raw, piece=focus.text, offset=focus.start, plan=plan) if operation == 'analysis'
@@ -347,6 +352,10 @@ def run_fallback(organize, episode, *, input_limit, output, workers):
         organize.validate_current()
         if _auxiliary_binding(organize.models) != episode['auxiliary_binding']:
             raise ValueError('fast_model_binding_changed')
+        if episode.get('known_topics'):
+            from .topic_groups import can_use_labels
+            if not can_use_labels(organize.models, episode['auxiliary_binding']):
+                raise ValueError('material_topic_context_model_changed')
         row = organize.records.read('workspace_items', organize.item_id)
         if row is None or analysis_body_for_item(organize.records, row) != episode['body_range']:
             raise ValueError('material_analysis_binding_changed')

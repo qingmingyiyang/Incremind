@@ -491,7 +491,7 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
                 onClick={consolidateNow}>现在整理 <span>{consolidation?.project === projectId ? consolidation.score : '—'}/10</span></button>
               <button type="button" role="menuitem" onClick={() => { setLibraryMore(false); onNavigate?.('settings', { project_id: projectId, section: 'project', expand_project: projectId }); }}>约束 <span>{constraintCount ?? '—'}</span><Icon name="open" size={14}/></button>
               <button type="button" role="menuitem" onClick={() => requestReviewNavigation(() => { setLibraryMore(false); setSelection(null); setGroup('memo'); })}>备忘</button>
-              {reviews.items.length > 0 && <button type="button" role="menuitem" onClick={() => requestReviewNavigation(() => { clearReviewDrill(); setLibraryMore(false); setGroup(null); setReviewing(true); })}>纠偏 <span>{reviews.items.length}</span></button>}
+              {reviews.items.length + reviews.angles.length > 0 && <button type="button" role="menuitem" onClick={() => requestReviewNavigation(() => { clearReviewDrill(); setLibraryMore(false); setGroup(null); setReviewing(true); })}>纠偏 <span>{reviews.items.length + reviews.angles.length}</span></button>}
               {gaps.items.length > 0 && <button type="button" role="menuitem" onClick={() => requestReviewNavigation(() => { setLibraryMore(false); setSelection(null); setReviewing(false); setGroup('gaps'); gaps.reload(); })}>待补 <span>{gaps.items.length}</span></button>}
               {gaps.error && <div className="library-error" role="alert"><span>{gaps.error}</span><button type="button" aria-label="重试待补" onClick={gaps.reload}>重试</button></div>}
               {reviews.error && <div className="library-error" role="alert"><span>{reviews.error}</span><button type="button" aria-label="重试纠偏" onClick={reviews.reload}>重试</button></div>}
@@ -610,7 +610,8 @@ function PersonalLibrary({ projectId = 'default', projects = [], initialLayer = 
           onSaved={document => { drillGate.invalidate('detail'); setFailedDrill(null); setSelection(value => value?.scope === scope && value.data === chosen.data ? { ...value, data: { ...value.data, note: { ...value.data.note, ...document, verified: true }, used_by: usageAfterSave(value, 'note', document) } } : value); setRefresh(value => value + 1); }}/>
       }
         <DocumentPlacement key={`${detailProject}:${chosen.data.note.document_id}:${chosen.data.note.revision}`} projectId={detailProject}
-          projects={projects} row={chosen.data.note} readonly={Boolean(readonlySource || noteArchived)} onError={setError}
+          projects={projects} row={chosen.data.note} readonly={Boolean(readonlySource || noteArchived)}
+          allowShared={serverConversationShares} onNavigate={onNavigate} onError={setError}
           onChanged={result => {
             if (!drillGate.isScopeCurrent(drillScope)) return;
             setPlacementNoticeScope(result.state === 'filed' && result.error ? drillScope : null);

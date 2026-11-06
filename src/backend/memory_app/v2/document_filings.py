@@ -16,11 +16,33 @@ from .projects import assign_scene
 from .transaction_records import TransactionRecords
 
 
+SHARED_FILINGS = 'v2_shared_document_filings'
+SHARED_IMPORTS = 'v2_shared_document_imports'
+
+
+def reject_source_candidates(tx, writer, scope, document_id):
+    for candidate in tx.list('recognition_candidates'):
+        if (candidate.payload.get('scope') == {'user_id': scope.user_id, 'project_id': scope.project_id}
+                and candidate.payload.get('state') == 'pending'
+                and not tx.read('v2_candidate_merges', candidate.object_id)
+                and document_id in source_documents(tx, scope, candidate.payload.get('source_experience_ids', []),
+                    candidate.payload.get('source_recognition_ids', []))):
+            writer.reject_candidate(scope=scope, candidate_id=candidate.object_id,
+                expected_revision=candidate.revision, reviewer='local-user')
+
+
 def filing_view(reader, document_id, project):
     recall = reader.read('v2_document_recall', document_id)
     if recall is None or recall.payload.get('by') != 'moved':
         return None
     target_id = recall.payload.get('moved_to')
+    shared = reader.read(SHARED_FILINGS, document_id)
+    if (shared is not None and shared.payload.get('state') == 'filed'
+            and shared.payload.get('source_project_id') == project
+            and shared.payload.get('target_document_id') == target_id):
+        return {'target_project_id': shared.payload['target_project_id'], 'target_document_id': target_id,
+            'target_project_name': shared.payload.get('target_project_name'),
+            'target_scope_kind': 'shared', 'state': 'filed', 'error': None}
     marker = reader.read('v2_document_filings', target_id) if isinstance(target_id, str) else None
     if (marker is not None and marker.payload.get('source_document_id') == document_id
             and marker.payload.get('source_project_id') == project and marker.payload.get('state') == 'filed'):
@@ -54,6 +76,8 @@ class DocumentFilings:
             raise RecognitionConflict('document_revision_invalid')
         existing = None
         with self.records.begin() as tx:
+            if tx.read(SHARED_FILINGS, document_id) is not None:
+                raise RecognitionConflict('document_already_moved')
             document = tx.read('documents', document_id)
             target = tx.read('v2_projects', target_project)
             if (document is None or document.payload.get('project_id') != source_project
@@ -109,15 +133,7 @@ class DocumentFilings:
                 existing = tx.put('v2_document_filings', destination['id'], marker, expected_revision=0)
                 tx.put('v2_document_recall', document_id, {'state': 'forgotten', 'by': 'moved',
                     'moved_to': destination['id']}, expected_revision=original_recall.revision if original_recall else 0)
-                for candidate in tx.list('recognition_candidates'):
-                    if (candidate.payload.get('scope') == {'user_id': scope.user_id, 'project_id': scope.project_id}
-                            and candidate.payload.get('state') == 'pending'
-                            and not tx.read('v2_candidate_merges', candidate.object_id)
-                            and document_id in source_documents(tx, scope,
-                                candidate.payload.get('source_experience_ids', []),
-                                candidate.payload.get('source_recognition_ids', []))):
-                        writer.reject_candidate(scope=scope, candidate_id=candidate.object_id,
-                            expected_revision=candidate.revision, reviewer='local-user')
+                reject_source_candidates(tx, writer, scope, document_id)
                 if scene is not None:
                     assign_scene(enlisted, 'document', destination['id'], target_project, scene)
                 record_choice(tx, document_id, source_project, target_project, scene,

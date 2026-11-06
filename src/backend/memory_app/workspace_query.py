@@ -36,14 +36,13 @@ from .v2.insights import insight_view
 from .v2.projects import scene_of
 from .v2.layers import summary_of
 from .v2.request_reads import DocumentReadSet
-from .v2.contextual_chunks import select_indexed_contextual_windows
-from .v2.contextual_chunk_vectors import chunk_vector_scores, with_question_vectors
+from .v2.indexer import RetrievalIndex, score_text, with_question_vectors
 from .v2.ladder import candidate_order, plan_ladder
 from .v2.budget import WINDOW_SCAN_CHARS, structured_prompt_overhead, ask_instruction, source_texts as format_source_texts, user_text as _ask_user_text
 from backend.recognition import RecognitionError, RecognitionConflict, WorkScope
 from backend.memory_app.source_egress import SourceEgressService
 from backend.memory_app.document_visibility import LegacyDocumentVisibility
-from core.search_and_recall.evidence_windows import EvidenceSelection, EvidenceWindow, select_evidence_windows
+from core.search_and_recall.evidence_windows import EvidenceSelection, EvidenceWindow
 from core.storage_provider.observability import stage, current_observation
 from .workspace_contracts import _COLLECTION, _project, _text, _now, _ASK_PART_KEYS, _empty_ask_context
 from .workspace_generation import _strip_fence
@@ -51,11 +50,6 @@ from backend.shared.llm.message_metadata import _estimate_input_tokens
 
 
 _ASK_LAYERS = {"L3": "insight", "L2": "summary", "L1": "note", "L0": "source", "inspiration": "inspiration"}
-
-
-def _timed_evidence_windows(*args, **kwargs):
-    with stage("keyword"):
-        return select_evidence_windows(*args, **kwargs)
 
 
 def _record_elapsed(name, started):
@@ -83,6 +77,13 @@ def _ask_context(chosen, source_texts, messages, budget, history="", history_cou
         part = {'key': 'inspiration', 'count': 0, 'tokens': 0}
         result['parts'].append(part)
         parts['inspiration'] = part
+    pack_rows = [candidate for candidate in chosen if candidate.get('situation_pack')]
+    if pack_rows:
+        part = {'key': 'situation_pack', 'count': 0, 'tokens': 0}
+        result['parts'].append(part)
+        parts['situation_pack'] = part
+        result['situation_pack'] = {'id': pack_rows[0]['situation_pack'],
+            'members': [{'id': row['id'], 'revision': row['entry']['revision']} for row in pack_rows]}
     counted_messages = [dict(messages[-2]), {"role": "user", "content": _ask_user_text([], "")}]
     previous = _estimate_input_tokens(counted_messages)
     parts["instruction"].update(count=1, tokens=previous)
@@ -102,23 +103,39 @@ def _ask_context(chosen, source_texts, messages, budget, history="", history_cou
         estimate = _estimate_input_tokens(counted_messages)
         parts['history'].update(count=len(part_context['originals']) + len(part_context['answers']), tokens=estimate-previous)
         previous = estimate
-    for index, candidate in enumerate(chosen, 1):
-        key = "persona" if candidate.get("persona") else _ASK_LAYERS[candidate["layer"]]
-        counted_messages[-1]["content"] = _ask_user_text(source_texts[:index], "")
+    if pack_rows:
+        index = int(bool(profile and profile.get('text')))
+        counted_messages.insert(index, dict(messages[index]))
         estimate = _estimate_input_tokens(counted_messages)
+        parts['situation_pack']['tokens'] = estimate - previous
+        previous = estimate
+    ordinary_texts = []
+    for index, candidate in enumerate(chosen, 1):
+        key = ('situation_pack' if candidate.get('situation_pack') else
+               'persona' if candidate.get('persona') else _ASK_LAYERS[candidate['layer']])
         parts[key]["count"] += 1
-        parts[key]["tokens"] += estimate - previous
+        if key == 'situation_pack':
+            from .v2.budget import text_tokens
+            entry_tokens = text_tokens(candidate['excerpt'])
+        else:
+            ordinary_texts.append(source_texts[index - 1])
+            counted_messages[-1]["content"] = _ask_user_text(ordinary_texts, "")
+            estimate = _estimate_input_tokens(counted_messages)
+            entry_tokens = estimate - previous
+            parts[key]["tokens"] += entry_tokens
+            previous = estimate
         layer = _ASK_LAYERS[candidate["layer"]]
         entry = candidate["entry"]
         identity = (entry["id"] if layer in {"insight", "inspiration"} else entry["document_id"] if layer in {"summary", "note"}
                     else entry.get("item_id") or entry["source_id"])
         result["entries"].append({"layer": layer, "id": identity, "title": candidate["title"],
-                                  "tokens": estimate - previous, "persona": bool(candidate.get("persona")),
+                                  "tokens": entry_tokens, "persona": bool(candidate.get("persona")),
                                   **({'url':candidate['href']} if candidate['kind'] == 'search' else {}),
+                                  **({'situation_pack': True, 'object_revision': entry['revision']}
+                                     if candidate.get('situation_pack') else {}),
                                   **({'supplemented': True, 'object_revision': entry['revision']}
                                      if candidate.get('supplemented') else {})})
-        previous = estimate
-    counted_messages[-1]["content"] = _ask_user_text(source_texts, "", history)
+    counted_messages[-1]["content"] = _ask_user_text(ordinary_texts, "", history)
     estimate = _estimate_input_tokens(counted_messages)
     parts["history"].update(count=parts['history']['count'] + history_count,
                             tokens=parts['history']['tokens'] + estimate - previous)
@@ -183,7 +200,6 @@ class WorkspaceQuery:
             raise RecognitionConflict('material_origin_execution_owner_changed')
         self.ask_previews = OrderedDict()
         self.ask_preview_lock = RLock()
-        from .v2.retrieval_index import RetrievalIndex
         self.retrieval_index = RetrievalIndex(self, read_only=read_only, source_records=source_index_records)
         self.retrieval_index.bootstrap()
 
@@ -374,7 +390,7 @@ class WorkspaceQuery:
         for entry in self.query_entries(project_id):
             if query not in (entry["title"] + " " + entry["content"]).casefold():
                 continue
-            selection = _timed_evidence_windows(entry["content"], q, title=entry["title"],
+            selection = score_text(entry["content"], q, title=entry["title"],
                                                 max_chars=280, max_windows=1)
             windows = [{"start": window.start, "end": window.end} for window in selection.windows]
             items.append({key: value for key, value in entry.items() if key != "content"} | {
@@ -571,7 +587,7 @@ class WorkspaceQuery:
                 result.update(time_scope=time_scope, time_documents=time_documents or {})
         return {**result, 'policy_versions': selections}
 
-    def filter_time_candidates(self, candidates, time_scope, time_documents):
+    def filter_time_candidates(self, candidates, time_scope, time_documents, *, apply_angle_rank=True):
         """Use the same frozen date meaning for variants and authorized bookshelf evidence."""
         if time_scope is None:
             return candidates
@@ -583,13 +599,18 @@ class WorkspaceQuery:
                 row = {**row, 'validity': read_validity(self.records, row['id']) or {},
                     'validity_revision': marker.revision if marker else 0,
                     'time_match_score': getattr(get('rank'), 'rescore', lambda score, candidate: score)(
-                        _timed_evidence_windows(row['entry']['content'], time_scope['query'], max_chars=1800).score, row)}
+                        score_text(row['entry']['content'], time_scope['query'], max_chars=1800).score, row)}
             elif row.get('sort_time') is None:
                 record = self.records.read('documents', row['entry']['id']) if row['kind'] == 'document' else None
                 if record:
                     row = {**row, 'sort_time': record.payload.get('created_at')}
             prepared.append(row)
-        return get('retrieve')(None, prepared, time_scope, time_documents, operation='time_candidates')
+        qualified = get('retrieve')(None, prepared, time_scope, time_documents, operation='time_candidates')
+        angle_bonus = getattr(get('rank'), 'angle_bonus', None)
+        if angle_bonus is not None and apply_angle_rank:
+            qualified = [{**row, 'score': angle_bonus(row['score'], matched=True, exact=False)}
+                         if row['kind'] == 'recognition' and row.get('_angle_rank_matched') else row for row in qualified]
+        return qualified
 
     def _collect_candidates(self, project_id: str, question: str, *, scene=None, method_query=None, situation=None,
                             time_query=None, local_only=False, rank_reference=None, only_layers=None,
@@ -598,6 +619,15 @@ class WorkspaceQuery:
             raise ValueError('local_coverage_requires_readonly_index')
         scope = WorkScope("local-user", project_id)
         rank_policy = get('rank')
+        angle_bonus = getattr(rank_policy, 'angle_bonus', None) if external_client is None else None
+        topic_policy = getattr(rank_policy, 'topic_grouping', None) if external_client is None else None
+        angles, topic_entries, exact_documents = (), [], set()
+        original_question = question
+        if angle_bonus is not None:
+            from .v2.project_angles import active_angles
+            from .v2.policies.angle_route import section_matches
+            angles = get('angle_route', version=rank_policy.angle_route_version)(
+                question, active_angles(self.records, project_id))
         if callable(getattr(rank_policy, 'decorate', None)):
             from .v2.insight_validity import now
             rank_reference = rank_reference or now()
@@ -609,6 +639,7 @@ class WorkspaceQuery:
             time_scope = get('retrieve')(None, time_query, rank_reference or now(), operation='time')
             if time_scope:
                 question = time_scope['query']
+        fields = self.retrieval_index.fields(project_id, question, scene=scene)
         authority = SourceEgressService(self.records)
         dynamic_policy = get('ladder') if callable(getattr(get('ladder'), 'demand', None)) else None
         dynamic_budget = self.ask_budget()[1] if dynamic_policy is not None else None
@@ -661,6 +692,8 @@ class WorkspaceQuery:
             sort_times = {}
             context_summary = ""
             if entry["kind"] == "document":
+                if topic_policy is not None and snapshot is not None and not local_only:
+                    topic_entries.append((entry, scope, snapshot))
                 document = documents_by_id[entry["id"]]
                 sort_times.update(L1=document.get("updated_at") or document.get("created_at"),
                                   L2=document.get("updated_at") or document.get("created_at"))
@@ -681,6 +714,11 @@ class WorkspaceQuery:
                 sort_times["L0"] = source.get("created_at") if source else None
                 spans.append(('L0', 0, source['length'], 'source_content_v1',
                               tuple(EvidenceWindow(**value) for value in source['chunks'])))
+            retrieval_summary = fields.context_summary(entry, context_summary)
+            from .v2.shared_vector_keys import contextual_cache_prefix
+            context_prefix = contextual_cache_prefix(context_summary, retrieval_summary)
+            exact_fields = (fields.exact_fields(entry, question=original_question)
+                            if entry['kind'] == 'document' and entry.get('item_id') else ())
             layers = {}
             layer_vectors = {}
             layer_discovery = {}
@@ -699,6 +737,8 @@ class WorkspaceQuery:
                     continue
                 vectors = {}
                 literal_selection = None
+                exact_selection = (fields.exact_original(entry, exact_fields, chunks, max_chars=WINDOW_SCAN_CHARS)
+                    if exact_fields and coordinates == 'workspace_source_text_v1' else None)
                 if (getattr(get('retrieve'), 'raw_evidence_probe', False)
                         and entry['kind'] == 'source' and layer == 'L0'
                         and coordinates == 'source_content_v1' and start == 0
@@ -726,15 +766,15 @@ class WorkspaceQuery:
                 if literal_selection is not None:
                     selection = literal_selection
                 elif layer == "L2" and dynamic_policy is None:
-                    selection = _timed_evidence_windows(context_summary, question,
+                    selection = fields.text(context_summary,
                         title=entry["title"], max_chars=WINDOW_SCAN_CHARS)
                 else:
                     vectors = {}
                     with stage("vector"):
                         if layer != 'L2' and not local_only and external_client is None:
-                            vectors = chunk_vector_scores(self, project_id, entry, scope, snapshot, chunks,
+                            vectors = fields.chunk_vectors(entry, scope, snapshot, chunks,
                                 layer=layer, span_start=start, span_slot=span_slot,
-                                summary=context_summary, question=question, chunk_inventory=chunk_inventory)
+                                summary=retrieval_summary, chunk_inventory=chunk_inventory, context_prefix=context_prefix)
                     # An optional provider can fail, but changed privacy never
                     # becomes permission to return the old lexical material.
                     if not local_only and is_private_project(self.records, project_id):
@@ -750,34 +790,40 @@ class WorkspaceQuery:
                             break
                     with stage("keyword"):
                         if dynamic_policy is None:
-                            selection = select_indexed_contextual_windows(end-start, question,
-                                title=entry["title"], summary=context_summary, chunks=chunks,
+                            selection = fields.indexed_chunks(end-start,
+                                title=entry["title"], summary=retrieval_summary, chunks=chunks,
                                 vector_scores=vectors, max_chars=WINDOW_SCAN_CHARS)
                         else:
-                            from .v2.contextual_chunks import dynamic_contextual_windows
                             from .v2.budget import text_tokens
                             # 摘要投影没有分块；原摘要本身就是其唯一真实种子。
                             seeds = chunks or ((EvidenceWindow(0, end-start, context_summary),)
                                 if layer == 'L2' and end > start else ())
-                            if not dynamic_policy.seed_order(seeds, question, entry['title'], context_summary, vectors):
-                                continue
-                            if current is None:
-                                current, hydrated = self.retrieval_index.hydrate(project_id, entry)
-                                if current is None or any(current.get(key) != entry.get(key) for key in
-                                        ('revision', 'item_revision', 'title', 'item_id')):
-                                    self.retrieval_index.schedule(entry['kind'], entry['id'])
-                                    layers.clear()
-                                    break
-                            # 层边界来自既有投影，先切真实父正文，再恢复全局坐标。
-                            parent = current_text(coordinates)[start:end]
-                            if getattr(dynamic_policy, 'bounded_discovery', False):
-                                from .v2.policies.ladder import discover_chains_v14
-                                layer_discovery.setdefault(layer, []).extend(discover_chains_v14(
-                                    parent, question, seeds, vectors, title=entry['title'], summary=context_summary,
-                                    offset=start, span_slot=span_slot))
-                            selection = dynamic_contextual_windows(parent, question, title=entry['title'],
-                                summary=context_summary, chunks=seeds, vector_scores=vectors,
-                                admission=lambda value: text_tokens(value.excerpt) <= dynamic_budget)
+                            if exact_selection is not None and text_tokens(exact_selection.excerpt) > dynamic_budget:
+                                exact_selection = None
+                            if not dynamic_policy.seed_order(seeds, question, entry['title'], retrieval_summary, vectors):
+                                if exact_selection is None:
+                                    continue
+                                selection = exact_selection
+                            else:
+                                if current is None:
+                                    current, hydrated = self.retrieval_index.hydrate(project_id, entry)
+                                    if current is None or any(current.get(key) != entry.get(key) for key in
+                                            ('revision', 'item_revision', 'title', 'item_id')):
+                                        self.retrieval_index.schedule(entry['kind'], entry['id'])
+                                        layers.clear()
+                                        break
+                                # 层边界来自既有投影，先切真实父正文，再恢复全局坐标。
+                                parent = current_text(coordinates)[start:end]
+                                if getattr(dynamic_policy, 'bounded_discovery', False):
+                                    from .v2.policies.ladder import discover_chains_v14
+                                    layer_discovery.setdefault(layer, []).extend(discover_chains_v14(
+                                        parent, question, seeds, vectors, title=entry['title'], summary=retrieval_summary,
+                                        offset=start, span_slot=span_slot))
+                                selection = fields.dynamic_chunks(parent, title=entry['title'],
+                                    summary=retrieval_summary, chunks=seeds, vector_scores=vectors,
+                                    admission=lambda value: text_tokens(value.excerpt) <= dynamic_budget)
+                if not selection.score and exact_selection is not None:
+                    selection = exact_selection
                 if selection.score:
                     windows = tuple(EvidenceWindow(w.start+start, w.end+start, w.text) for w in selection.windows)
                     layers.setdefault(layer, []).append((selection, windows, coordinates))
@@ -799,6 +845,11 @@ class WorkspaceQuery:
                         self.retrieval_index.schedule('original', entry['item_id'])
                     continue
                 entry = current
+            exact = bool(angle_bonus is not None and layers and exact_fields)
+            if exact:
+                exact_documents.add(entry['id'])
+            sections = (fields.angle_sections(entry)
+                        if angles and 'L1' in layers and entry['kind'] == 'document' else ())
             for layer, selections in layers.items():
                 # 同一对象和层只合并真实窗口；动态版的范围由问题及预算决定。
                 windows = []
@@ -810,6 +861,7 @@ class WorkspaceQuery:
                     continue
                 selection = max(selections, key=lambda value: value[0].score)[0]
                 usage_weight = recall_weight(self.records, 'document', entry['id']) if entry['kind'] == 'document' else 1.0
+                matched_angle = bool(angles and layer == 'L1' and section_matches(angles, sections, windows))
                 candidates.append({"score": selection.score * usage_weight, "kind": entry["kind"],
                                    "id": entry.get("citation_id", entry["id"]),
                                    "title": entry["title"], "excerpt": "\n…\n".join(w.text for w in windows),
@@ -819,6 +871,7 @@ class WorkspaceQuery:
                                    "sort_time": sort_times.get(layer),
                                    "document_id": entry.get("document_id"),
                                    "document_ids": [identity for identity, _ in linked], "coordinate_space": coordinates,
+                                   **({'_angle_rank_matched': True} if matched_angle else {}),
                                    **({'vector_score': max(value[2] for value in layer_vectors[layer]),
                                        '_vector_spans': tuple(layer_vectors[layer])} if layer_vectors.get(layer) else {})})
                 if layer_discovery.get(layer):
@@ -845,14 +898,25 @@ class WorkspaceQuery:
         # rank@3 adds keyword-and-meaning recall; earlier versions stay keyword-only.
         meaning = getattr(rank_policy, 'meaning', None)
         if meaning is not None and recognition_entries and not local_only and external_client is None:
-            from .v2.insight_vectors import insight_vector_scores
             with stage("vector"):
-                insight_vectors = insight_vector_scores(self, project_id, scope,
-                    [entry for entry, _ in recognition_entries], question)
+                insight_vectors = fields.insight_vectors(scope,
+                    [entry for entry, _ in recognition_entries])
         # 编码期间可能改变遗忘或场景；来源快照不覆盖这些旁路状态，扩展前重新读取。
         recognition_entries = [(entry, own_scope) for entry, own_scope in recognition_entries
                                if qualified_insight(entry, own_scope) is not None]
-        selections = {entry['id']: _timed_evidence_windows(entry['content'], question, max_chars=1800)
+        external_allowed = external_egress_allowed if external_authority is None else external_authority
+        semantic_condition = getattr(get('retrieve'), 'condition_score', None)
+        local_methods = (method_query and external_client is None and (semantic_condition is not None or version('compose') == '@38')
+            and self.ask_target()['execution_location'] == 'local')
+        def methods_allowed():
+            return bool(method_query and ((local_only or local_methods or egress_allowed(self.records, self.models, project_id, 'generation'))
+                if external_client is None else external_allowed(self.records, project_id, external_client)))
+        condition_vectors = {}
+        if semantic_condition is not None and not local_only and external_client is None and methods_allowed():
+            with stage('vector'):
+                condition_vectors = fields.condition_scores(scope,
+                    [entry for entry, _ in recognition_entries], method_query)
+        selections = {entry['id']: fields.text(entry['content'], max_chars=1800)
                       for entry, _ in recognition_entries}
         recalls = {identity: (meaning(selection.score, insight_vectors.get(identity)) if meaning is not None
                              else selection.score or None) for identity, selection in selections.items()}
@@ -860,7 +924,6 @@ class WorkspaceQuery:
         anchors = {identity for identity, recall in recalls.items() if recall}
         expansion_ids = (InsightLinks(self.records, self.service).expansion_ids(project_id, anchors)
                          if only_layers is None or 'L3' in only_layers else set())
-        external_allowed = external_egress_allowed if external_authority is None else external_authority
         for entry, own_scope in recognition_entries:
             scope = own_scope
             view = qualified_insight(entry, own_scope)
@@ -872,10 +935,11 @@ class WorkspaceQuery:
             selection = selections[entry['id']]
             # Keyword hits lead; meaning orders ties and recalls insights no keyword reached.
             recall = recalls[entry['id']]
-            from .v2.policies.retrieve import condition_score
-            method_score = (condition_score(entry['conditions'], method_query)
-                            if method_query and ((local_only or egress_allowed(self.records, self.models, project_id, 'generation'))
-                                if external_client is None else external_allowed(self.records, project_id, external_client)) else 0)
+            from .v2.policies.method_situation import condition_score
+            method_score = 0
+            if methods_allowed():
+                method_score = (condition_score(entry['conditions'], method_query) if semantic_condition is None
+                    else semantic_condition(entry['conditions'], method_query, condition_vectors.get(entry['id'])))
             if not recall and entry["id"] not in expansion_ids and not method_score:
                 continue
             try:
@@ -912,6 +976,10 @@ class WorkspaceQuery:
                                "document_ids": view["document_ids"], "document_id": None,
                                "persona": scope.project_id == "me" and project_id != "me",
                                "expansion_only": not recall}
+            if angles:
+                matched = any(angle in angles for angle in fields.insight_angles(entry))
+                if matched:
+                    candidate['_angle_rank_matched'] = True
             if dynamic_policy is not None and entry['id'] in insight_vectors:
                 candidate['vector_score'] = insight_vectors[entry['id']]
             if callable(getattr(rank_policy, 'decorate', None)):
@@ -924,9 +992,10 @@ class WorkspaceQuery:
             if recall or entry['id'] in expansion_ids:
                 candidates.append(candidate)
             if method_score:
-                methods.append({**candidate, 'score': getattr(rank_policy, 'rescore', lambda score, candidate: score)(method_score, candidate), 'expansion_only': False})
+                methods.append({**candidate, 'score': getattr(rank_policy, 'rescore', lambda score, candidate: score)(method_score, candidate),
+                    'expansion_only': False, **({'condition_matched': True} if semantic_condition is not None else {})})
         if time_scope:
-            candidates = self.filter_time_candidates(candidates, time_scope, time_documents)
+            candidates = self.filter_time_candidates(candidates, time_scope, time_documents, apply_angle_rank=False)
             methods = self.filter_time_candidates(methods, time_scope, time_documents)
         for candidate in candidates:
             priority = scene_priority(ScopeInput(scene, candidate["scene"]), get('scope'))
@@ -950,7 +1019,26 @@ class WorkspaceQuery:
                 continue
             chosen.append(candidate)
             bases.append(basis)
+        grouped = fields.topic_documents(topic_entries, topic_policy) if topic_entries else frozenset()
+        boosted = False
+        for row in chosen:
+            document = row['kind'] == 'document'
+            identity = row['entry']['id']
+            matched = row.pop('_angle_rank_matched', False) if document else row.get('_angle_rank_matched', False)
+            exact = document and identity in exact_documents
+            if matched or exact:
+                row['score'] = angle_bonus(row['score'], matched=matched, exact=exact)
+                boosted = True
+            if document and identity in grouped and not exact:
+                row['score'] = topic_policy.bonus(row['score'])
+                boosted = True
+        if boosted:
+            chosen.sort(key=lambda value: (-round(value['score'], 3), value['kind'],
+                candidate_order(value)[1], value['entry']['id']))
+            chosen = prefer_scene_ties(chosen, score_key=lambda value: -round(value['score'], 3))
         result = {"candidates": chosen, "excluded_sources": excluded}
+        if angle_bonus is not None:
+            result['angles'] = list(angles)
         if rank_reference is not None:
             result['rank_reference'] = rank_reference
         from .v2.inspirations import collect_inspirations
@@ -1413,7 +1501,13 @@ class WorkspaceQuery:
         overhead += constraint_tokens
         if overhead > budget:
             raise RecognitionError('project constraints exceed input budget')
-        answer_output_budget = self._answer_output_budget(target) if evidence_contract_version(version('compose')) in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else None
+        # 本机检索使用输入预算，实际生成的输出预算绑定到已配置模型。
+        answer_output_budget = None
+        if target['model'] and evidence_contract_version(version('compose')) in {
+            '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31',
+            '@32', '@33', '@34', '@35', '@36',
+        }:
+            answer_output_budget = self._answer_output_budget(target)
         from .v2.profile import confirmed_profile
         profile = confirmed_profile(self.profile_owner.records, self.profile_owner.service,
             rank_reference=collected.get('rank_reference'))
@@ -1443,6 +1537,11 @@ class WorkspaceQuery:
         if profile.get('instruction'):
             # 单独按原估算器预留提示，最终发送仍合入原指令并据实归属。
             overhead += _estimate_input_tokens([{'role':'system', 'content':profile['instruction']}])
+        from .v2.situation_packs import prepare as prepare_situation_pack
+        pack = (prepare_situation_pack(self, project_id, scene, situation or question,
+                    methods=collected.get('method_candidates') if situation or retrieval_question == question else None)
+                if target['model'] and not getattr(get('retrieve'), 'initial_memory_probe', False) else None)
+        pack_rows = pack['rows'] if pack else []
         from .v2.recall_dedup import cached_candidate_vectors
         with stage("vector"):
             vectors = cached_candidate_vectors(self, collected["candidates"])
@@ -1460,9 +1559,13 @@ class WorkspaceQuery:
             if callable(getattr(get('ladder'), 'demand', None)):
                 options['fit'] = self._fit_dynamic_candidate
                 options['semantic_anchors'] = tuple(dict.fromkeys((retrieval_question, *(coverage_questions or ()))))
-                if evidence_contract_version(version('compose')) in {'@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
+                if target['model'] and evidence_contract_version(version('compose')) in {
+                    '@18', '@19', '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28',
+                    '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36',
+                }:
                     # 两轮共用真实目录；原文、画像、历史、依赖及三种包装全部计入。
                     def partition_cost(rows):
+                        rows = [*rows, *pack_rows]
                         catalog = build_evidence_catalog(rows, compose_version=version('compose'))
                         first = build_partition_messages(rows, question, history=history,
                             profile=profile, part_context=part_context, compose_version=version('compose'))
@@ -1475,7 +1578,7 @@ class WorkspaceQuery:
                             review_input_tokens(final, response_model=final_response_model(version('compose'), question)) + 3)
                     def partition_admission(rows):
                         # 分类输出有界；实际公开原话仍在末轮渲染时单独检查，不能预先截资料。
-                        catalog = build_evidence_catalog(rows, compose_version=version('compose'))
+                        catalog = build_evidence_catalog([*rows, *pack_rows], compose_version=version('compose'))
                         required = (grounded_output_minimum(catalog, compose_version=version('compose')) if evidence_contract_version(version('compose')) in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}
                             else partition_output_tokens(catalog))
                         if evidence_contract_version(version('compose')) in {'@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'}:
@@ -1484,8 +1587,15 @@ class WorkspaceQuery:
                             answer_output_budget['reserve'] if answer_output_budget is not None
                             else 512 if target['execution_location'] == 'local' else 7000)
                     options.update(cost=partition_cost, admission=partition_admission)
+                    if pack and (partition_cost([]) > budget or not partition_admission([])):
+                        pack, pack_rows = None, []
                     if partition_cost([]) > budget or not partition_admission([]):
                         raise RecognitionError('question context exceeds structured answer budget')
+            if pack:
+                identities = {row['id'] for row in pack_rows}
+                options['methods'] = [row for row in options['methods'] if row['id'] not in identities]
+                collected = {**collected, 'candidates': [row for row in collected['candidates']
+                    if row['kind'] != 'recognition' or row['id'] not in identities]}
             if _pause_after is None:
                 planned = plan_ladder(collected['candidates'], retrieval_question, **options)
             else:
@@ -1504,12 +1614,22 @@ class WorkspaceQuery:
                                  "revision":candidate["entry"]["revision"],
                                  "reason":"recognition_evidence_budget_insufficient"})
         plan = {"project_id": project_id, "question": question, "scope": WorkScope("local-user", project_id),
+                **({'_situation_pack': pack, '_situation_query': situation} if pack else {}),
                 **({'_project_constraints': constraint_snapshot} if constraint_snapshot is not None else {}),
                 **({'rank_reference': collected['rank_reference']} if collected.get('rank_reference') else {}),
                 **({key: collected[key] for key in ('time_scope', 'time_documents')} if collected.get('time_scope') else {}),
                 "target": target, **({'answer_output_budget': answer_output_budget} if answer_output_budget is not None else {}), **planned, '_rerank_state': rerank_state, "profile": profile, **({'part_context':part_context} if part_context else {}), "overview_guard": overview_guard, "history": history, "prompt_overhead": overhead, "excluded_sources": excluded, "state": "pending",
                 "expires_monotonic": time.monotonic() + 300,
                 "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()}
+        selected_rank = get('rank')
+        if callable(getattr(selected_rank, 'angle_bonus', None)):
+            if 'angles' in collected:
+                angles = collected['angles']
+            else:
+                from .v2.project_angles import active_angles
+                angles = list(get('angle_route', version=selected_rank.angle_route_version)(
+                    question, active_angles(self.records, project_id)))
+            plan['trace'][0]['angles'] = angles
         if getattr(get('retrieve'), 'evidence_answer_probe', False):
             plan.update(retrieval_question=retrieval_question, situation=situation)
         if self.origin_admission is not None:
@@ -1599,8 +1719,12 @@ class WorkspaceQuery:
             code = ("private_project_remote_blocked" if is_private_project(self.records, plan["project_id"])
                     else "remote_disabled")
             raise ModelConfigurationError(code)
-        if evidence_contract_version(plan.get('policy_versions', {}).get('compose')) in {'@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} and self._answer_output_budget(plan['target']) != plan.get('answer_output_budget'):
-            raise ValueError('grounded_output_budget_changed')
+        if plan['target']['model'] and evidence_contract_version(plan.get('policy_versions', {}).get('compose')) in {
+            '@20', '@21', '@22', '@23', '@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31',
+            '@32', '@33', '@34', '@35', '@36',
+        }:
+            if self._answer_output_budget(plan['target']) != plan.get('answer_output_budget'):
+                raise ValueError('grounded_output_budget_changed')
         if self.ask_target() != plan["target"]:
             raise ModelConfigurationError("ask_model_target_changed")
         if plan.get("profile") is not None:
@@ -1612,6 +1736,15 @@ class WorkspaceQuery:
             plan["bookshelf_guard"]()
         if plan.get("history_guard") is not None:
             plan["history_guard"]()
+        pack_rows = [row for row in plan['chosen'] if row.get('situation_pack')]
+        if pack_rows:
+            from .v2.situation_packs import validate as validate_situation_pack
+            from .v2.policies.situation_pack import version_for_compose
+            pack = plan.get('_situation_pack')
+            if (pack is None or pack['project_id'] != plan['project_id'] or pack_rows != pack['rows']
+                    or pack['policy'] != version_for_compose(plan.get('policy_versions', {}).get('compose'))):
+                raise RecognitionConflict('situation_pack_binding_changed')
+            validate_situation_pack(self, pack, pack_rows)
         self._validate_ask_sources(plan)
         if plan.get('initial_answer_proof') is not None:
             from .v2.initial_answer import validate_plan
@@ -1764,6 +1897,8 @@ class WorkspaceQuery:
                 code = str(failure)
                 raise HTTPException(409, code if code in {"remote_disabled", "private_project_remote_blocked"}
                                     else "ask_model_target_changed") from None
+            if not plan['target']['model']:
+                raise HTTPException(409, 'model_not_configured')
             with self.receipt_records.begin() as tx:
                 tx.put("workspace_ask_receipts", preview_id, {
                     "id": preview_id, "project_id": project_id, "status": "started",
@@ -1810,7 +1945,7 @@ class WorkspaceQuery:
                 self.validate_ask_plan(plan)
                 result = {'answer': output.answer.strip(),
                     **({'unverified_claims': 0, 'unverified_claim_spans': []}
-                        if plan.get('policy_versions', {}).get('compose') == '@37' else {}),
+                        if plan.get('policy_versions', {}).get('compose') in {'@37', '@38'} else {}),
                     'sources': [answer_sources[number - 1] for number in dict.fromkeys(output.citations)],
                     'model_used': True, 'model_usage': metadata.get('usage', {}),
                     'excluded_sources': plan['excluded_sources'],
@@ -1827,7 +1962,7 @@ class WorkspaceQuery:
                     raise ValueError('evidence_answer_public_binding_changed' if evidence_answer
                                      else 'raw_answer_public_binding_changed')
                 self.mark_ask_receipt(preview_id, 'completed', usage=result['model_usage'],
-                    **({'unverified_claims': 0} if plan.get('policy_versions', {}).get('compose') == '@37' else {}))
+                    **({'unverified_claims': 0} if plan.get('policy_versions', {}).get('compose') in {'@37', '@38'} else {}))
                 with self.ask_preview_lock:
                     plan.update(result=result, state='completed', chosen=[])
                 if on_delta is not None:
@@ -2036,7 +2171,7 @@ class WorkspaceQuery:
                     output = render_grounded_answer(output, partition_catalog, first_fact_partition(extracted_output, partition_catalog, compose_version=compose_version) if compose_version in {'@24', '@25', '@26', '@27', '@28', '@29', '@30', '@31', '@32', '@33', '@34', '@35', '@36'} else extracted_output,
                         max_output_tokens=final_output_limit, chosen=chosen, **get('compose')(None,
                             operation='grounded_render', question=question),
-                        **({'_on_publication': publication.update} if publication_version == '@37' else {}))
+                        **({'_on_publication': publication.update} if publication_version in {'@37', '@38'} else {}))
                 elif final_model is EvidencePartitionOutput:
                     output = render_partition(output, partition_catalog,
                         **get('compose')(None, question, operation='render_limits',
@@ -2174,6 +2309,8 @@ class WorkspaceQuery:
         if len(question) > 1000:
             raise HTTPException(400, "question_too_long")
         plan = self.prepare_ask(project_id, question)
+        from .v2.situation_packs import attach
+        attach(plan)
         if not plan["chosen"] and not plan.get("profile", {}).get("text") and not plan.get('part_context'):
             return self.public_ask_preview("", plan)
         preview_id = self.store_ask_preview(plan)
@@ -2194,6 +2331,8 @@ class WorkspaceQuery:
                 and is_private_project(self.records, project_id)):
             raise HTTPException(409, "private_project_remote_blocked")
         plan = self.prepare_ask(project_id, question)
+        from .v2.situation_packs import attach
+        attach(plan)
         if not plan["chosen"] and not plan.get("profile", {}).get("text") and not plan.get('part_context'):
             return self.public_ask_preview("", plan)
         preview_id = self.store_ask_preview(plan)

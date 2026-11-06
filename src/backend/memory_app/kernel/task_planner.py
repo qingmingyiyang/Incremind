@@ -298,6 +298,9 @@ class ProductTaskPlanner:
                 if profile.get('text'):
                     messages.insert(0, {'role':'system', 'content':profile['text']})
                 methods = profile.get('methods', {})
+                situation_pack = methods.get('situation_pack', {})
+                if situation_pack.get('text'):
+                    messages.insert(1 if profile.get('text') else 0, {'role': 'user', 'content': situation_pack['text']})
                 if methods.get('text'):
                     messages.insert(-1, {'role':'system', 'content':methods['text']})
                 writing = profile.get('style', {})

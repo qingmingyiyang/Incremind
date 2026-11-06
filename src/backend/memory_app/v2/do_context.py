@@ -94,11 +94,13 @@ def kernel_task_context(records, project, identity):
     # not persist that attribution; unknown values remain unknown, not invented.
     context = {'window': None, 'reserve': None, 'parts': parts, 'egress': egress}
     methods = records.read('v2_task_methods', identity)
+    def method_ref(row):
+        return {'type': 'recognition', 'id': row['id'], 'revision': row['entry']['revision'], 'project_id': project,
+                **({'namespace': row['namespace']} if row.get('namespace') else {})}
     if (methods is not None and methods.revision == 1 and methods.payload['project_id'] == project
             and methods.payload['input_refs'] == request.get('input', {}).get('refs')
             and methods.payload['policy_versions'] == request.get('policy_versions') and calls
-            and all({'type': 'recognition', 'id': row['id'], 'revision': row['entry']['revision'],
-                     'project_id': project} in refs for row in methods.payload['methods'])):
+            and all(method_ref(row) in refs for row in methods.payload['methods'])):
         context['entries'] = [{'layer': 'insight', 'id': row['id'], 'title': row['title'],
                                'supplemented': True, 'object_revision': row['entry']['revision']}
                               for row in methods.payload['methods']]
@@ -109,6 +111,17 @@ def kernel_task_context(records, project, identity):
         source = next(part for part in parts if part['key'] == 'source')
         source['count'] -= sum(ref['type'] == 'recognition' and ref['project_id'] == project
                                and ref['id'] in method_ids for ref in refs)
+        pack = methods.payload.get('situation_pack')
+        if main_sent and pack and all(method_ref(row) in refs for row in pack['members']):
+            members = pack['members']
+            context['situation_pack'] = {'id': pack['id'], 'members': [
+                {'id': row['id'], 'revision': row['entry']['revision']} for row in members]}
+            parts.insert(2, {'key': 'situation_pack', 'count': len(members), 'tokens': pack['tokens']})
+            context['entries'].extend({'layer': 'insight', 'id': row['id'], 'title': row['title'],
+                'situation_pack': True, 'object_revision': row['entry']['revision']} for row in members)
+            identifiers = {('recognition', project, row['id']) for row in members}
+            source['count'] -= sum((ref['type'], ref['project_id'], ref['id']) in identifiers - attributed for ref in refs)
+            attributed.update(identifiers)
         inspirations = methods.payload.get('inspirations', [])
         if inspirations and all({'type': 'experience', 'id': row['id'], 'revision': row['entry']['revision'],
                                 'project_id': row['entry']['project_id']} in refs for row in inspirations):

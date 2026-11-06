@@ -10,7 +10,8 @@ import './sharedProjects.css';
 
 const roles = { owner: '所有者', member: '成员', viewer: '只看成员', admin: '管理员' };
 const actions = { create: '创建项目', invite: '邀请成员', accept: '接受邀请', role: '调整角色',
-  remove: '移出成员', leave: '离开项目', transfer: '转让项目', delete: '删除项目', supersede: '确认取代', remember: '记住' };
+  remove: '移出成员', leave: '离开项目', transfer: '转让项目', delete: '删除项目', supersede: '确认取代',
+  remember: '记住', file: '移入资料', consolidate: '每日整理' };
 function panelCommands(key) {
   let rows;
   try { rows = readSharedCommands(key); }

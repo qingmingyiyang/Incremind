@@ -40,6 +40,7 @@ _CONTENT_COLLECTIONS = frozenset({
     'v2_usage_insight', 'v2_usage_document', 'v2_usage_inspiration',
     'recognition_recall_preferences', 'v2_candidate_fade', 'v2_activity',
     'original_text_retrieval_index', 'v2_original_sections', 'v2_shared_intake_commands',
+    'v2_shared_document_imports', 'v2_image_groups', 'document_retrieval_index',
     'workspace_processing_heartbeats', 'v2_shared_organize_results',
     'v2_external_input_dependencies', 'v2_shared_mcp_usage', _CONVERSATION_PRIVACY, _MERGE_PRIVACY,
 }) | _MERGE_COLLECTIONS
@@ -263,6 +264,9 @@ class _SharedWriteTransaction:
             raise SharedProjectError('shared_collection_forbidden', status=403)
         if collection in _MERGE_COLLECTIONS and self.owner.action != 'merge':
             raise SharedProjectError('shared_collection_forbidden', status=403)
+        if collection in {'v2_shared_document_imports', 'v2_image_groups', 'document_retrieval_index'} and (
+                self.owner.action != 'file' or expected_revision != 0):
+            raise SharedProjectError('shared_collection_forbidden', status=403)
         if collection == _MERGE_PRIVACY:
             item = self.transaction.read('recognitions', object_id)
             births = (self.transaction.read(ATTRIBUTION, identity).payload for identity in self.writes)
@@ -316,6 +320,8 @@ class _SharedWriteTransaction:
 
     def delete(self, collection, object_id, *, expected_revision):
         if collection not in _CONTENT_COLLECTIONS or collection in _MERGE_COLLECTIONS | {_CONVERSATION_PRIVACY, _MERGE_PRIVACY}:
+            raise SharedProjectError('shared_collection_forbidden', status=403)
+        if collection in {'v2_shared_document_imports', 'v2_image_groups', 'document_retrieval_index'}:
             raise SharedProjectError('shared_collection_forbidden', status=403)
         current = self.transaction.read(collection, object_id)
         result = self.transaction.delete(collection, object_id, expected_revision=expected_revision)

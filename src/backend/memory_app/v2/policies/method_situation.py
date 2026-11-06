@@ -4,6 +4,7 @@ import re
 _STOP = frozenset(("什么时候", "时候", "进行", "可以", "如何", "什么", "怎么", "阶段", "项目", "任务", "工作", "关于"))
 _ALIASES = (("礼物", "送礼"), ("旅行", "出行"), ("面试", "应聘"))
 _COVERED = .8
+_SEMANTIC_MIN = .55
 MAX_METHODS = 3
 
 
@@ -24,6 +25,12 @@ def condition_score(conditions, situation):
     query = keywords(situation)
     return max((len(keywords(condition) & query) / max(1, len(keywords(condition)))
                 for condition in conditions if isinstance(condition, str)), default=0)
+
+
+def semantic_condition_score(conditions, situation, similarity):
+    if similarity is None:
+        return condition_score(conditions, situation)
+    return min(1., similarity) if similarity >= _SEMANTIC_MIN else 0.
 
 
 def covered(content, instruction):

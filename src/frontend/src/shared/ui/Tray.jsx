@@ -1,4 +1,5 @@
 import { useId, useRef, useState } from 'react';
+import { Icon } from './Icon';
 import { StatusDot } from './StatusDot';
 import './shell.css';
 function jobProgress(job) {
@@ -20,7 +21,12 @@ export function Tray({ jobs = [], onOpen, onRetry }) {
     <button type="button" ref={trigger} className="ui-tray-pill" aria-label="进度" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen(!open)}>
       {counts.map(({ state, count }) => <span className="ui-tray-count" key={state}><StatusDot state={state}/><span>{count}</span></span>)}
     </button>
-    {open && <div id={id} className="ui-tray-list" role="region" aria-label="进度列表">{jobs.map(job => <div className="ui-tray-row" key={job.id}><StatusDot state={job.state}/><button type="button" className="ui-tray-job" onClick={() => { setOpen(false); onOpen?.(job); }}>{job.title}</button>{job.image_read?.local_fallback && <span className="ui-tray-meta" title="本机识图">本机</span>}{canRetryJob(job) ? <button type="button" className="ui-tray-retry" onClick={() => onRetry?.(job)}>重试</button> : <span className="ui-tray-meta">{jobProgress(job)}</span>}</div>)}</div>}
+    {open && <div id={id} className="ui-tray-list" role="region" aria-label="进度列表">{jobs.map(job => <div className="ui-tray-row" key={job.id}>
+      <StatusDot state={job.state}/><button type="button" className="ui-tray-job" onClick={() => { setOpen(false); onOpen?.(job); }}>{job.title}</button>
+      {job.image_read?.local_fallback && <span className="ui-tray-meta" title="本机识图">本机</span>}
+      {job.state === 'processing' && Number.isInteger(job.idle_minutes) && <span className="ui-tray-meta ui-tray-idle" title={`已 ${job.idle_minutes} 分钟没有新进展`}><Icon name="clock" size={14}/>{job.idle_minutes} 分钟</span>}
+      {canRetryJob(job) ? <button type="button" className="ui-tray-retry" onClick={() => onRetry?.(job)}>重试</button> : <span className="ui-tray-meta">{jobProgress(job)}</span>}
+    </div>)}</div>}
   </div>;
 }
 export default Tray;

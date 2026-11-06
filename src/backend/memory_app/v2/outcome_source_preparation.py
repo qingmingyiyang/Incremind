@@ -210,6 +210,12 @@ def _task_context(service, native, request, source, messages, reader):
             proofs.append(proof)
             materials.extend(_selected(item, project, proof, role='method') for item in value.get('methods', []))
             materials.extend(_selected(item, project, proof, role='inspiration') for item in value.get('inspirations', []))
+        pack = value.get('situation_pack') or {}
+        if _contains(messages, pack.get('text')):
+            proof = _record_proof(methods)
+            if proof not in proofs:
+                proofs.append(proof)
+            materials.extend(_selected(item, project, proof, role='method') for item in pack['members'])
     context = reader.read('v2_part_contexts', source['turn_id'])
     if context is not None and _dependency_visible(messages, source, context.payload.get('context', {}).get('text')):
         from .part_context import validate_bound_context

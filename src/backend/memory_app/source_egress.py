@@ -897,6 +897,25 @@ def _workspace_document_authority(uow, scope, provenance):
     workspace_refs = [ref for ref in source_refs if isinstance(ref, Mapping)
                       and isinstance(ref.get("source_id"), str)
                       and ref.get("locator") == "workspace://" + ref["source_id"]] if isinstance(source_refs, Sequence) else []
+    document_type = document.payload.get('type')
+    if isinstance(document_type, str) and document_type.startswith('shared-filed-v2-'):
+        imported = uow.read('v2_shared_document_imports', document_type)
+        identities = [ref['source_id'] for ref in workspace_refs]
+        if (imported is None or imported.revision != 1 or imported.payload.get('project_id') != scope.project_id
+                or imported.payload.get('document_id') != document_id
+                or imported.payload.get('original_ids') != identities
+                or not identities or len(set(identities)) != len(identities)):
+            raise RecognitionConflict('shared document import authority changed')
+        item_revisions = {}
+        for item_id in identities:
+            item = uow.read('workspace_items', item_id)
+            if (item is None or item.payload.get('project_id') != scope.project_id
+                    or item.payload.get('status') != 'confirmed' or item.payload.get('document_id') != document_id):
+                raise RecognitionConflict('shared document original authority changed')
+            item_revisions[item_id] = item.revision
+        return (), set(_PURPOSES), {'workspace_item_revisions': item_revisions,
+            'shared_document_import_revision': imported.revision, 'document_revision': revision,
+            'document_revision_record_revision': document_revision.revision, 'document_markdown_revision': markdown.revision}
     if not workspace_refs:
         # A malformed workspace locator must never fall through to another
         # publication authority. Existing valid workspace bindings stay strict.
@@ -1435,6 +1454,8 @@ def recognition_service(records, *, cache_invalidation=None, product_draft_valid
 
 def _publish_candidate_sources(owner, reader, scope, candidate, recognition):
     _publish_steer_candidate(owner, reader, scope, candidate, recognition)
+    from .v2.material_angles import publish_insight_angles
+    publish_insight_angles(reader, scope, candidate, recognition)
     from .v2.shared_merge_privacy import PRIVACY, pending_merge_private
     if reader.read(PRIVACY, candidate.object_id) is not None:
         actual, _ = _source_owner_binding(owner, reader)
